@@ -291,6 +291,7 @@ export async function POST(request: NextRequest) {
       address: body.address || null,
       city: body.city || null,
       province: body.province || null,
+      country: body.country || null,
       phone: body.phone,
       website: body.website || null,
       rating: null,

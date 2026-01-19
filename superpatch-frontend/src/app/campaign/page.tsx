@@ -1243,20 +1243,8 @@ function CampaignPageContent() {
       if (result.status === 'success') {
         const callTarget = quickCallPracticeName || formattedPhone;
         
-        // Create initial call record for tracking (mirrors handleQuickCallWithPathway behavior)
-        // Use call_id from Bland.ai response as the ID for unknown callers
-        const callRecordId = result.call_id || `manual-${Date.now()}`;
-        createCallRecord({
-          id: callRecordId,
-          name: quickCallPracticeName || `Unknown (${formattedPhone})`,
-          practitioner_type: pathwayLabels[quickCallType] || 'Unknown',
-          phone: formattedPhone,
-          address: quickCallAddress || '',
-          city: quickCallCity || '',
-          province: quickCallProvince || '',
-        });
-        
-        // Save the practitioner to database as "user added"
+        // Save the practitioner to database FIRST to get proper ID
+        let practitionerId: string | null = null;
         try {
           const practitionerData = {
             name: quickCallPracticeName || `Unknown (${formattedPhone})`,
@@ -1265,6 +1253,13 @@ function CampaignPageContent() {
             address: quickCallAddress || null,
             city: quickCallCity || null,
             province: quickCallProvince || null,
+            country: quickCallProvince ? (
+              ['ON', 'BC', 'AB', 'QC', 'MB', 'SK', 'NS', 'NB', 'NL', 'PE', 'NT', 'YT', 'NU',
+               'Ontario', 'British Columbia', 'Alberta', 'Quebec', 'Manitoba', 'Saskatchewan',
+               'Nova Scotia', 'New Brunswick', 'Newfoundland', 'Prince Edward Island'].some(
+                p => quickCallProvince?.toLowerCase().includes(p.toLowerCase())
+              ) ? 'Canada' : 'United States'
+            ) : null,
             notes: quickCallContactName ? `Contact: ${quickCallContactName}` : null,
           };
           
@@ -1276,14 +1271,25 @@ function CampaignPageContent() {
           
           const saveResult = await saveResponse.json();
           
-          if (saveResult.created) {
-            console.log('User-added practitioner saved:', saveResult.practitioner.id);
-          } else if (saveResult.practitioner) {
-            console.log('Practitioner already exists:', saveResult.practitioner.id);
+          if (saveResult.practitioner) {
+            practitionerId = saveResult.practitioner.id;
+            console.log(saveResult.created ? 'User-added practitioner saved:' : 'Practitioner already exists:', practitionerId);
           }
         } catch (saveError) {
           console.error('Failed to save practitioner (call still succeeded):', saveError);
         }
+        
+        // Create call record with proper practitioner ID
+        const callRecordId = practitionerId || result.call_id || `manual-${Date.now()}`;
+        createCallRecord({
+          id: callRecordId,
+          name: quickCallPracticeName || `Unknown (${formattedPhone})`,
+          practitioner_type: pathwayLabels[quickCallType] || 'Unknown',
+          phone: formattedPhone,
+          address: quickCallAddress || '',
+          city: quickCallCity || '',
+          province: quickCallProvince || '',
+        });
         
         callNotifications.started(callTarget);
         
