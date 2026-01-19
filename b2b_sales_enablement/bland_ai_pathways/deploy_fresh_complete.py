@@ -18,7 +18,9 @@ import subprocess
 from pathlib import Path
 
 # API Configuration
-API_KEY = "org_6e88fce905244ad1a7b41d66913c6c2d19cc2e9acde048689de225545d6b0dec157a98f8d737abb4fe0a69"
+API_KEY = os.environ.get("BLAND_API_KEY")
+if not API_KEY:
+    raise ValueError("BLAND_API_KEY environment variable is required")
 BASE_URL = "https://api.bland.ai/v1"
 SCRIPT_DIR = Path(__file__).parent
 

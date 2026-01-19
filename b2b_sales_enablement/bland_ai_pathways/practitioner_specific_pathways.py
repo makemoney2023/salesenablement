@@ -6,7 +6,9 @@ Each pathway will have completely different scripts, objections, and context.
 import json
 import subprocess
 
-API_KEY = "org_8e83a10723c7ccbfa480b0d015920dddd0ae52af444a7691546e51f371dda789b471c727a9faf577ca2769"
+API_KEY = os.environ.get("BLAND_API_KEY")
+if not API_KEY:
+    raise ValueError("BLAND_API_KEY environment variable is required")
 
 PATHWAYS = {
     "Chiropractors": "cf2233ef-7fb2-49ff-af29-0eee47204e9f",

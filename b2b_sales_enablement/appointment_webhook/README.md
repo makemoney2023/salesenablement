@@ -36,7 +36,7 @@ curl http://localhost:5000/api/cal-event-types
 **Environment Variables:**
 
 ```bash
-export CAL_COM_API_KEY="cal_live_67740b479d1bb9437a5b9b0ea81455d7"
+export CAL_COM_API_KEY="your_cal_com_api_key_here"
 export CAL_COM_EVENT_TYPE_ID="123"  # Your event type ID
 # OR use slug + username:
 export CAL_COM_EVENT_TYPE_SLUG="superpatch-sales-call"

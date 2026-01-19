@@ -31,7 +31,9 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 
 # Configuration
-API_KEY = os.environ.get("BLAND_API_KEY", "org_8e83a10723c7ccbfa480b0d015920dddd0ae52af444a7691546e51f371dda789b471c727a9faf577ca2769")
+API_KEY = os.environ.get("BLAND_API_KEY")
+if not API_KEY:
+    raise ValueError("BLAND_API_KEY environment variable is required")
 BASE_URL = "https://api.bland.ai/v1"
 
 # Pathway IDs (from deployed_pathway_ids.json)

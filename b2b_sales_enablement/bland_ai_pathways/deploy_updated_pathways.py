@@ -9,7 +9,9 @@ import json
 import subprocess
 import os
 
-API_KEY = "org_8e83a10723c7ccbfa480b0d015920dddd0ae52af444a7691546e51f371dda789b471c727a9faf577ca2769"
+API_KEY = os.environ.get("BLAND_API_KEY")
+if not API_KEY:
+    raise ValueError("BLAND_API_KEY environment variable is required")
 
 # Existing pathway IDs - using CONTEXTUAL files (34 nodes, 57 edges)
 PATHWAYS = {

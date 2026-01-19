@@ -1,7 +1,9 @@
 import json
 import subprocess
 
-API_KEY = "org_8e83a10723c7ccbfa480b0d015920dddd0ae52af444a7691546e51f371dda789b471c727a9faf577ca2769"
+API_KEY = os.environ.get("BLAND_API_KEY")
+if not API_KEY:
+    raise ValueError("BLAND_API_KEY environment variable is required")
 KB_ID = "b671527d-0c2d-4a21-9586-033dad3b0255"
 CHECK_AVAIL_TOOL = "TL-79a3c232-ca51-4244-b5d2-21f4e70fd872"
 SCHEDULE_TOOL = "TL-bbaa7f38-1b6a-4f27-ad27-18fb7c6e1526"

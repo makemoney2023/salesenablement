@@ -19,7 +19,9 @@ app = Flask(__name__)
 CORS(app)
 
 # Configuration
-CAL_COM_API_KEY = os.environ.get('CAL_COM_API_KEY', 'cal_live_67740b479d1bb9437a5b9b0ea81455d7')
+CAL_COM_API_KEY = os.environ.get('CAL_COM_API_KEY')
+if not CAL_COM_API_KEY:
+    raise ValueError("CAL_COM_API_KEY environment variable is required")
 CAL_COM_API_URL = 'https://api.cal.com/v2'
 CAL_COM_EVENT_TYPE_ID = os.environ.get('CAL_COM_EVENT_TYPE_ID', None)  # Set this or use slug
 CAL_COM_EVENT_TYPE_SLUG = os.environ.get('CAL_COM_EVENT_TYPE_SLUG', 'superpatch-sales-call')

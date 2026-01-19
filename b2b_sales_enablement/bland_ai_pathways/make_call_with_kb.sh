@@ -3,7 +3,7 @@
 # Usage: ./make_call_with_kb.sh <phone_number> <pathway_type>
 # Example: ./make_call_with_kb.sh "+15551234567" "chiropractors"
 
-API_KEY="org_8e83a10723c7ccbfa480b0d015920dddd0ae52af444a7691546e51f371dda789b471c727a9faf577ca2769"
+API_KEY="${BLAND_API_KEY:?BLAND_API_KEY environment variable is required}"
 KB_ID="b671527d-0c2d-4a21-9586-033dad3b0255"
 
 # Cal.com Integration Tools

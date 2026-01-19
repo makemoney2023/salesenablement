@@ -9,8 +9,12 @@ This creates/updates two tools:
 import json
 import subprocess
 
-BLAND_API_KEY = "org_8e83a10723c7ccbfa480b0d015920dddd0ae52af444a7691546e51f371dda789b471c727a9faf577ca2769"
-CAL_COM_API_KEY = "cal_live_67740b479d1bb9437a5b9b0ea81455d7"
+BLAND_API_KEY = os.environ.get("BLAND_API_KEY")
+CAL_COM_API_KEY = os.environ.get("CAL_COM_API_KEY")
+if not BLAND_API_KEY:
+    raise ValueError("BLAND_API_KEY environment variable is required")
+if not CAL_COM_API_KEY:
+    raise ValueError("CAL_COM_API_KEY environment variable is required")
 
 # Cal.com configuration
 CAL_COM_USERNAME = "superpatchhealthprosales"
