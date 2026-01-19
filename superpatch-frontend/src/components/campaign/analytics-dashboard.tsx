@@ -1,8 +1,16 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import {
   ChartConfig,
   ChartContainer,
@@ -29,12 +37,62 @@ import {
   AreaChart,
 } from "recharts";
 import { CampaignCallRecord, CallStatus, CampaignStats } from "@/lib/campaign-storage";
-import { TrendingUp, TrendingDown, Phone, Calendar, Clock, Target, Users, MapPin } from "lucide-react";
+import { TrendingUp, TrendingDown, Phone, Calendar, Clock, Target, Users, MapPin, CalendarDays, ChevronDown } from "lucide-react";
 import { GaugeChart, RadialProgressChart, StatCard } from "./enhanced-charts";
+import { 
+  startOfDay, 
+  endOfDay, 
+  subDays, 
+  startOfMonth, 
+  format, 
+  isWithinInterval,
+  eachDayOfInterval,
+  differenceInDays
+} from "date-fns";
 
 interface AnalyticsDashboardProps {
   records: Record<string, CampaignCallRecord>;
   stats: CampaignStats;
+}
+
+type DatePreset = "today" | "yesterday" | "last7days" | "last30days" | "thisMonth" | "allTime" | "custom";
+
+interface DateRange {
+  start: Date | null;
+  end: Date | null;
+  preset: DatePreset;
+}
+
+const DATE_PRESETS: { id: DatePreset; label: string }[] = [
+  { id: "today", label: "Today" },
+  { id: "yesterday", label: "Yesterday" },
+  { id: "last7days", label: "Last 7 Days" },
+  { id: "last30days", label: "Last 30 Days" },
+  { id: "thisMonth", label: "This Month" },
+  { id: "allTime", label: "All Time" },
+];
+
+function getDateRangeForPreset(preset: DatePreset): { start: Date | null; end: Date | null } {
+  const now = new Date();
+  switch (preset) {
+    case "today":
+      return { start: startOfDay(now), end: endOfDay(now) };
+    case "yesterday":
+      const yesterday = subDays(now, 1);
+      return { start: startOfDay(yesterday), end: endOfDay(yesterday) };
+    case "last7days":
+      return { start: startOfDay(subDays(now, 6)), end: endOfDay(now) };
+    case "last30days":
+      return { start: startOfDay(subDays(now, 29)), end: endOfDay(now) };
+    case "thisMonth":
+      return { start: startOfMonth(now), end: endOfDay(now) };
+    case "allTime":
+      return { start: null, end: null };
+    case "custom":
+      return { start: startOfDay(subDays(now, 6)), end: endOfDay(now) };
+    default:
+      return { start: null, end: null };
+  }
 }
 
 // Color palette for charts
@@ -59,24 +117,114 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 export function AnalyticsDashboard({ records, stats }: AnalyticsDashboardProps) {
+  // Date filter state - default to last 7 days
+  const [dateRange, setDateRange] = useState<DateRange>(() => ({
+    ...getDateRangeForPreset("last7days"),
+    preset: "last7days",
+  }));
+  const [customStartDate, setCustomStartDate] = useState("");
+  const [customEndDate, setCustomEndDate] = useState("");
+
   const recordsArray = useMemo(() => Object.values(records), [records]);
 
-  // Generate call volume over time data (last 7 days)
-  const volumeData = useMemo(() => {
-    const days: Record<string, { date: string; calls: number; completed: number; booked: number }> = {};
-    
-    // Initialize last 7 days
-    for (let i = 6; i >= 0; i--) {
-      const date = new Date();
-      date.setDate(date.getDate() - i);
-      const key = date.toISOString().split("T")[0];
-      const dayName = date.toLocaleDateString("en-US", { weekday: "short" });
-      days[key] = { date: dayName, calls: 0, completed: 0, booked: 0 };
+  // Filter records by date range
+  const filteredRecords = useMemo(() => {
+    if (!dateRange.start && !dateRange.end) {
+      return recordsArray; // All time - no filter
     }
+    return recordsArray.filter((record) => {
+      const recordDate = new Date(record.created_at);
+      if (dateRange.start && dateRange.end) {
+        return isWithinInterval(recordDate, { start: dateRange.start, end: dateRange.end });
+      }
+      if (dateRange.start) {
+        return recordDate >= dateRange.start;
+      }
+      if (dateRange.end) {
+        return recordDate <= dateRange.end;
+      }
+      return true;
+    });
+  }, [recordsArray, dateRange]);
 
-    // Count calls by day
-    recordsArray.forEach((record) => {
-      const date = new Date(record.created_at).toISOString().split("T")[0];
+  // Calculate filtered stats
+  const filteredStats = useMemo(() => {
+    const total_calls = filteredRecords.length;
+    const completed = filteredRecords.filter(r => r.status === "completed").length;
+    const booked = filteredRecords.filter(r => ["booked", "calendar_sent"].includes(r.status)).length;
+    const failed = filteredRecords.filter(r => r.status === "failed").length;
+    const in_progress = filteredRecords.filter(r => r.status === "in_progress").length;
+    const queued = filteredRecords.filter(r => r.status === "queued").length;
+    
+    const connectedCalls = filteredRecords.filter(r => 
+      ["completed", "booked", "calendar_sent"].includes(r.status) && r.duration_seconds
+    );
+    const totalDuration = connectedCalls.reduce((sum, r) => sum + (r.duration_seconds || 0), 0);
+    const avg_duration_seconds = connectedCalls.length > 0 ? Math.round(totalDuration / connectedCalls.length) : 0;
+    
+    const completedCount = completed + booked;
+    const booking_rate = completedCount > 0 ? (booked / completedCount) * 100 : 0;
+
+    return {
+      total_calls,
+      completed,
+      booked,
+      failed,
+      in_progress,
+      queued,
+      avg_duration_seconds,
+      booking_rate,
+    };
+  }, [filteredRecords]);
+
+  // Handle preset selection
+  const handlePresetSelect = (preset: DatePreset) => {
+    const range = getDateRangeForPreset(preset);
+    setDateRange({ ...range, preset });
+    if (preset !== "custom") {
+      setCustomStartDate("");
+      setCustomEndDate("");
+    }
+  };
+
+  // Handle custom date range
+  const handleCustomDateApply = () => {
+    if (customStartDate && customEndDate) {
+      setDateRange({
+        start: startOfDay(new Date(customStartDate)),
+        end: endOfDay(new Date(customEndDate)),
+        preset: "custom",
+      });
+    }
+  };
+
+  // Generate call volume over time data (dynamic based on date range)
+  const volumeData = useMemo(() => {
+    const days: Record<string, { date: string; fullDate: string; calls: number; completed: number; booked: number }> = {};
+    
+    // Determine date range for chart
+    const chartEnd = dateRange.end || new Date();
+    const chartStart = dateRange.start || subDays(chartEnd, 6);
+    const dayCount = differenceInDays(chartEnd, chartStart) + 1;
+    
+    // Generate days in range (max 30 for readability)
+    const daysToShow = Math.min(dayCount, 30);
+    const interval = eachDayOfInterval({
+      start: dayCount > 30 ? subDays(chartEnd, 29) : chartStart,
+      end: chartEnd,
+    });
+
+    interval.forEach((day) => {
+      const key = format(day, "yyyy-MM-dd");
+      const dayLabel = daysToShow <= 7 
+        ? format(day, "EEE") // "Mon", "Tue", etc.
+        : format(day, "MM/dd"); // "01/15", etc.
+      days[key] = { date: dayLabel, fullDate: key, calls: 0, completed: 0, booked: 0 };
+    });
+
+    // Count calls by day from filtered records
+    filteredRecords.forEach((record) => {
+      const date = format(new Date(record.created_at), "yyyy-MM-dd");
       if (days[date]) {
         days[date].calls++;
         if (["completed", "booked", "calendar_sent"].includes(record.status)) {
@@ -89,22 +237,35 @@ export function AnalyticsDashboard({ records, stats }: AnalyticsDashboardProps) 
     });
 
     return Object.values(days);
-  }, [recordsArray]);
+  }, [filteredRecords, dateRange]);
 
-  // Outcome funnel data
+  // Get chart title based on date range
+  const volumeChartTitle = useMemo(() => {
+    if (dateRange.preset === "allTime") return "Call Volume (All Time)";
+    if (dateRange.preset === "today") return "Call Volume (Today)";
+    if (dateRange.preset === "yesterday") return "Call Volume (Yesterday)";
+    if (dateRange.preset === "thisMonth") return "Call Volume (This Month)";
+    if (dateRange.preset === "last30days") return "Call Volume (Last 30 Days)";
+    if (dateRange.preset === "custom" && dateRange.start && dateRange.end) {
+      return `Call Volume (${format(dateRange.start, "MMM d")} - ${format(dateRange.end, "MMM d")})`;
+    }
+    return "Call Volume (Last 7 Days)";
+  }, [dateRange]);
+
+  // Outcome funnel data - use filtered stats
   const funnelData = useMemo(() => {
     return [
-      { name: "Total Calls", value: stats.total_calls, fill: COLORS.primary },
-      { name: "Completed", value: stats.completed + stats.booked, fill: COLORS.completed },
-      { name: "Booked", value: stats.booked, fill: COLORS.booked },
+      { name: "Total Calls", value: filteredStats.total_calls, fill: COLORS.primary },
+      { name: "Completed", value: filteredStats.completed + filteredStats.booked, fill: COLORS.completed },
+      { name: "Booked", value: filteredStats.booked, fill: COLORS.booked },
     ];
-  }, [stats]);
+  }, [filteredStats]);
 
-  // Calls by practitioner type
+  // Calls by practitioner type - use filtered records
   const typeData = useMemo(() => {
     const types: Record<string, number> = {};
     
-    recordsArray.forEach((record) => {
+    filteredRecords.forEach((record) => {
       const type = record.practitioner_type || "Unknown";
       types[type] = (types[type] || 0) + 1;
     });
@@ -113,13 +274,13 @@ export function AnalyticsDashboard({ records, stats }: AnalyticsDashboardProps) 
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 6);
-  }, [recordsArray]);
+  }, [filteredRecords]);
 
-  // Calls by province
+  // Calls by province - use filtered records
   const provinceData = useMemo(() => {
     const provinces: Record<string, number> = {};
     
-    recordsArray.forEach((record) => {
+    filteredRecords.forEach((record) => {
       const province = record.province || "Unknown";
       provinces[province] = (provinces[province] || 0) + 1;
     });
@@ -128,9 +289,9 @@ export function AnalyticsDashboard({ records, stats }: AnalyticsDashboardProps) 
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 8);
-  }, [recordsArray]);
+  }, [filteredRecords]);
 
-  // Status distribution for pie chart
+  // Status distribution for pie chart - use filtered records
   const statusData = useMemo(() => {
     const statusCounts: Record<string, number> = {
       completed: 0,
@@ -141,7 +302,7 @@ export function AnalyticsDashboard({ records, stats }: AnalyticsDashboardProps) 
       not_called: 0,
     };
 
-    recordsArray.forEach((record) => {
+    filteredRecords.forEach((record) => {
       if (record.status === "calendar_sent") {
         statusCounts.booked++;
       } else {
@@ -157,9 +318,9 @@ export function AnalyticsDashboard({ records, stats }: AnalyticsDashboardProps) 
       { name: "Queued", value: statusCounts.queued, fill: COLORS.queued },
       { name: "Not Called", value: statusCounts.not_called, fill: COLORS.notCalled },
     ].filter((item) => item.value > 0);
-  }, [recordsArray]);
+  }, [filteredRecords]);
 
-  // Best time to call heatmap data
+  // Best time to call heatmap data - use filtered records
   const heatmapData = useMemo(() => {
     const hours: Record<number, { connected: number; total: number }> = {};
     
@@ -168,7 +329,7 @@ export function AnalyticsDashboard({ records, stats }: AnalyticsDashboardProps) 
       hours[h] = { connected: 0, total: 0 };
     }
 
-    recordsArray.forEach((record) => {
+    filteredRecords.forEach((record) => {
       if (record.call_started_at) {
         const hour = new Date(record.call_started_at).getHours();
         if (hours[hour]) {
@@ -186,7 +347,7 @@ export function AnalyticsDashboard({ records, stats }: AnalyticsDashboardProps) 
       connected: data.connected,
       rate: data.total > 0 ? Math.round((data.connected / data.total) * 100) : 0,
     }));
-  }, [recordsArray]);
+  }, [filteredRecords]);
 
   // Chart configs
   const volumeChartConfig: ChartConfig = {
@@ -202,7 +363,83 @@ export function AnalyticsDashboard({ records, stats }: AnalyticsDashboardProps) 
   return (
     <div className="h-full overflow-auto">
       <div className="p-6 space-y-6">
-        {/* Summary Stats Row */}
+        {/* Date Filter */}
+        <Card>
+          <CardContent className="pt-4 pb-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <CalendarDays className="w-4 h-4" />
+                <span className="font-medium">Date Range:</span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {DATE_PRESETS.map((preset) => (
+                  <Button
+                    key={preset.id}
+                    variant={dateRange.preset === preset.id ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => handlePresetSelect(preset.id)}
+                    className="h-8"
+                  >
+                    {preset.label}
+                  </Button>
+                ))}
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant={dateRange.preset === "custom" ? "default" : "outline"}
+                      size="sm"
+                      className="h-8"
+                    >
+                      Custom
+                      <ChevronDown className="w-3 h-3 ml-1" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-80" align="end">
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="start-date">Start Date</Label>
+                        <Input
+                          id="start-date"
+                          type="date"
+                          value={customStartDate}
+                          onChange={(e) => setCustomStartDate(e.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="end-date">End Date</Label>
+                        <Input
+                          id="end-date"
+                          type="date"
+                          value={customEndDate}
+                          onChange={(e) => setCustomEndDate(e.target.value)}
+                        />
+                      </div>
+                      <Button 
+                        onClick={handleCustomDateApply} 
+                        className="w-full"
+                        disabled={!customStartDate || !customEndDate}
+                      >
+                        Apply Range
+                      </Button>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </div>
+              {dateRange.start && dateRange.end && (
+                <Badge variant="secondary" className="ml-auto">
+                  {format(dateRange.start, "MMM d, yyyy")} - {format(dateRange.end, "MMM d, yyyy")}
+                </Badge>
+              )}
+              {dateRange.preset === "allTime" && (
+                <Badge variant="secondary" className="ml-auto">
+                  All Time ({filteredRecords.length} records)
+                </Badge>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Summary Stats Row - use filteredStats */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <Card>
             <CardContent className="pt-4">
@@ -210,9 +447,9 @@ export function AnalyticsDashboard({ records, stats }: AnalyticsDashboardProps) 
                 <Phone className="w-4 h-4" />
                 Total Calls
               </div>
-              <div className="text-2xl font-bold">{stats.total_calls}</div>
+              <div className="text-2xl font-bold">{filteredStats.total_calls}</div>
               <div className="text-xs text-muted-foreground mt-1">
-                {stats.in_progress} active, {stats.queued} queued
+                {filteredStats.in_progress} active, {filteredStats.queued} queued
               </div>
             </CardContent>
           </Card>
@@ -223,12 +460,12 @@ export function AnalyticsDashboard({ records, stats }: AnalyticsDashboardProps) 
                 Connection Rate
               </div>
               <div className="text-2xl font-bold text-green-600">
-                {stats.total_calls > 0 
-                  ? Math.round(((stats.completed + stats.booked) / stats.total_calls) * 100)
+                {filteredStats.total_calls > 0 
+                  ? Math.round(((filteredStats.completed + filteredStats.booked) / filteredStats.total_calls) * 100)
                   : 0}%
               </div>
               <div className="text-xs text-muted-foreground mt-1">
-                {stats.completed + stats.booked} connected calls
+                {filteredStats.completed + filteredStats.booked} connected calls
               </div>
             </CardContent>
           </Card>
@@ -239,10 +476,10 @@ export function AnalyticsDashboard({ records, stats }: AnalyticsDashboardProps) 
                 Booking Rate
               </div>
               <div className="text-2xl font-bold text-purple-600">
-                {stats.booking_rate.toFixed(1)}%
+                {filteredStats.booking_rate.toFixed(1)}%
               </div>
               <div className="text-xs text-muted-foreground mt-1">
-                {stats.booked} appointments booked
+                {filteredStats.booked} appointments booked
               </div>
             </CardContent>
           </Card>
@@ -253,8 +490,8 @@ export function AnalyticsDashboard({ records, stats }: AnalyticsDashboardProps) 
                 Avg Duration
               </div>
               <div className="text-2xl font-bold">
-                {stats.avg_duration_seconds > 0
-                  ? `${Math.floor(stats.avg_duration_seconds / 60)}:${(stats.avg_duration_seconds % 60).toString().padStart(2, "0")}`
+                {filteredStats.avg_duration_seconds > 0
+                  ? `${Math.floor(filteredStats.avg_duration_seconds / 60)}:${(filteredStats.avg_duration_seconds % 60).toString().padStart(2, "0")}`
                   : "0:00"}
               </div>
               <div className="text-xs text-muted-foreground mt-1">
@@ -264,10 +501,10 @@ export function AnalyticsDashboard({ records, stats }: AnalyticsDashboardProps) 
           </Card>
         </div>
 
-        {/* Enhanced Visual Metrics */}
+        {/* Enhanced Visual Metrics - use filteredStats */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <GaugeChart
-            value={stats.total_calls > 0 ? Math.round(((stats.completed + stats.booked) / stats.total_calls) * 100) : 0}
+            value={filteredStats.total_calls > 0 ? Math.round(((filteredStats.completed + filteredStats.booked) / filteredStats.total_calls) * 100) : 0}
             max={100}
             title="Connection Rate"
             subtitle="of all calls"
@@ -275,7 +512,7 @@ export function AnalyticsDashboard({ records, stats }: AnalyticsDashboardProps) 
             size="sm"
           />
           <GaugeChart
-            value={Math.round(stats.booking_rate)}
+            value={Math.round(filteredStats.booking_rate)}
             max={100}
             title="Booking Rate"
             subtitle="of connected calls"
@@ -285,29 +522,29 @@ export function AnalyticsDashboard({ records, stats }: AnalyticsDashboardProps) 
           <Card className="flex flex-col items-center justify-center p-4">
             <RadialProgressChart
               data={[
-                { name: "Completed", value: stats.total_calls > 0 ? Math.round((stats.completed / stats.total_calls) * 100) : 0, fill: "hsl(142, 76%, 36%)" },
+                { name: "Completed", value: filteredStats.total_calls > 0 ? Math.round((filteredStats.completed / filteredStats.total_calls) * 100) : 0, fill: "hsl(142, 76%, 36%)" },
               ]}
               centerLabel="Completed"
-              centerValue={stats.completed}
+              centerValue={filteredStats.completed}
             />
           </Card>
           <Card className="flex flex-col items-center justify-center p-4">
             <RadialProgressChart
               data={[
-                { name: "Booked", value: stats.completed > 0 ? Math.round((stats.booked / stats.completed) * 100) : 0, fill: "hsl(262, 83%, 58%)" },
+                { name: "Booked", value: filteredStats.completed > 0 ? Math.round((filteredStats.booked / filteredStats.completed) * 100) : 0, fill: "hsl(262, 83%, 58%)" },
               ]}
               centerLabel="Booked"
-              centerValue={stats.booked}
+              centerValue={filteredStats.booked}
             />
           </Card>
         </div>
 
         {/* Charts Row 1 */}
         <div className="grid md:grid-cols-2 gap-6">
-          {/* Call Volume Over Time */}
+          {/* Call Volume Over Time - dynamic based on date filter */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Call Volume (Last 7 Days)</CardTitle>
+              <CardTitle className="text-base">{volumeChartTitle}</CardTitle>
               <CardDescription>Daily call activity and outcomes</CardDescription>
             </CardHeader>
             <CardContent>
