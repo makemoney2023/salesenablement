@@ -2448,6 +2448,17 @@ function CampaignPageContent() {
                     province: record.province || '',
                     phone: record.phone || null,
                     country: 'Canada',
+                    // Required PractitionerData fields with default values
+                    website: null,
+                    rating: null,
+                    review_count: null,
+                    business_status: 'OPERATIONAL',
+                    google_maps_uri: '',
+                    latitude: 0,
+                    longitude: 0,
+                    scraped_at: new Date().toISOString(),
+                    notes: '',
+                    is_user_added: true,
                   } as PractitionerData;
                 }
                 
