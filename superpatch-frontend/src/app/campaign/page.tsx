@@ -2414,9 +2414,37 @@ function CampaignPageContent() {
           ) : (
             <PipelineBoard
               records={callRecords}
-              onCardClick={(record) => {
+              onCardClick={async (record) => {
                 // Find the practitioner data and open detail drawer
-                const practitioner = practitioners.find(p => p.id === record.practitioner_id);
+                let practitioner = practitioners.find(p => p.id === record.practitioner_id);
+                
+                // If not in current list, try to fetch from API or create from record data
+                if (!practitioner && record.practitioner_id) {
+                  try {
+                    const response = await fetch(`/api/practitioners?id=${record.practitioner_id}`);
+                    const data = await response.json();
+                    if (data.practitioners?.length > 0) {
+                      practitioner = data.practitioners[0];
+                    }
+                  } catch (err) {
+                    console.warn('Failed to fetch practitioner:', err);
+                  }
+                }
+                
+                // Fallback: create minimal practitioner from call record
+                if (!practitioner && record.practitioner_id) {
+                  practitioner = {
+                    id: record.practitioner_id,
+                    name: record.practitioner_name || 'Unknown',
+                    practitioner_type: record.practitioner_type || 'Unknown',
+                    address: record.address || '',
+                    city: record.city || '',
+                    province: record.province || '',
+                    phone: record.phone || null,
+                    country: 'Canada',
+                  } as PractitionerData;
+                }
+                
                 if (practitioner) {
                   setSelectedPractitioner(practitioner);
                   setDetailDrawerOpen(true);

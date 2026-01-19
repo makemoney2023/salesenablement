@@ -377,6 +377,7 @@ export async function GET(request: NextRequest) {
   }
 
   // Parse parameters
+  const id = searchParams.get("id");
   const country = searchParams.get("country");
   const province = searchParams.get("province");
   const city = searchParams.get("city");
@@ -389,6 +390,25 @@ export async function GET(request: NextRequest) {
   const page = parseInt(searchParams.get("page") || "1");
   const limit = parseInt(searchParams.get("limit") || "100");
   const offset = (page - 1) * limit;
+
+  // Handle single practitioner lookup by ID
+  if (id) {
+    const useSupabase = await checkSupabaseTable();
+    if (useSupabase && supabaseAdmin) {
+      const { data, error } = await supabaseAdmin
+        .from('practitioners')
+        .select('*')
+        .eq('id', id)
+        .single();
+      
+      if (error || !data) {
+        return NextResponse.json({ practitioners: [], error: 'Practitioner not found' }, { status: 404 });
+      }
+      
+      return NextResponse.json({ practitioners: [data], source: 'supabase' });
+    }
+    return NextResponse.json({ practitioners: [], error: 'Database not available' }, { status: 500 });
+  }
 
   // Try Supabase first
   const useSupabase = await checkSupabaseTable();
