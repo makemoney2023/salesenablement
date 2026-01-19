@@ -440,7 +440,7 @@ export function usePlacesSearch(): UsePlacesSearchReturn {
         const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
         if (supabaseUrl && supabaseAnonKey) {
-          const enrichResponse = await fetch(`${supabaseUrl}/functions/v1/enrich-practitioners`, {
+          const enrichResponse = await fetch(`${supabaseUrl}/functions/v1/enrich-practitioners-v2`, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
