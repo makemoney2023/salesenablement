@@ -360,3 +360,31 @@ export interface RetryPolicy {
     timezone: string;
   };
 }
+
+// LinkedIn profile data from Firecrawl enrichment
+export interface LinkedInProfile {
+  name: string;
+  linkedin_url: string;
+  confidence: number;
+  search_query: string;
+  title: string;
+  description: string;
+  found_at: string;
+  credentials?: string;
+}
+
+export interface LinkedInProfiles {
+  team_members: LinkedInProfile[];
+  enriched_at: string;
+  total_found: number;
+  total_searched: number;
+  clinic_url?: string;
+}
+
+export type LinkedInEnrichmentStatus = 
+  | 'pending'
+  | 'in_progress'
+  | 'completed'
+  | 'no_profiles_found'
+  | 'failed'
+  | 'skipped';

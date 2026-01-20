@@ -4,6 +4,23 @@ import path from "path";
 import { supabaseAdmin, isSupabaseConfigured } from "@/lib/supabase";
 
 // Types
+interface LinkedInProfile {
+  name: string;
+  linkedin_url: string;
+  confidence: number;
+  title?: string;
+  description?: string;
+  credentials?: string;
+}
+
+interface LinkedInProfiles {
+  team_members: LinkedInProfile[];
+  enriched_at: string;
+  total_found: number;
+  total_searched: number;
+  clinic_url?: string | null;
+}
+
 interface Practitioner {
   id: string;
   name: string;
@@ -33,6 +50,8 @@ interface Practitioner {
   } | null;
   enrichment_status?: string;
   enriched_at?: string | null;
+  linkedin_profiles?: LinkedInProfiles | null;
+  linkedin_enrichment_status?: string | null;
 }
 
 interface PractitionerData {
@@ -466,10 +485,11 @@ export async function GET(request: NextRequest) {
         throw error;
       }
 
-      // Parse enrichment JSONB back to object
+      // Parse JSONB fields back to objects (in case they come as strings)
       const practitioners = (data || []).map((p: Record<string, unknown>) => ({
         ...p,
         enrichment: typeof p.enrichment === 'string' ? JSON.parse(p.enrichment as string) : p.enrichment,
+        linkedin_profiles: typeof p.linkedin_profiles === 'string' ? JSON.parse(p.linkedin_profiles as string) : p.linkedin_profiles,
       })) as Practitioner[];
 
       return NextResponse.json({

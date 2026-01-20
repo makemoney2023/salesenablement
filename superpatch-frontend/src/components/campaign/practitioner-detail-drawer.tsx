@@ -45,6 +45,7 @@ import {
   Ban,
   Trash2,
   Download,
+  Linkedin,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -98,6 +99,23 @@ interface EnrichmentData {
   };
 }
 
+// LinkedIn profile data
+interface LinkedInProfile {
+  name: string;
+  linkedin_url: string;
+  confidence: number;
+  title?: string;
+  description?: string;
+  credentials?: string;
+}
+
+interface LinkedInProfiles {
+  team_members: LinkedInProfile[];
+  enriched_at: string;
+  total_found: number;
+  total_searched: number;
+}
+
 // Qualification data from call conversations
 interface QualificationData {
   contact_name?: string | null;
@@ -118,6 +136,8 @@ interface QualificationData {
 
 interface PractitionerWithEnrichment extends Practitioner {
   enrichment?: EnrichmentData;
+  linkedin_profiles?: LinkedInProfiles;
+  linkedin_enrichment_status?: string;
   // Qualification fields from calls
   contact_name?: string | null;
   contact_role?: string | null;
@@ -208,6 +228,33 @@ export function PractitionerDetailDrawer({
 
   // Get enrichment data
   const enrichment = practitioner?.enrichment?.data;
+  const linkedinProfiles = practitioner?.linkedin_profiles;
+
+  // Helper to find LinkedIn profile for a team member by name
+  const getLinkedInProfile = (memberName: string): LinkedInProfile | undefined => {
+    if (!linkedinProfiles?.team_members) return undefined;
+    
+    const memberNameLower = memberName.toLowerCase();
+    return linkedinProfiles.team_members.find(profile => {
+      const profileNameLower = profile.name.toLowerCase();
+      // Match if names are similar (handle "Dr. John Smith" vs "John Smith")
+      const memberWords = memberNameLower.replace(/^dr\.?\s*/i, '').split(' ');
+      const profileWords = profileNameLower.replace(/^dr\.?\s*/i, '').split(' ');
+      
+      // Check if at least 2 words match
+      const matches = memberWords.filter(word => 
+        profileWords.some(pWord => pWord.includes(word) || word.includes(pWord))
+      );
+      return matches.length >= Math.min(2, memberWords.length);
+    });
+  };
+
+  // Get confidence color for LinkedIn match
+  const getConfidenceColor = (confidence: number): string => {
+    if (confidence >= 0.7) return 'text-green-600 dark:text-green-400';
+    if (confidence >= 0.5) return 'text-yellow-600 dark:text-yellow-400';
+    return 'text-gray-400 dark:text-gray-500';
+  };
 
   // Get initials for avatar
   const getInitials = (name: string) => {
@@ -552,6 +599,15 @@ export function PractitionerDetailDrawer({
                     Enriched
                   </Badge>
                 )}
+                {linkedinProfiles && linkedinProfiles.total_found > 0 && (
+                  <Badge
+                    variant="outline"
+                    className="bg-[#0077B5]/10 border-[#0077B5]/30 text-[#0077B5] dark:bg-[#0077B5]/20"
+                  >
+                    <Linkedin className="w-3 h-3 mr-1" />
+                    {linkedinProfiles.total_found} LinkedIn
+                  </Badge>
+                )}
                 {sentiment && (
                   <Badge
                     variant="secondary"
@@ -693,25 +749,71 @@ export function PractitionerDetailDrawer({
               {enrichment?.practitioners && enrichment.practitioners.length > 0 && (
                 <Card className="border-purple-200 bg-purple-50/50 dark:bg-purple-950/20 dark:border-purple-800">
                   <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium flex items-center gap-2 text-purple-700 dark:text-purple-300">
-                      <Users className="w-4 h-4" />
-                      Team Members ({enrichment.practitioners.length})
+                    <CardTitle className="text-sm font-medium flex items-center justify-between text-purple-700 dark:text-purple-300">
+                      <span className="flex items-center gap-2">
+                        <Users className="w-4 h-4" />
+                        Team Members ({enrichment.practitioners.length})
+                      </span>
+                      {linkedinProfiles && linkedinProfiles.total_found > 0 && (
+                        <Badge variant="outline" className="bg-[#0077B5]/10 border-[#0077B5]/30 text-[#0077B5] dark:bg-[#0077B5]/20 dark:text-[#0077B5]">
+                          <Linkedin className="w-3 h-3 mr-1" />
+                          {linkedinProfiles.total_found} LinkedIn
+                        </Badge>
+                      )}
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-2">
-                    {enrichment.practitioners.map((prac, idx) => (
-                      <div key={idx} className="flex items-center gap-2 py-1.5 px-2 bg-white/60 dark:bg-white/10 rounded-md">
-                        <Avatar className="h-7 w-7">
-                          <AvatarFallback className="text-[10px] bg-purple-100 text-purple-700">
-                            {getInitials(prac.name)}
-                          </AvatarFallback>
-                        </Avatar>
-                        <div>
-                          <p className="text-sm font-medium">{prac.name}</p>
-                          <p className="text-xs text-muted-foreground">{prac.credentials}</p>
+                    {enrichment.practitioners.map((prac, idx) => {
+                      const linkedinProfile = getLinkedInProfile(prac.name);
+                      return (
+                        <div key={idx} className="flex items-center justify-between gap-2 py-1.5 px-2 bg-white/60 dark:bg-white/10 rounded-md">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <Avatar className="h-7 w-7 shrink-0">
+                              <AvatarFallback className="text-[10px] bg-purple-100 text-purple-700">
+                                {getInitials(prac.name)}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium truncate">{prac.name}</p>
+                              <p className="text-xs text-muted-foreground">{prac.credentials}</p>
+                            </div>
+                          </div>
+                          {linkedinProfile && (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <a
+                                    href={linkedinProfile.linkedin_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className={`shrink-0 p-1.5 rounded-md hover:bg-[#0077B5]/10 transition-colors ${getConfidenceColor(linkedinProfile.confidence)}`}
+                                  >
+                                    <Linkedin className="w-4 h-4" />
+                                  </a>
+                                </TooltipTrigger>
+                                <TooltipContent side="left" className="max-w-[280px]">
+                                  <div className="space-y-1">
+                                    <p className="font-medium text-sm">{linkedinProfile.title || 'LinkedIn Profile'}</p>
+                                    {linkedinProfile.description && (
+                                      <p className="text-xs text-muted-foreground line-clamp-2">
+                                        {linkedinProfile.description}
+                                      </p>
+                                    )}
+                                    <div className="flex items-center gap-2 pt-1">
+                                      <span className={`text-xs font-medium ${getConfidenceColor(linkedinProfile.confidence)}`}>
+                                        {Math.round(linkedinProfile.confidence * 100)}% match
+                                      </span>
+                                      <span className="text-xs text-muted-foreground">•</span>
+                                      <span className="text-xs text-muted-foreground">Click to view</span>
+                                    </div>
+                                  </div>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          )}
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </CardContent>
                 </Card>
               )}
@@ -1111,6 +1213,30 @@ export function PractitionerDetailDrawer({
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>Open Website</TooltipContent>
+                </Tooltip>
+              )}
+
+              {linkedinProfiles && linkedinProfiles.total_found > 0 && linkedinProfiles.team_members[0] && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button 
+                      variant="outline" 
+                      size="lg" 
+                      className="text-[#0077B5] hover:text-[#0077B5] hover:bg-[#0077B5]/10 border-[#0077B5]/30"
+                      asChild
+                    >
+                      <a 
+                        href={linkedinProfiles.team_members[0].linkedin_url} 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                      >
+                        <Linkedin className="w-4 h-4" />
+                      </a>
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    View LinkedIn ({linkedinProfiles.total_found} profile{linkedinProfiles.total_found > 1 ? 's' : ''})
+                  </TooltipContent>
                 </Tooltip>
               )}
 
