@@ -34,7 +34,8 @@ const PATHWAYS: Record<string, string> = {
 const DEFAULT_PATHWAY = "9aa760af-6f9a-430f-8d0c-25bf84afd8fb"; // Chiropractors
 const KB_ID = "b671527d-0c2d-4a21-9586-033dad3b0255";
 const VOICE_ID = "78c8543e-e5fe-448e-8292-20a7b8c45247";
-const WEBHOOK_URL = process.env.NEXT_PUBLIC_BLAND_WEBHOOK_URL || "https://sales-enablement-six.vercel.app/api/webhooks/bland";
+// Use Supabase Edge Function for webhook - lower latency, same infrastructure as database
+const WEBHOOK_URL = process.env.NEXT_PUBLIC_BLAND_WEBHOOK_URL || "https://gdwwppwaxyvudsecexuq.supabase.co/functions/v1/webhook-processor";
 // Bland Memory Store ID for cross-call context retention
 const MEMORY_ID = process.env.NEXT_PUBLIC_BLAND_MEMORY_ID || "";
 

@@ -1071,7 +1071,7 @@ function CampaignPageContent() {
         wait_for_greeting: true,
         record: true,
         max_duration: 15,
-        webhook: process.env.NEXT_PUBLIC_BLAND_WEBHOOK_URL || "https://sales-enablement-six.vercel.app/api/webhooks/bland",
+        webhook: process.env.NEXT_PUBLIC_BLAND_WEBHOOK_URL || "https://gdwwppwaxyvudsecexuq.supabase.co/functions/v1/webhook-processor",
         request_data: requestData,
         metadata: {
           campaign: 'quick_call',
@@ -1100,7 +1100,7 @@ function CampaignPageContent() {
       const result = await response.json();
       
       if (result.status === 'success') {
-        // Create call record
+        // Create call record with call_id for webhook matching
         createCallRecord({
           id: quickCallResult.id,
           name: quickCallResult.name,
@@ -1109,6 +1109,7 @@ function CampaignPageContent() {
           address: quickCallResult.address,
           city: quickCallResult.city,
           province: quickCallResult.province,
+          call_id: result.call_id,  // Critical: Save call_id so webhook can update this record
         });
         loadCallRecords();
         
@@ -1209,7 +1210,7 @@ function CampaignPageContent() {
         wait_for_greeting: true,
         record: true,
         max_duration: 15,
-        webhook: process.env.NEXT_PUBLIC_BLAND_WEBHOOK_URL || "https://sales-enablement-six.vercel.app/api/webhooks/bland",
+        webhook: process.env.NEXT_PUBLIC_BLAND_WEBHOOK_URL || "https://gdwwppwaxyvudsecexuq.supabase.co/functions/v1/webhook-processor",
         request_data: requestData,
         metadata: {
           campaign: 'quick_call',
@@ -1279,7 +1280,8 @@ function CampaignPageContent() {
           console.error('Failed to save practitioner (call still succeeded):', saveError);
         }
         
-        // Create call record with proper practitioner ID
+        // Create call record with proper practitioner ID and call_id
+        // The call_id is critical - it allows the Bland.ai webhook to find and update this record
         const callRecordId = practitionerId || result.call_id || `manual-${Date.now()}`;
         createCallRecord({
           id: callRecordId,
@@ -1289,6 +1291,7 @@ function CampaignPageContent() {
           address: quickCallAddress || '',
           city: quickCallCity || '',
           province: quickCallProvince || '',
+          call_id: result.call_id,  // Critical: Save call_id so webhook can update this record
         });
         
         callNotifications.started(callTarget);

@@ -118,6 +118,9 @@ export function saveCallRecord(record: CampaignCallRecord): void {
 /**
  * Create a new call record for a practitioner
  * Now syncs to Supabase via API
+ * 
+ * @param practitioner - Practitioner data including optional call_id from Bland.ai
+ * @returns The created call record
  */
 export function createCallRecord(practitioner: {
   id: string;
@@ -127,8 +130,13 @@ export function createCallRecord(practitioner: {
   address: string;
   city: string;
   province: string;
+  call_id?: string;  // Bland.ai call_id - critical for webhook to find this record
 }): CampaignCallRecord {
   const now = new Date().toISOString();
+  
+  // Determine initial status based on whether call_id is present
+  // If we have a call_id, the call has been initiated
+  const initialStatus: CallStatus = practitioner.call_id ? 'in_progress' : 'not_called';
   
   const record: CampaignCallRecord = {
     practitioner_id: practitioner.id,
@@ -138,7 +146,9 @@ export function createCallRecord(practitioner: {
     address: practitioner.address,
     city: practitioner.city,
     province: practitioner.province,
-    status: 'not_called',
+    call_id: practitioner.call_id,  // Save call_id so webhook can find this record
+    status: initialStatus,
+    call_started_at: practitioner.call_id ? now : undefined,  // Set start time if call initiated
     appointment_booked: false,
     calendar_invite_sent: false,
     created_at: now,
@@ -161,7 +171,9 @@ export function createCallRecord(practitioner: {
         address: practitioner.address,
         city: practitioner.city,
         province: practitioner.province,
-        status: 'not_called',
+        call_id: practitioner.call_id,  // Include call_id in Supabase sync
+        status: initialStatus,
+        call_started_at: practitioner.call_id ? now : undefined,
       }),
     }).catch(err => console.warn('Failed to sync call record to Supabase:', err));
   }

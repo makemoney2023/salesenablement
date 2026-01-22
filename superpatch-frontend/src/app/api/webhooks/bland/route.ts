@@ -1,3 +1,18 @@
+/**
+ * @deprecated This Vercel webhook route is deprecated.
+ * 
+ * The primary webhook handler has been migrated to Supabase Edge Function:
+ * https://gdwwppwaxyvudsecexuq.supabase.co/functions/v1/webhook-processor
+ * 
+ * Benefits of the Edge Function:
+ * - Lower latency (same infrastructure as database)
+ * - Better reliability (fewer moving parts)
+ * - Centralized logging in Supabase dashboard
+ * 
+ * This route is kept as a fallback. New calls should use the Edge Function.
+ * To fully migrate, update NEXT_PUBLIC_BLAND_WEBHOOK_URL environment variable.
+ */
+
 import { NextRequest, NextResponse } from "next/server";
 import { serverUpsertCallRecord, serverUpdateByCallId } from "@/lib/db/call-records";
 import { supabaseAdmin, isSupabaseConfigured } from "@/lib/supabase";
@@ -704,8 +719,10 @@ async function getPractitionerRetryCount(practitionerId: string): Promise<number
 }
 
 // POST /api/webhooks/bland - Handle Bland.ai call completion webhooks
+// @deprecated - Use Supabase Edge Function webhook-processor instead
 export async function POST(request: NextRequest) {
-  console.log("🔔 WEBHOOK RECEIVED - Starting processing...");
+  console.log("🔔 WEBHOOK RECEIVED (Vercel - DEPRECATED) - Starting processing...");
+  console.warn("⚠️ This webhook route is deprecated. Please use the Supabase Edge Function: webhook-processor");
   
   try {
     const payload: BlandWebhookPayload = await request.json();
