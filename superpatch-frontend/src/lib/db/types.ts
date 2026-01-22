@@ -37,6 +37,22 @@ export type RetryReason =
   | 'busy'
   | 'manual_retry';
 
+export type AppointmentStatus = 
+  | 'scheduled'
+  | 'confirmed'
+  | 'completed'
+  | 'cancelled'
+  | 'no_show'
+  | 'rescheduled';
+
+export type AppointmentType = 
+  | 'demo'
+  | 'follow_up'
+  | 'in_person'
+  | 'other';
+
+export type LocationType = 'in_person' | 'phone' | 'video';
+
 // Qualification types for lead scoring
 export type InterestLevel = 'high' | 'medium' | 'low' | 'not_interested';
 
@@ -295,6 +311,82 @@ export interface Database {
           updated_at?: string;
         };
       };
+      appointments: {
+        Row: {
+          id: string;
+          practitioner_id: string | null;
+          call_record_id: string | null;
+          type: AppointmentType;
+          title: string | null;
+          scheduled_at: string;
+          duration_minutes: number;
+          status: AppointmentStatus;
+          cal_booking_id: string | null;
+          cal_booking_uid: string | null;
+          calendar_invite_sent: boolean;
+          attendee_name: string | null;
+          attendee_email: string | null;
+          attendee_phone: string | null;
+          location_type: LocationType | null;
+          location_address: string | null;
+          notes: string | null;
+          products_interested: string | null;
+          created_at: string;
+          updated_at: string;
+          completed_at: string | null;
+          cancelled_at: string | null;
+          cancellation_reason: string | null;
+        };
+        Insert: {
+          id?: string;
+          practitioner_id?: string | null;
+          call_record_id?: string | null;
+          type?: AppointmentType;
+          title?: string | null;
+          scheduled_at: string;
+          duration_minutes?: number;
+          status?: AppointmentStatus;
+          cal_booking_id?: string | null;
+          cal_booking_uid?: string | null;
+          calendar_invite_sent?: boolean;
+          attendee_name?: string | null;
+          attendee_email?: string | null;
+          attendee_phone?: string | null;
+          location_type?: LocationType | null;
+          location_address?: string | null;
+          notes?: string | null;
+          products_interested?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          completed_at?: string | null;
+          cancelled_at?: string | null;
+          cancellation_reason?: string | null;
+        };
+        Update: {
+          id?: string;
+          practitioner_id?: string | null;
+          call_record_id?: string | null;
+          type?: AppointmentType;
+          title?: string | null;
+          scheduled_at?: string;
+          duration_minutes?: number;
+          status?: AppointmentStatus;
+          cal_booking_id?: string | null;
+          cal_booking_uid?: string | null;
+          calendar_invite_sent?: boolean;
+          attendee_name?: string | null;
+          attendee_email?: string | null;
+          attendee_phone?: string | null;
+          location_type?: LocationType | null;
+          location_address?: string | null;
+          notes?: string | null;
+          products_interested?: string | null;
+          updated_at?: string;
+          completed_at?: string | null;
+          cancelled_at?: string | null;
+          cancellation_reason?: string | null;
+        };
+      };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;
@@ -315,6 +407,10 @@ export type CampaignAnalytics = Database['public']['Tables']['campaign_analytics
 export type SampleRequest = Database['public']['Tables']['sample_requests']['Row'];
 export type SampleRequestInsert = Database['public']['Tables']['sample_requests']['Insert'];
 export type SampleRequestUpdate = Database['public']['Tables']['sample_requests']['Update'];
+
+export type Appointment = Database['public']['Tables']['appointments']['Row'];
+export type AppointmentInsert = Database['public']['Tables']['appointments']['Insert'];
+export type AppointmentUpdate = Database['public']['Tables']['appointments']['Update'];
 
 // Stats type (computed from call_records)
 export interface CampaignStats {

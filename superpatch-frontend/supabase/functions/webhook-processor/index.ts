@@ -560,6 +560,7 @@ serve(async (req) => {
           "Links calls to practitioners by phone lookup",
           "Extracts scheduling variables",
           "Triggers book-appointment edge function for demos",
+          "Creates appointment records in appointments table",
           "Stores transcripts and summaries",
           "Tracks voicemail status",
           "Creates sample requests when requested",
@@ -817,6 +818,7 @@ serve(async (req) => {
     }
 
     // Trigger appointment booking if needed (decoupled via edge function)
+    // This will create both Cal.com booking AND appointment record in our table
     if (wantsDemo && appointmentTime && resolvedPractitionerName && resolvedEmail && payload.completed && savedRecord?.id) {
       console.log("🗓️ Triggering appointment booking...");
       try {
@@ -828,6 +830,7 @@ serve(async (req) => {
           },
           body: JSON.stringify({
             call_record_id: savedRecord.id,
+            practitioner_id: resolvedPractitionerId,  // Pass practitioner ID for appointments table
             practitioner_name: resolvedPractitionerName,
             practitioner_email: resolvedEmail,
             appointment_time: appointmentTime,
@@ -837,9 +840,10 @@ serve(async (req) => {
             summary: payload.analysis?.summary,
             practice_name: practiceName,
             products: productsInterested,
+            appointment_type: "demo",  // Default type for demo bookings from calls
           }),
         });
-        console.log("📅 Appointment booking triggered");
+        console.log("📅 Appointment booking triggered (will create Cal.com booking + appointment record)");
       } catch (bookingError) {
         console.error("Failed to trigger booking:", bookingError);
       }

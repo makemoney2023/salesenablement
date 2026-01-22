@@ -12,6 +12,7 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "
 
 interface BookingRequest {
   call_record_id: string;
+  practitioner_id?: string;
   practitioner_name: string;
   practitioner_email?: string;
   appointment_time: string;
@@ -21,6 +22,7 @@ interface BookingRequest {
   summary?: string;
   practice_name?: string;
   products?: string;
+  appointment_type?: string;  // demo, follow_up, in_person, other
 }
 
 interface CalComBookingResponse {
@@ -125,6 +127,49 @@ async function updateCallRecord(
 }
 
 /**
+ * Create appointment record in the appointments table
+ */
+async function createAppointmentRecord(
+  supabase: ReturnType<typeof createClient>,
+  data: BookingRequest,
+  booking: CalComBookingResponse
+): Promise<string | null> {
+  const appointmentData = {
+    practitioner_id: data.practitioner_id || null,
+    call_record_id: data.call_record_id,
+    type: data.appointment_type || 'demo',
+    title: booking.title,
+    scheduled_at: booking.startTime,
+    duration_minutes: 30,
+    status: 'scheduled',
+    cal_booking_id: String(booking.id),
+    cal_booking_uid: booking.uid,
+    calendar_invite_sent: true,
+    attendee_name: data.practitioner_name,
+    attendee_email: data.practitioner_email || null,
+    attendee_phone: data.phone || null,
+    location_type: 'in_person',
+    location_address: data.address || null,
+    notes: data.summary || null,
+    products_interested: data.products || null,
+  };
+
+  const { data: appointment, error } = await supabase
+    .from("appointments")
+    .insert(appointmentData)
+    .select("id")
+    .single();
+
+  if (error) {
+    console.error("Failed to create appointment record:", error.message);
+    return null;
+  }
+
+  console.log("✅ Appointment record created:", appointment.id);
+  return appointment.id;
+}
+
+/**
  * Log booking failure for retry
  */
 async function logBookingFailure(
@@ -183,7 +228,7 @@ serve(async (req) => {
     // Initialize Supabase client
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    // Check if booking already exists
+    // Check if booking already exists in call_records (legacy) or appointments table
     const { data: existingRecord } = await supabase
       .from("call_records")
       .select("booking_id")
@@ -191,12 +236,32 @@ serve(async (req) => {
       .single();
 
     if (existingRecord?.booking_id) {
-      console.log("⏭️ Booking already exists, skipping");
+      console.log("⏭️ Booking already exists in call_records, skipping");
       return new Response(
         JSON.stringify({ 
           success: true, 
           message: "Booking already exists",
           booking_id: existingRecord.booking_id 
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    // Also check appointments table
+    const { data: existingAppointment } = await supabase
+      .from("appointments")
+      .select("id, cal_booking_uid")
+      .eq("call_record_id", body.call_record_id)
+      .single();
+
+    if (existingAppointment?.cal_booking_uid) {
+      console.log("⏭️ Appointment already exists, skipping");
+      return new Response(
+        JSON.stringify({ 
+          success: true, 
+          message: "Appointment already exists",
+          appointment_id: existingAppointment.id,
+          booking_id: existingAppointment.cal_booking_uid 
         }),
         { status: 200, headers: { "Content-Type": "application/json" } }
       );
@@ -211,7 +276,7 @@ serve(async (req) => {
       status: booking.status,
     });
 
-    // Update call record with booking info
+    // Update call record with booking info (for backward compatibility)
     await updateCallRecord(
       supabase,
       body.call_record_id,
@@ -220,6 +285,9 @@ serve(async (req) => {
     );
 
     console.log("✅ Call record updated with booking info");
+
+    // Create appointment record in the new appointments table
+    const appointmentId = await createAppointmentRecord(supabase, body, booking);
 
     return new Response(
       JSON.stringify({
@@ -231,6 +299,7 @@ serve(async (req) => {
           startTime: booking.startTime,
           status: booking.status,
         },
+        appointment_id: appointmentId,
       }),
       { 
         status: 200, 

@@ -83,13 +83,109 @@ async function fetchCalBookings(
 }
 
 /**
- * Sync a single booking to Supabase
+ * Map Cal.com status to appointment status
+ */
+function mapCalStatusToAppointmentStatus(calStatus: string): string {
+  switch (calStatus.toUpperCase()) {
+    case "ACCEPTED":
+    case "PENDING":
+      return "scheduled";
+    case "CANCELLED":
+      return "cancelled";
+    case "REJECTED":
+      return "cancelled";
+    default:
+      return "scheduled";
+  }
+}
+
+/**
+ * Sync a single booking to the appointments table
+ */
+async function syncToAppointmentsTable(
+  supabase: ReturnType<typeof createClient>,
+  booking: CalBooking
+): Promise<{ synced: boolean; error?: string }> {
+  try {
+    // Find existing appointment by cal_booking_uid
+    const { data: existingAppointment } = await supabase
+      .from("appointments")
+      .select("id, status, scheduled_at")
+      .eq("cal_booking_uid", booking.uid)
+      .single();
+
+    if (!existingAppointment) {
+      // No appointment record found - skip (it wasn't created through our system)
+      return { synced: false };
+    }
+
+    const appointmentUpdates: Record<string, unknown> = {
+      updated_at: new Date().toISOString(),
+    };
+
+    // Map Cal.com status to our status
+    const newStatus = mapCalStatusToAppointmentStatus(booking.status);
+    
+    if (existingAppointment.status !== newStatus) {
+      appointmentUpdates.status = newStatus;
+      
+      if (newStatus === "cancelled") {
+        appointmentUpdates.cancelled_at = new Date().toISOString();
+        appointmentUpdates.cancellation_reason = `Cancelled via Cal.com at ${booking.updatedAt}`;
+      }
+    }
+
+    // Check if scheduled time changed (rescheduled)
+    const existingTime = existingAppointment.scheduled_at
+      ? new Date(existingAppointment.scheduled_at).toISOString()
+      : null;
+    const bookingTime = new Date(booking.startTime).toISOString();
+
+    if (existingTime !== bookingTime) {
+      appointmentUpdates.scheduled_at = bookingTime;
+      // Mark as rescheduled if times differ and not cancelled
+      if (newStatus !== "cancelled" && existingTime) {
+        appointmentUpdates.status = "rescheduled";
+      }
+      console.log(`📅 Appointment ${existingAppointment.id} rescheduled: ${existingTime} -> ${bookingTime}`);
+    }
+
+    // Update appointment record
+    const { error } = await supabase
+      .from("appointments")
+      .update(appointmentUpdates)
+      .eq("id", existingAppointment.id);
+
+    if (error) {
+      return { synced: false, error: error.message };
+    }
+
+    return { synced: true };
+  } catch (error) {
+    return { 
+      synced: false, 
+      error: error instanceof Error ? error.message : "Unknown error" 
+    };
+  }
+}
+
+/**
+ * Sync a single booking to Supabase (both call_records and appointments tables)
  */
 async function syncBooking(
   supabase: ReturnType<typeof createClient>,
   booking: CalBooking
 ): Promise<{ action: "created" | "updated" | "cancelled" | "skipped"; error?: string }> {
   try {
+    // First, sync to appointments table (new system)
+    const appointmentResult = await syncToAppointmentsTable(supabase, booking);
+    if (appointmentResult.error) {
+      console.warn(`⚠️ Failed to sync to appointments table: ${appointmentResult.error}`);
+    } else if (appointmentResult.synced) {
+      console.log(`✅ Synced booking ${booking.uid} to appointments table`);
+    }
+
+    // Then, sync to call_records table (legacy, for backward compatibility)
     // Try to find existing call record by booking_id (uid)
     const { data: existingByBookingId } = await supabase
       .from("call_records")
@@ -112,6 +208,10 @@ async function syncBooking(
 
     if (!existing) {
       // Booking not linked to any call record - could be manually created
+      // Still consider it synced if we updated the appointments table
+      if (appointmentResult.synced) {
+        return { action: "updated" };
+      }
       console.log(`⏭️ Booking ${booking.uid} not linked to any call record, skipping`);
       return { action: "skipped" };
     }
