@@ -25,6 +25,8 @@ import {
   CalendarCheck,
   Activity,
   Lightbulb,
+  Mail,
+  Box,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 
@@ -246,6 +248,26 @@ export function AppSidebar({
       title: "Pathway Insights",
       url: "/campaign/pathway-suggestions",
       icon: Lightbulb,
+    },
+    {
+      title: "Follow-Up Queue",
+      url: "/campaign/follow-up-queue",
+      icon: Mail,
+    },
+    {
+      title: "Appointments",
+      url: "/campaign/appointments",
+      icon: CalendarCheck,
+    },
+    {
+      title: "Reports",
+      url: "/campaign/reports",
+      icon: Activity,
+    },
+    {
+      title: "Sample Requests",
+      url: "/campaign/samples",
+      icon: Package,
     },
   ];
 

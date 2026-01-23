@@ -75,6 +75,8 @@ import { CallStatus } from "@/lib/db/types";
 import { getBatchCaller, Practitioner } from "@/lib/batch-caller";
 import { LeadScoreGauge } from "./lead-score-gauge";
 import { DrawerCallTimeline } from "./drawer-call-timeline";
+import { LLMAnalysisPanel } from "./llm-analysis-panel";
+import type { LLMAnalysisData, AnalysisStatus } from "@/lib/db/types";
 
 // Enrichment data types
 interface EnrichmentPractitioner {
@@ -202,6 +204,11 @@ export function PractitionerDetailDrawer({
     sentiment_score?: number;
     lead_score?: number;
     recording_url?: string;
+    // LLM Analysis fields
+    llm_analysis?: LLMAnalysisData | null;
+    llm_lead_score?: number | null;
+    llm_analyzed_at?: string | null;
+    analysis_status?: AnalysisStatus | null;
   } | null>(null);
   const [callNotes, setCallNotes] = useState<Array<{
     id: string;
@@ -315,6 +322,11 @@ export function PractitionerDetailDrawer({
           sentiment_score: data.record.sentiment_score,
           lead_score: data.record.lead_score,
           recording_url: data.record.recording_url,
+          // LLM Analysis fields
+          llm_analysis: data.record.llm_analysis,
+          llm_lead_score: data.record.llm_lead_score,
+          llm_analyzed_at: data.record.llm_analyzed_at,
+          analysis_status: data.record.analysis_status,
         });
         
         // Fetch call notes if we have a call record ID
@@ -674,6 +686,18 @@ export function PractitionerDetailDrawer({
               Qualification
               {(practitioner?.contact_name || practitioner?.interest_level || practitioner?.decision_maker) && (
                 <Badge variant="secondary" className="ml-1.5 text-[10px] px-1.5 py-0">
+                  <Sparkles className="w-2.5 h-2.5" />
+                </Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger
+              value="ai-analysis"
+              className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3"
+            >
+              <Brain className="w-4 h-4 mr-2" />
+              AI Analysis
+              {callIntelligence?.analysis_status === "completed" && callIntelligence?.llm_analysis && (
+                <Badge variant="secondary" className="ml-1.5 text-[10px] px-1.5 py-0 bg-purple-100 text-purple-800 dark:bg-purple-900/50 dark:text-purple-300">
                   <Sparkles className="w-2.5 h-2.5" />
                 </Badge>
               )}
@@ -1158,6 +1182,17 @@ export function PractitionerDetailDrawer({
                   )}
                 </>
               )}
+            </TabsContent>
+
+            {/* AI Analysis Tab - LLM-generated insights */}
+            <TabsContent value="ai-analysis" className="m-0 p-6 space-y-4">
+              <LLMAnalysisPanel
+                analysis={callIntelligence?.llm_analysis || null}
+                llmLeadScore={callIntelligence?.llm_lead_score || null}
+                analysisStatus={callIntelligence?.analysis_status || null}
+                analyzedAt={callIntelligence?.llm_analyzed_at || null}
+                ruleBasedScore={callIntelligence?.lead_score}
+              />
             </TabsContent>
           </ScrollArea>
         </Tabs>

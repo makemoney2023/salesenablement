@@ -53,6 +53,39 @@ export type AppointmentType =
 
 export type LocationType = 'in_person' | 'phone' | 'video';
 
+// LLM Analysis status
+export type AnalysisStatus = 'pending' | 'processing' | 'completed' | 'failed';
+
+// LLM Analysis data structure (stored in llm_analysis JSONB column)
+export interface LLMAnalysisData {
+  // Structured extraction
+  objections_raised?: string[];
+  buying_signals?: string[];
+  pain_points?: string[];
+  products_discussed?: string[];
+  decision_maker_spoke?: boolean;
+  competitor_mentions?: string[];
+  next_steps_agreed?: string | null;
+  timeline_mentioned?: string | null;
+  budget_discussed?: boolean;
+  practice_size_mentioned?: number | null;
+  contact_name_extracted?: string | null;
+  contact_role_extracted?: string | null;
+  email_extracted?: string | null;
+  // Lead score reasoning
+  lead_score_reasoning?: string;
+  // Follow-up content (if generated)
+  follow_up?: {
+    subject?: string;
+    content?: string;
+    context_data?: {
+      products_mentioned?: string[];
+      studies_to_reference?: string[];
+      objections_to_address?: string[];
+    };
+  };
+}
+
 // Qualification types for lead scoring
 export type InterestLevel = 'high' | 'medium' | 'low' | 'not_interested';
 
@@ -130,6 +163,11 @@ export interface Database {
           sentiment_label: string | null;
           recording_url: string | null;
           lead_score: number;
+          // LLM Analysis fields
+          llm_analysis: LLMAnalysisData | null;
+          llm_lead_score: number | null;
+          llm_analyzed_at: string | null;
+          analysis_status: AnalysisStatus | null;
           created_at: string;
           updated_at: string;
         };
@@ -159,6 +197,11 @@ export interface Database {
           sentiment_label?: string | null;
           recording_url?: string | null;
           lead_score?: number;
+          // LLM Analysis fields
+          llm_analysis?: LLMAnalysisData | null;
+          llm_lead_score?: number | null;
+          llm_analyzed_at?: string | null;
+          analysis_status?: AnalysisStatus | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -188,6 +231,11 @@ export interface Database {
           practitioner_email?: string | null;
           booking_id?: string | null;
           notes?: string | null;
+          // LLM Analysis fields
+          llm_analysis?: LLMAnalysisData | null;
+          llm_lead_score?: number | null;
+          llm_analyzed_at?: string | null;
+          analysis_status?: AnalysisStatus | null;
           updated_at?: string;
         };
       };

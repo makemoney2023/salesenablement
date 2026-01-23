@@ -492,6 +492,11 @@ function convertLocalStorageRecord(record: localStorage.CampaignCallRecord): Cal
     sentiment_label: null,
     recording_url: null,
     lead_score: 0,
+    // LLM Analysis fields (not available in localStorage)
+    llm_analysis: null,
+    llm_lead_score: null,
+    llm_analyzed_at: null,
+    analysis_status: null,
     created_at: record.created_at,
     updated_at: record.updated_at,
   };
