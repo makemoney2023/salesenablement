@@ -6,3 +6,4 @@ export { useFollowUpQueue } from './useFollowUpQueue';
 export { useAppointments } from './useAppointments';
 export { useDailyReports } from './useDailyReports';
 export { useSampleRequests } from './useSampleRequests';
+export { useSidebarBadges } from './useSidebarBadges';

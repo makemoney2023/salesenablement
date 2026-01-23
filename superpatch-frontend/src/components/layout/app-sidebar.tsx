@@ -29,6 +29,7 @@ import {
   Box,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { useSidebarBadges } from "@/hooks/useSidebarBadges";
 
 import {
   Sidebar,
@@ -157,6 +158,7 @@ export function AppSidebar({
 }: AppSidebarProps) {
   const pathname = usePathname();
   const quickStats = useQuickStats();
+  const { counts: badgeCounts } = useSidebarBadges();
 
   // Filter products by current market (for D2C)
   const marketProducts = products.filter((p) =>
@@ -211,34 +213,8 @@ export function AppSidebar({
     return [];
   };
 
-  // Navigation structure
+  // Navigation structure - focused on campaign/call center features
   const navigation: NavItem[] = [
-    {
-      title: "Home",
-      url: "/",
-      icon: Home,
-    },
-    ...getNavigationItems(),
-    {
-      title: "Roadmaps",
-      url: `/${currentMarket}/roadmaps`,
-      icon: Map,
-    },
-    {
-      title: "Clinical Evidence",
-      url: "/evidence",
-      icon: FlaskConical,
-    },
-    {
-      title: "Practice Mode",
-      url: "/practice",
-      icon: GraduationCap,
-    },
-    {
-      title: "Favorites",
-      url: "/favorites",
-      icon: Star,
-    },
     {
       title: "Call Center",
       url: "/campaign",
@@ -435,17 +411,34 @@ export function AppSidebar({
                   );
                 }
 
-                // Regular menu item
+                // Regular menu item - with badge support for specific items
+                const getBadgeCount = () => {
+                  if (item.title === "Sample Requests") return badgeCounts.samples;
+                  if (item.title === "Appointments") return badgeCounts.appointments;
+                  if (item.title === "Pathway Insights") return badgeCounts.pathwayInsights;
+                  return 0;
+                };
+
+                const badgeCount = getBadgeCount();
+
                 return (
                   <SidebarMenuItem key={item.title}>
                     <SidebarMenuButton
                       asChild
-                      tooltip={item.title}
+                      tooltip={badgeCount > 0 ? `${item.title} (${badgeCount} new)` : item.title}
                       isActive={isActive}
                     >
-                      <Link href={item.url}>
+                      <Link href={item.url} className="flex items-center gap-2">
                         <Icon className="h-4 w-4" />
-                        <span>{item.title}</span>
+                        <span className="flex-1">{item.title}</span>
+                        {badgeCount > 0 && (
+                          <Badge 
+                            variant="secondary" 
+                            className="h-5 px-1.5 text-[10px] bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400 group-data-[collapsible=icon]:hidden"
+                          >
+                            {badgeCount}
+                          </Badge>
+                        )}
                       </Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>

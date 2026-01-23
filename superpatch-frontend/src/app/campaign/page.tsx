@@ -27,9 +27,9 @@ import {
   createCallRecord,
   exportRecords,
 } from "@/lib/campaign-storage";
-import { CallStatus, SampleRequest, SampleStatus } from "@/lib/db/types";
+import { CallStatus } from "@/lib/db/types";
 import { useSupabaseCallRecords } from "@/hooks/useSupabaseCallRecords";
-import { useRealtimeSampleRequests } from "@/hooks/useRealtimeSampleRequests";
+// Sample requests moved to standalone /campaign/samples page
 import { useRealtimePractitioners } from "@/hooks/useRealtimePractitioners";
 import { useRealtimeRetryQueue } from "@/hooks/useRealtimeRetryQueue";
 import { KPICards } from "@/components/campaign/kpi-cards";
@@ -254,26 +254,6 @@ function CampaignPageContent() {
   const [quickCallProvince, setQuickCallProvince] = useState("");
   const [quickCallPostalCode, setQuickCallPostalCode] = useState("");
 
-  // Sample requests state - using real-time hook
-  const [sampleStatusFilter, setSampleStatusFilter] = useState<SampleStatus | "all">("all");
-  const [selectedSampleIds, setSelectedSampleIds] = useState<Set<string>>(new Set());
-  
-  // Real-time sample requests hook
-  const {
-    requests: sampleRequests,
-    loading: samplesLoading,
-    isConnected: samplesConnected,
-    refresh: refreshSamples,
-    pagination: { total: samplesTotal },
-  } = useRealtimeSampleRequests({
-    statusFilter: sampleStatusFilter,
-    onNewRequest: (request) => {
-      console.log("🔔 New sample request:", request.requester_name);
-      // Show a toast notification for new sample requests
-      toast.success(`New sample request from ${request.requester_name || "Unknown"}`);
-    },
-  });
-
   // Real-time practitioners hook for enrichment status
   const {
     stats: enrichmentStats,
@@ -418,49 +398,6 @@ function CampaignPageContent() {
   function loadCallRecords() {
     refreshCallRecords();
   }
-
-  // Update sample status
-  const updateSampleStatus = async (ids: string[], status: SampleStatus, trackingNumber?: string) => {
-    try {
-      const response = await fetch("/api/samples", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ids,
-          updates: { status, tracking_number: trackingNumber },
-        }),
-      });
-
-      if (response.ok) {
-        // Real-time hook will automatically update, but refresh to be sure
-        await refreshSamples();
-        setSelectedSampleIds(new Set());
-      }
-    } catch (error) {
-      console.error("Failed to update sample status:", error);
-    }
-  };
-
-  // Export samples as CSV
-  const exportSamplesCSV = async () => {
-    const params = new URLSearchParams();
-    params.set("format", "csv");
-    if (sampleStatusFilter !== "all") {
-      params.set("status", sampleStatusFilter);
-    }
-    
-    const response = await fetch(`/api/samples?${params}`);
-    const blob = await response.blob();
-    
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `sample_requests_${new Date().toISOString().split("T")[0]}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    window.URL.revokeObjectURL(url);
-  };
 
   function loadMorePractitioners() {
     if (pagination.hasMore && !loadingMore) {
@@ -1735,15 +1672,6 @@ function CampaignPageContent() {
                 <History className="w-4 h-4" />
                 Timeline
               </TabsTrigger>
-              <TabsTrigger value="samples" className="gap-2">
-                <Package className="w-4 h-4" />
-                Samples
-                {sampleRequests.filter(s => s.status === "pending").length > 0 && (
-                  <Badge variant="secondary" className="ml-1 h-5 px-1.5">
-                    {sampleRequests.filter(s => s.status === "pending").length}
-                  </Badge>
-                )}
-              </TabsTrigger>
               <TabsTrigger value="retries" className="gap-2">
                 <RotateCcw className="w-4 h-4" />
                 Retries
@@ -2856,217 +2784,6 @@ function CampaignPageContent() {
               }}
             />
           )}
-        </TabsContent>
-
-        {/* Samples Tab */}
-        <TabsContent value="samples" className="flex-1 flex flex-col overflow-hidden m-0">
-          {/* Samples Toolbar */}
-          <div className="border-b px-6 py-4">
-            <div className="flex items-center justify-between gap-4">
-              <div className="flex items-center gap-4">
-                <h2 className="text-lg font-semibold">Sample Requests</h2>
-                <Badge variant="outline">{samplesTotal} total</Badge>
-                {samplesConnected && (
-                  <Badge variant="secondary" className="gap-1">
-                    <Radio className="w-3 h-3 text-green-500" />
-                    Live
-                  </Badge>
-                )}
-              </div>
-              
-              <div className="flex items-center gap-2">
-                {/* Status Filter */}
-                <Select value={sampleStatusFilter} onValueChange={(v) => setSampleStatusFilter(v as SampleStatus | "all")}>
-                  <SelectTrigger className="w-[140px]">
-                    <SelectValue placeholder="Status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Statuses</SelectItem>
-                    <SelectItem value="pending">Pending</SelectItem>
-                    <SelectItem value="approved">Approved</SelectItem>
-                    <SelectItem value="shipped">Shipped</SelectItem>
-                    <SelectItem value="delivered">Delivered</SelectItem>
-                    <SelectItem value="cancelled">Cancelled</SelectItem>
-                  </SelectContent>
-                </Select>
-
-                {/* Bulk Actions */}
-                {selectedSampleIds.size > 0 && (
-                  <>
-                    <Button 
-                      size="sm" 
-                      variant="outline"
-                      onClick={() => updateSampleStatus(Array.from(selectedSampleIds), "approved")}
-                    >
-                      Approve ({selectedSampleIds.size})
-                    </Button>
-                    <Button 
-                      size="sm" 
-                      variant="outline"
-                      onClick={() => updateSampleStatus(Array.from(selectedSampleIds), "shipped")}
-                    >
-                      Mark Shipped
-                    </Button>
-                  </>
-                )}
-
-                {/* Export CSV */}
-                <Button size="sm" variant="outline" onClick={exportSamplesCSV}>
-                  <Download className="w-4 h-4 mr-2" />
-                  Export CSV
-                </Button>
-
-                {/* Refresh */}
-                <Button size="sm" variant="ghost" onClick={() => refreshSamples()}>
-                  <RefreshCw className={`w-4 h-4 ${samplesLoading ? 'animate-spin' : ''}`} />
-                </Button>
-              </div>
-            </div>
-          </div>
-
-          {/* Samples Table */}
-          <div className="flex-1 overflow-hidden">
-            <div className="h-full flex flex-col">
-              {/* Table Header */}
-              <div className="flex items-center px-6 py-2 border-b bg-muted/50 data-table-header text-muted-foreground">
-                <div className="w-10">
-                  <input
-                    type="checkbox"
-                    checked={selectedSampleIds.size > 0 && selectedSampleIds.size === sampleRequests.length}
-                    onChange={(e) => {
-                      if (e.target.checked) {
-                        setSelectedSampleIds(new Set(sampleRequests.map(s => s.id)));
-                      } else {
-                        setSelectedSampleIds(new Set());
-                      }
-                    }}
-                    className="rounded"
-                  />
-                </div>
-                <div className="w-[100px] text-xs font-medium">Date</div>
-                <div className="flex-1 min-w-[180px] text-xs font-medium">Requester</div>
-                <div className="w-[140px] text-xs font-medium">Products</div>
-                <div className="w-[100px] text-xs font-medium">City</div>
-                <div className="w-[80px] text-xs font-medium">Province</div>
-                <div className="w-[100px] text-xs font-medium text-center">Status</div>
-                <div className="w-[120px] text-xs font-medium">Tracking</div>
-                <div className="w-10"></div>
-              </div>
-
-              {/* Table Body */}
-              {samplesLoading ? (
-                <div className="flex-1 flex items-center justify-center">
-                  <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
-                </div>
-              ) : sampleRequests.length === 0 ? (
-                <div className="flex-1 flex items-center justify-center">
-                  <div className="text-center py-12">
-                    <Package className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-                    <h3 className="text-lg font-medium mb-2">No Sample Requests</h3>
-                    <p className="text-muted-foreground">
-                      Sample requests from AI calls will appear here.
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                <ScrollArea className="flex-1">
-                  {sampleRequests.map((sample) => {
-                    const isSelected = selectedSampleIds.has(sample.id);
-                    return (
-                      <div
-                        key={sample.id}
-                        className={`flex items-center px-6 border-b cursor-pointer transition-colors data-table-row ${
-                          isSelected ? 'bg-blue-50 dark:bg-blue-950/30' : 'hover:bg-muted/30'
-                        }`}
-                        style={{ height: '52px' }}
-                      >
-                        <div className="w-10" onClick={(e) => e.stopPropagation()}>
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={() => {
-                              const newSet = new Set(selectedSampleIds);
-                              if (isSelected) {
-                                newSet.delete(sample.id);
-                              } else {
-                                newSet.add(sample.id);
-                              }
-                              setSelectedSampleIds(newSet);
-                            }}
-                            className="rounded cursor-pointer"
-                          />
-                        </div>
-                        <div className="w-[100px] text-sm">
-                          {new Date(sample.created_at).toLocaleDateString()}
-                        </div>
-                        <div className="flex-1 min-w-[180px]">
-                          <p className="text-sm font-medium truncate">{sample.requester_name}</p>
-                          <p className="text-xs text-muted-foreground truncate">{sample.practice_name || sample.phone}</p>
-                        </div>
-                        <div className="w-[140px]">
-                          {sample.products_requested?.length ? (
-                            <div className="flex flex-wrap gap-1">
-                              {sample.products_requested.slice(0, 2).map((p) => (
-                                <Badge key={p} variant="outline" className="text-xs py-0">
-                                  {p}
-                                </Badge>
-                              ))}
-                              {sample.products_requested.length > 2 && (
-                                <Badge variant="outline" className="text-xs py-0">
-                                  +{sample.products_requested.length - 2}
-                                </Badge>
-                              )}
-                            </div>
-                          ) : (
-                            <Badge variant="secondary" className="text-xs">Standard Kit</Badge>
-                          )}
-                        </div>
-                        <div className="w-[100px] text-sm truncate">{sample.shipping_city || '-'}</div>
-                        <div className="w-[80px] text-sm">{sample.shipping_province || '-'}</div>
-                        <div className="w-[100px] text-center">
-                          <Badge 
-                            className={
-                              sample.status === 'pending' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400' :
-                              sample.status === 'approved' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400' :
-                              sample.status === 'shipped' ? 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400' :
-                              sample.status === 'delivered' ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' :
-                              'bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-400'
-                            }
-                          >
-                            {sample.status}
-                          </Badge>
-                        </div>
-                        <div className="w-[120px] text-sm truncate">
-                          {sample.tracking_number || '-'}
-                        </div>
-                        <div className="w-10">
-                          <Select
-                            value={sample.status}
-                            onValueChange={(v) => updateSampleStatus([sample.id], v as SampleStatus)}
-                          >
-                            <SelectTrigger className="h-7 w-7 p-0 border-0">
-                              <span className="sr-only">Actions</span>
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
-                              </svg>
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="pending">Pending</SelectItem>
-                              <SelectItem value="approved">Approved</SelectItem>
-                              <SelectItem value="shipped">Shipped</SelectItem>
-                              <SelectItem value="delivered">Delivered</SelectItem>
-                              <SelectItem value="cancelled">Cancelled</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </ScrollArea>
-              )}
-            </div>
-          </div>
-
         </TabsContent>
 
         {/* Retry Queue Tab */}
