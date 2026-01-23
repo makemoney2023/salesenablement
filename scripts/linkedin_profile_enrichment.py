@@ -380,7 +380,7 @@ def load_practitioners_from_json(json_path: str) -> List[Dict]:
 
 
 def load_practitioners_from_supabase() -> List[Dict]:
-    """Load practitioners from Supabase that have team members"""
+    """Load practitioners from Supabase that have team members (with pagination)"""
     try:
         from supabase import create_client
         
@@ -393,14 +393,30 @@ def load_practitioners_from_supabase() -> List[Dict]:
         
         supabase = create_client(url, key)
         
-        # Get practitioners with enrichment data that haven't been LinkedIn enriched
-        response = supabase.table("practitioners").select(
-            "id, name, city, province, enrichment, linkedin_enrichment_status"
-        ).or_(
-            "linkedin_enrichment_status.is.null,linkedin_enrichment_status.eq.pending"
-        ).not_.is_("enrichment", "null").execute()
+        # Paginate through all practitioners with enrichment data that haven't been LinkedIn enriched
+        all_practitioners = []
+        page_size = 1000
+        offset = 0
         
-        return response.data or []
+        while True:
+            logger.info(f"Fetching practitioners {offset} to {offset + page_size}...")
+            response = supabase.table("practitioners").select(
+                "id, name, city, province, enrichment, linkedin_enrichment_status"
+            ).or_(
+                "linkedin_enrichment_status.is.null,linkedin_enrichment_status.eq.pending"
+            ).not_.is_("enrichment", "null").range(offset, offset + page_size - 1).execute()
+            
+            batch = response.data or []
+            all_practitioners.extend(batch)
+            
+            logger.info(f"  Got {len(batch)} practitioners (total: {len(all_practitioners)})")
+            
+            if len(batch) < page_size:
+                break  # No more data
+            
+            offset += page_size
+        
+        return all_practitioners
         
     except Exception as e:
         logger.error(f"Error loading from Supabase: {e}")

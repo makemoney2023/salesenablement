@@ -24,6 +24,7 @@ import {
   PhoneCall,
   CalendarCheck,
   Activity,
+  Lightbulb,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 
@@ -240,6 +241,11 @@ export function AppSidebar({
       title: "Call Center",
       url: "/campaign",
       icon: Phone,
+    },
+    {
+      title: "Pathway Insights",
+      url: "/campaign/pathway-suggestions",
+      icon: Lightbulb,
     },
   ];
 

@@ -232,6 +232,139 @@ Automatic scoring (0-100) based on:
 
 ---
 
+## Post-Call LLM Analysis
+
+### Overview
+
+After each call completes, the `analyze-call` Edge Function uses Google Gemini to perform deep analysis of the call transcript. This runs asynchronously (fire-and-forget) so it doesn't slow down webhook processing.
+
+### Features
+
+**Structured Data Extraction**
+- Objections raised by the prospect
+- Buying signals detected
+- Pain points mentioned
+- Products discussed (Freedom, REM, Liberty, etc.)
+- Decision maker identification
+- Competitor mentions
+- Next steps agreed
+- Timeline indicators
+- Contact information extraction
+
+**Enhanced Lead Scoring**
+- LLM-calculated score (0-100) with reasoning
+- Considers conversation quality, not just outcomes
+- Stored separately from rule-based score for comparison
+
+**Pathway Improvement Suggestions**
+- Analyzes where AI responses could be better
+- Identifies missing conversation paths (edges)
+- Detects knowledge base gaps
+- Suggests new nodes for common scenarios
+- Tracks suggestion frequency across calls
+
+**Follow-Up Email Generation**
+- Auto-generates personalized follow-up emails
+- References relevant clinical studies
+- Addresses specific objections from the call
+- Stored as drafts in `follow_up_queue`
+
+### Database Tables
+
+#### call_records (new columns)
+```sql
+llm_analysis      JSONB       -- Full structured extraction
+llm_lead_score    INTEGER     -- LLM-calculated score (0-100)
+llm_analyzed_at   TIMESTAMPTZ -- When analysis completed
+analysis_status   TEXT        -- pending, processing, completed, failed
+```
+
+#### pathway_suggestions
+```sql
+id                  UUID PRIMARY KEY
+call_record_id      UUID REFERENCES call_records
+practitioner_type   TEXT        -- Chiropractors, Naturopaths, etc.
+suggestion_type     TEXT        -- node_prompt, edge_label, missing_edge, missing_node, knowledge_base_gap
+node_id             TEXT        -- Which pathway node (e.g., "6")
+node_name           TEXT        -- Human-readable name
+suggested_content   TEXT        -- The improvement suggestion
+reasoning           TEXT        -- Why this change helps
+transcript_excerpt  TEXT        -- Relevant conversation snippet
+severity            TEXT        -- low, medium, high, critical
+frequency_count     INTEGER     -- How often this issue occurs
+status              TEXT        -- new, reviewed, implemented, dismissed
+```
+
+#### follow_up_queue
+```sql
+id              UUID PRIMARY KEY
+call_record_id  UUID REFERENCES call_records
+practitioner_id TEXT REFERENCES practitioners
+type            TEXT        -- email, sms, callback_notes
+subject         TEXT        -- Email subject line
+content         TEXT        -- Email body
+context_data    JSONB       -- Products, studies, objections
+status          TEXT        -- draft, approved, sent
+created_at      TIMESTAMPTZ
+sent_at         TIMESTAMPTZ
+```
+
+### Configuration
+
+Set the Gemini API key in Supabase Dashboard:
+1. Go to Project Settings → Edge Functions → Secrets
+2. Add `GEMINI_API_KEY` with your Google AI API key
+
+### Edge Function: analyze-call
+
+**Trigger:** Called by `webhook-processor` after saving call records
+
+**Input:**
+```json
+{
+  "call_record_id": "uuid",
+  "transcript": "full call transcript",
+  "practitioner_id": "optional practitioner id",
+  "practitioner_type": "Chiropractors",
+  "current_lead_score": 65
+}
+```
+
+**Output:**
+```json
+{
+  "success": true,
+  "llm_lead_score": 78,
+  "scoring_reasoning": "High engagement with decision maker...",
+  "extraction_summary": {
+    "objections": 2,
+    "buying_signals": 3,
+    "pain_points": 2,
+    "products_discussed": ["Freedom", "REM"]
+  },
+  "pathway_suggestions_saved": 1,
+  "follow_up_generated": true
+}
+```
+
+### Suggestion Deduplication
+
+When the same pathway issue is detected across multiple calls:
+- `frequency_count` is incremented instead of creating duplicates
+- `similar_call_ids` array tracks which calls had this issue
+- High-frequency suggestions indicate systematic pathway problems
+
+### Analysis Status
+
+| Status | Description |
+|--------|-------------|
+| `pending` | Call saved, waiting for analysis |
+| `processing` | LLM analysis in progress |
+| `completed` | Analysis finished, results saved |
+| `failed` | Analysis failed (check logs) |
+
+---
+
 ## Sample Requests
 
 ### Detection
@@ -569,6 +702,11 @@ recording_url       TEXT
 appointment_booked  BOOLEAN
 appointment_time    TIMESTAMPTZ
 notes               TEXT
+-- LLM Analysis columns
+llm_analysis        JSONB       -- Structured extraction from Gemini
+llm_lead_score      INTEGER     -- LLM-calculated score (0-100)
+llm_analyzed_at     TIMESTAMPTZ -- When analysis completed
+analysis_status     TEXT        -- pending, processing, completed, failed
 created_at          TIMESTAMPTZ
 updated_at          TIMESTAMPTZ
 ```
@@ -585,3 +723,68 @@ notes           TEXT
 created_at      TIMESTAMPTZ
 updated_at      TIMESTAMPTZ
 ```
+
+### pathway_suggestions table
+```sql
+id                  UUID PRIMARY KEY
+call_record_id      UUID REFERENCES call_records
+practitioner_type   TEXT NOT NULL        -- Chiropractors, Naturopaths, etc.
+suggestion_type     TEXT NOT NULL        -- node_prompt, edge_label, missing_edge, missing_node, knowledge_base_gap
+node_id             TEXT                 -- Pathway node ID (e.g., "6")
+node_name           TEXT                 -- Human-readable name (e.g., "Objection Handler")
+edge_id             TEXT                 -- Edge ID if applicable
+current_content     TEXT                 -- Current prompt/label that needs improvement
+suggested_content   TEXT NOT NULL        -- The suggested improvement
+reasoning           TEXT                 -- Why this change would help
+transcript_excerpt  TEXT                 -- Relevant conversation snippet
+severity            TEXT DEFAULT 'medium'-- low, medium, high, critical
+frequency_count     INTEGER DEFAULT 1    -- How many times this issue seen
+similar_call_ids    UUID[]               -- Array of call IDs with same issue
+status              TEXT DEFAULT 'new'   -- new, reviewed, implemented, dismissed
+created_at          TIMESTAMPTZ
+reviewed_at         TIMESTAMPTZ
+implemented_at      TIMESTAMPTZ
+```
+
+### follow_up_queue table
+```sql
+id              UUID PRIMARY KEY
+call_record_id  UUID REFERENCES call_records
+practitioner_id TEXT REFERENCES practitioners
+type            TEXT DEFAULT 'email'     -- email, sms, callback_notes
+subject         TEXT                     -- Email subject line
+content         TEXT NOT NULL            -- Email body content
+context_data    JSONB                    -- Products mentioned, studies to reference, objections
+status          TEXT DEFAULT 'draft'     -- draft, approved, sent, failed
+created_at      TIMESTAMPTZ
+sent_at         TIMESTAMPTZ
+updated_at      TIMESTAMPTZ
+```
+
+---
+
+## Supabase Edge Functions
+
+### Overview
+
+The call center uses several Supabase Edge Functions for async processing:
+
+| Function | Trigger | Purpose |
+|----------|---------|---------|
+| `webhook-processor` | Bland.ai webhook | Process call completions, save records, trigger analysis |
+| `analyze-call` | webhook-processor | LLM analysis with Gemini |
+| `book-appointment` | webhook-processor | Create Cal.com bookings |
+| `process-retry-queue` | Cron (scheduled) | Auto-dial retry queue |
+| `send-sample-confirmation` | webhook-processor | Send sample request emails |
+| `enrich-practitioners-v2` | API call | Website scraping via Firecrawl |
+
+### Required Secrets
+
+Set in Supabase Dashboard → Project Settings → Edge Functions → Secrets:
+
+| Secret | Required For |
+|--------|--------------|
+| `GEMINI_API_KEY` | analyze-call (LLM analysis) |
+| `CAL_API_KEY` | book-appointment |
+| `BLAND_API_KEY` | process-retry-queue |
+| `FIRECRAWL_API_KEY` | enrich-practitioners-v2 |

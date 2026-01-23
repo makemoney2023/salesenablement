@@ -484,3 +484,63 @@ export type LinkedInEnrichmentStatus =
   | 'no_profiles_found'
   | 'failed'
   | 'skipped';
+
+// Pathway Suggestions types for LLM-generated pathway improvements
+export type PathwaySuggestionType = 
+  | 'node_prompt'
+  | 'edge_label'
+  | 'missing_edge'
+  | 'missing_node'
+  | 'knowledge_base_gap';
+
+export type PathwaySuggestionSeverity = 'low' | 'medium' | 'high' | 'critical';
+
+export type PathwaySuggestionStatus = 'new' | 'approved' | 'reviewed' | 'implemented' | 'dismissed';
+
+export interface PathwaySuggestion {
+  id: string;
+  call_record_id: string | null;
+  practitioner_type: string;
+  suggestion_type: PathwaySuggestionType;
+  node_id: string | null;
+  node_name: string | null;
+  edge_id: string | null;
+  current_content: string | null;
+  suggested_content: string;
+  reasoning: string | null;
+  transcript_excerpt: string | null;
+  severity: PathwaySuggestionSeverity;
+  frequency_count: number;
+  similar_call_ids: string[];
+  status: PathwaySuggestionStatus;
+  created_at: string;
+  reviewed_at: string | null;
+  reviewed_by: string | null;
+  implemented_at: string | null;
+  updated_at: string;
+}
+
+export interface PathwaySuggestionInsert {
+  id?: string;
+  call_record_id?: string | null;
+  practitioner_type: string;
+  suggestion_type: PathwaySuggestionType;
+  node_id?: string | null;
+  node_name?: string | null;
+  edge_id?: string | null;
+  current_content?: string | null;
+  suggested_content: string;
+  reasoning?: string | null;
+  transcript_excerpt?: string | null;
+  severity?: PathwaySuggestionSeverity;
+  frequency_count?: number;
+  similar_call_ids?: string[];
+  status?: PathwaySuggestionStatus;
+}
+
+export interface PathwaySuggestionUpdate {
+  status?: PathwaySuggestionStatus;
+  reviewed_at?: string | null;
+  reviewed_by?: string | null;
+  implemented_at?: string | null;
+}

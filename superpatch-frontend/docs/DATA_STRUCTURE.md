@@ -513,6 +513,74 @@ export interface SearchableItem {
 
 ---
 
+## LLM Analysis Types
+
+```typescript
+// types/llm-analysis.ts
+
+// Structured data extracted from call transcripts by Gemini
+export interface LLMAnalysis {
+  objections_raised: string[]
+  buying_signals: string[]
+  pain_points: string[]
+  products_discussed: string[]
+  decision_maker_spoke: boolean
+  competitor_mentions: string[]
+  next_steps_agreed: string | null
+  timeline_mentioned: string | null
+  budget_discussed: boolean
+  practice_size_mentioned: number | null
+  contact_name_extracted: string | null
+  contact_role_extracted: string | null
+  email_extracted: string | null
+}
+
+// Pathway improvement suggestion from LLM analysis
+export interface PathwaySuggestion {
+  id: string
+  call_record_id: string
+  practitioner_type: string
+  suggestion_type: 'node_prompt' | 'edge_label' | 'missing_edge' | 'missing_node' | 'knowledge_base_gap'
+  node_id?: string
+  node_name?: string
+  edge_id?: string
+  current_content?: string
+  suggested_content: string
+  reasoning: string
+  transcript_excerpt: string
+  severity: 'low' | 'medium' | 'high' | 'critical'
+  frequency_count: number
+  similar_call_ids: string[]
+  status: 'new' | 'reviewed' | 'implemented' | 'dismissed'
+  created_at: string
+  reviewed_at?: string
+  implemented_at?: string
+}
+
+// Auto-generated follow-up content
+export interface FollowUpQueueItem {
+  id: string
+  call_record_id: string
+  practitioner_id?: string
+  type: 'email' | 'sms' | 'callback_notes'
+  subject?: string
+  content: string
+  context_data: {
+    products_mentioned: string[]
+    studies_to_reference: string[]
+    objections_to_address: string[]
+  }
+  status: 'draft' | 'approved' | 'sent' | 'failed'
+  created_at: string
+  sent_at?: string
+}
+
+// Analysis status for call records
+export type AnalysisStatus = 'pending' | 'processing' | 'completed' | 'failed'
+```
+
+---
+
 ## Content Loading Strategy
 
 ### Option 1: Static JSON (Recommended for MVP)

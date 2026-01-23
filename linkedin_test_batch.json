@@ -1,0 +1,211 @@
+{
+  "metadata": {
+    "enriched_at": "2026-01-20T11:22:25.325371",
+    "total_practitioners": 5,
+    "total_profiles_found": 15,
+    "total_team_members_searched": 20,
+    "min_confidence": 0.3,
+    "searches_performed": 20,
+    "confidence_breakdown": {
+      "high": 11,
+      "medium": 3,
+      "low": 1
+    }
+  },
+  "results": [
+    {
+      "practitioner_id": "ChIJ_7xqlCk1K4gRT8eT7xeDdeg",
+      "clinic_name": "Acu Corner by Karen Sze",
+      "team_members": [
+        {
+          "name": "Karen Sze",
+          "linkedin_url": "https://www.linkedin.com/in/karen-sze/",
+          "confidence": 1.0,
+          "search_query": "\"Karen Sze\" acupuncturist Toronto site:linkedin.com",
+          "title": "Karen Sze, P.Eng RAc - Toronto, Ontario, Canada",
+          "description": "Karen Sze, P.Eng RAc. Acupuncture and Integrative Medicine Academy. Toronto, Ontario, Canada. 312 followers 308 connections. See your ...",
+          "found_at": "2026-01-20T11:20:53.806737",
+          "credentials": "RAc"
+        }
+      ],
+      "enriched_at": "2026-01-20T11:20:53.806887",
+      "total_found": 1,
+      "total_searched": 1
+    },
+    {
+      "practitioner_id": "ChIJy0o1-bQ0K4gRWMW64-RBZXQ",
+      "clinic_name": "Acupuncture Toronto - ALIVE Holistic Health & Fertility Clinic",
+      "team_members": [
+        {
+          "name": "Mary Wong",
+          "linkedin_url": "https://ca.linkedin.com/in/meetmarywong",
+          "confidence": 0.9,
+          "search_query": "\"Mary Wong\" acupuncturist Toronto site:linkedin.com",
+          "title": "Mary Wong - ALIVE HOLISTIC HEALTH CLINIC",
+          "description": "Mary Wong. ALIVE HOLISTIC HEALTH CLINIC Canadian College of Acupuncture and Oriental Medicine. Toronto, Ontario, Canada.",
+          "found_at": "2026-01-20T11:20:54.658879",
+          "credentials": "R.Ac"
+        },
+        {
+          "name": "David Liang",
+          "linkedin_url": "https://ca.linkedin.com/in/david-liang-r-tcmp-r-ac-msc-30b12721",
+          "confidence": 0.75,
+          "search_query": "\"David Liang\" acupuncturist Toronto site:linkedin.com",
+          "title": "David Liang R.TCMP, R.Ac, MSc",
+          "description": "David Liang R.TCMP, R.Ac, MSc. Registered Acupuncturist, Registered Traditional Chinese Medicine Practitioner, Mindfulness Meditation Teacher ...",
+          "found_at": "2026-01-20T11:21:08.716839",
+          "credentials": "R.Ac"
+        },
+        {
+          "name": "Tanya",
+          "linkedin_url": "https://ca.linkedin.com/in/dr-tanya-lee-hbsc-nd-80a36325",
+          "confidence": 1.0,
+          "search_query": "\"Tanya\" naturopath Toronto site:linkedin.com",
+          "title": "Dr. Tanya Lee, HBSc, ND - Naturopathic Doctor, Clinical ...",
+          "description": "Naturopathic Doctor, Clinical Researcher and Nutriceutical Advisor · Running two successful practices in Toronto and Milton ... Tanya Lee, HBSc, ND. Naturopathic ...",
+          "found_at": "2026-01-20T11:21:11.555068",
+          "credentials": "ND"
+        },
+        {
+          "name": "Dr. Tanya Wylde",
+          "linkedin_url": "https://ca.linkedin.com/in/drtanyawyldend",
+          "confidence": 0.85,
+          "search_query": "\"Dr. Tanya Wylde\" doctor Toronto site:linkedin.com",
+          "title": "Dr. Tanya Wylde, ND - Naturopathic Doctor",
+          "description": "Dr. Tanya Wylde, ND. Naturopathic Doctor | MSCP Menopause Society Certified Practitioner. ALIVE Holistic Health Clinic The Canadian College of Naturopathic ...",
+          "found_at": "2026-01-20T11:21:14.296049",
+          "credentials": "Dr."
+        },
+        {
+          "name": "Tanya Wylde",
+          "linkedin_url": "https://ca.linkedin.com/in/drtanyawyldend",
+          "confidence": 0.95,
+          "search_query": "\"Tanya Wylde\" naturopath Toronto site:linkedin.com",
+          "title": "Dr. Tanya Wylde, ND - Naturopathic Doctor",
+          "description": "Dr. Tanya Wylde, ND. Naturopathic Doctor | MSCP Menopause Society Certified Practitioner. ALIVE Holistic Health Clinic The Canadian College of Naturopathic ...",
+          "found_at": "2026-01-20T11:21:17.904048",
+          "credentials": "ND"
+        },
+        {
+          "name": "Stephanie Iwanchuk",
+          "linkedin_url": "https://ca.linkedin.com/in/stephanie-iwanchuk",
+          "confidence": 0.55,
+          "search_query": "\"Stephanie Iwanchuk\" nurse practitioner Toronto site:linkedin.com",
+          "title": "STEPHANIE IWANCHUK - Nurse Practitioner",
+          "description": "Owner & Nurse Practitioner. STEPHANIE IWANCHUK, NURSE PRACTITIONER. Jan 2025 - Present 1 year 1 month. Ontario, Canada. Hamilton Health Sciences Graphic ...",
+          "found_at": "2026-01-20T11:21:20.062814",
+          "credentials": "NP"
+        }
+      ],
+      "enriched_at": "2026-01-20T11:21:20.062902",
+      "total_found": 6,
+      "total_searched": 7
+    },
+    {
+      "practitioner_id": "ChIJnW2S_cE0K4gRqHrJ0DYDR0k",
+      "clinic_name": "Toronto Integrative Medicine Centre",
+      "team_members": [
+        {
+          "name": "Dylan Kirk",
+          "linkedin_url": "https://ca.linkedin.com/in/dylan-kirk-90499620",
+          "confidence": 0.65,
+          "search_query": "\"Dylan Kirk\" acupuncturist Toronto site:linkedin.com",
+          "title": "Dylan Kirk - President at Council of Traditional Chinese ...",
+          "description": "Dylan Kirk. President at Council of Traditional Chinese Medicine and Acupuncture Schools of Ontario. Ontario College of Traditional Chinese Medicine Henan ...",
+          "found_at": "2026-01-20T11:21:23.053932",
+          "credentials": "R.Ac"
+        },
+        {
+          "name": "Max Wong",
+          "linkedin_url": "https://ca.linkedin.com/in/climbingchiro",
+          "confidence": 0.65,
+          "search_query": "\"Max Wong\" chiropractor Toronto site:linkedin.com",
+          "title": "Max Wong - @climbingchiro | Climbing Injury Rehab",
+          "description": "Max Wong. @climbingchiro | Climbing Injury Rehab | Chiropractor. Ontario College of Traditional Chinese Medicine Canadian Memorial Chiropractic College ...",
+          "found_at": "2026-01-20T11:21:26.331217",
+          "credentials": "DC"
+        },
+        {
+          "name": "Sung",
+          "linkedin_url": "https://ca.linkedin.com/pub/dir/Sung/Han/ca-0-Canada",
+          "confidence": 0.35,
+          "search_query": "\"Sung\" acupuncturist Toronto site:linkedin.com",
+          "title": "10+ \"Sung Han\" profiles",
+          "description": "10+ Results for \"Sung Han\" in Canada Search worldwide · Sung Han ... Sung Han. Acupuncturist at Han's Clinic Acupuncture & Herbal Medicine.",
+          "found_at": "2026-01-20T11:21:40.922477",
+          "credentials": "R.Ac"
+        },
+        {
+          "name": "Jessica Waddell",
+          "linkedin_url": "https://ca.linkedin.com/in/jessica-waddell-rac",
+          "confidence": 0.85,
+          "search_query": "\"Jessica Waddell\" acupuncturist Toronto site:linkedin.com",
+          "title": "Jessica Waddell R.Ac",
+          "description": "Jessica Waddell R.Ac. Founder of Waddell Wellness & Acupuncture. Lite Mind Body Clinic Canadian Institute of Traditional Chinese Medicine ...",
+          "found_at": "2026-01-20T11:21:51.924683",
+          "credentials": "R.Ac"
+        },
+        {
+          "name": "Mationg",
+          "linkedin_url": "https://ca.linkedin.com/in/ian-mationg-720a9630",
+          "confidence": 0.9,
+          "search_query": "\"Mationg\" acupuncturist Toronto site:linkedin.com",
+          "title": "Ian Mationg - Registered Acupuncturist and Business ...",
+          "description": "Ian Mationg. Registered Acupuncturist and Business Owner at HPMP Clinic. Toronto Integrative Medicine Centre Ontario College of Traditional Chinese Medicine ...",
+          "found_at": "2026-01-20T11:22:05.231873",
+          "credentials": "R.Ac"
+        },
+        {
+          "name": "Tanya Mok",
+          "linkedin_url": "https://ca.linkedin.com/in/tanyamok",
+          "confidence": 0.7,
+          "search_query": "\"Tanya Mok\" acupuncturist Toronto site:linkedin.com",
+          "title": "Tanya Mok - Journalist and Content Creator",
+          "description": "Tanya Mok. Journalist and Content Creator. Toronto, Ontario, Canada. 335 followers 319 connections.",
+          "found_at": "2026-01-20T11:22:07.837749",
+          "credentials": "R.Ac"
+        },
+        {
+          "name": "Thomas Sniedzins",
+          "linkedin_url": "https://ca.linkedin.com/in/thomas-sniedzins-62572015",
+          "confidence": 0.8,
+          "search_query": "\"Thomas Sniedzins\" acupuncturist Toronto site:linkedin.com",
+          "title": "Thomas Sniedzins - --Nourishing Health, Empowering Lives",
+          "description": "View Thomas Sniedzins' profile on LinkedIn, a professional community of 1 billion members ... Acupuncture Center Toronto Graphic. Student Acupuncturist.",
+          "found_at": "2026-01-20T11:22:11.090452",
+          "credentials": "R.Ac"
+        }
+      ],
+      "enriched_at": "2026-01-20T11:22:11.090675",
+      "total_found": 7,
+      "total_searched": 10
+    },
+    {
+      "practitioner_id": "ChIJb3U6o2LL1IkRiGdTJFG952Q",
+      "clinic_name": "TCM Acupuncture & Herbal Clinic",
+      "team_members": [],
+      "enriched_at": "2026-01-20T11:22:24.345763",
+      "total_found": 0,
+      "total_searched": 1
+    },
+    {
+      "practitioner_id": "ChIJL_gIydM0K4gRZEBabYZjths",
+      "clinic_name": "Dr. Michelle Kang",
+      "team_members": [
+        {
+          "name": "Walk",
+          "linkedin_url": "https://ca.linkedin.com/in/michele-walks-21b03631",
+          "confidence": 0.7,
+          "search_query": "\"Walk\" physiotherapist Toronto site:linkedin.com",
+          "title": "Michele Walks - Physiotherapist assistant",
+          "description": "Toronto, Ontario, Canada ... 2015 - 2017. • Completed 2500 clinical hours • Provided quality massage treatments to clients in-clinic and in the community(walk for ...",
+          "found_at": "2026-01-20T11:22:25.325255",
+          "credentials": "PT"
+        }
+      ],
+      "enriched_at": "2026-01-20T11:22:25.325359",
+      "total_found": 1,
+      "total_searched": 1
+    }
+  ]
+}

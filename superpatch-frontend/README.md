@@ -27,6 +27,11 @@ A comprehensive sales enablement platform for SuperPatch, featuring an AI-powere
 - Call recording playback
 - Do Not Call (DNC) management with AI detection
 - Sample request tracking
+- **Post-call LLM analysis** (Gemini-powered):
+  - Structured data extraction (objections, buying signals, pain points)
+  - Enhanced lead scoring with reasoning
+  - Pathway improvement suggestions for AI optimization
+  - Auto-generated follow-up email drafts
 
 ### Practitioner Management
 - Canadian healthcare practitioner database
@@ -84,6 +89,15 @@ CAL_EVENT_TYPE_ID=your_event_type_id
 # Practitioner Search (optional - for Search New tab)
 GOOGLE_MAPS_API_KEY=your_google_maps_api_key
 FIRECRAWL_API_KEY=your_firecrawl_api_key
+```
+
+### Supabase Edge Function Secrets
+
+These secrets must be set in the Supabase Dashboard (Project Settings → Edge Functions → Secrets):
+
+```env
+# LLM Analysis (required for post-call analysis)
+GEMINI_API_KEY=your_google_gemini_api_key
 ```
 
 ## API Endpoints

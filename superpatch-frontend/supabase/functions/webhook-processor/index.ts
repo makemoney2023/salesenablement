@@ -720,6 +720,27 @@ serve(async (req) => {
       console.log("✅ Call record saved:", savedRecord?.id);
     }
 
+    // Trigger LLM analysis (fire and forget - don't await to avoid webhook timeout)
+    if (savedRecord?.id && payload.concatenated_transcript && payload.concatenated_transcript.length > 50) {
+      console.log("🔬 Triggering LLM analysis...");
+      fetch(`${SUPABASE_URL}/functions/v1/analyze-call`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          call_record_id: savedRecord.id,
+          transcript: payload.concatenated_transcript,
+          practitioner_id: resolvedPractitionerId,
+          practitioner_type: resolvedPractitionerType,
+          current_lead_score: leadScore,
+        }),
+      }).catch((err) => {
+        console.error("Failed to trigger LLM analysis:", err);
+      });
+    }
+
     // Handle sample request
     const wantsSample = vars.wants_sample === "true" || vars.sample_requested === "true";
     if (wantsSample) {
