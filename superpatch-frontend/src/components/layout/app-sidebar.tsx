@@ -265,12 +265,6 @@ export function AppSidebar({
           </div>
         </div>
 
-        {/* Market Switcher */}
-        <MarketSwitcher
-          currentMarket={currentMarket}
-          onMarketChange={onMarketChange}
-        />
-
         {/* Search Trigger */}
         <SidebarMenu>
           <SidebarMenuItem>
