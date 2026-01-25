@@ -4,12 +4,15 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { GoogleGenerativeAI } from "https://esm.sh/@google/generative-ai@0.21.0";
 
 // Environment variables
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 const CAL_API_KEY = Deno.env.get("CAL_API_KEY") || "";
 const CAL_EVENT_TYPE_ID = Number(Deno.env.get("CAL_EVENT_TYPE_ID")) || 4352394;
+const BLAND_WEBHOOK_SECRET = Deno.env.get("BLAND_WEBHOOK_SECRET") || "";
+const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY") || "";
 
 // Types
 type CallStatus = "not_called" | "in_progress" | "completed" | "failed" | "voicemail" | "interested" | "not_interested" | "booked" | "calendar_sent" | "demo_booked";
@@ -535,6 +538,153 @@ async function getPractitionerRetryCount(
   }
 }
 
+// LLM-based variable extraction from transcript (fallback when pathway extraction is sparse)
+interface ExtractedVariables {
+  contact_name?: string;
+  contact_role?: string;
+  contact_email?: string;
+  decision_maker?: boolean;
+  practice_name?: string;
+  address?: string;
+  city?: string;
+  province?: string;
+  postal_code?: string;
+  practice_size?: number;
+  patient_volume?: string;
+  interest_level?: string;
+  pain_points?: string;
+  current_solutions?: string;
+  objections?: string;
+  best_callback_time?: string;
+  follow_up_action?: string;
+  follow_up_date?: string;
+  decision_timeline?: string;
+  appointment_time?: string;
+  products_interested?: string;
+  wants_sample?: boolean;
+  wants_demo?: boolean;
+  sample_quantity?: number;
+}
+
+async function extractVariablesFromTranscript(
+  transcript: string
+): Promise<ExtractedVariables> {
+  if (!GEMINI_API_KEY) {
+    console.warn("⚠️ GEMINI_API_KEY not configured, skipping LLM extraction");
+    return {};
+  }
+
+  try {
+    const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+
+    const prompt = `Analyze this sales call transcript and extract all available information.
+Return ONLY valid JSON (no markdown code blocks). Use null for anything not mentioned.
+
+{
+  "contact_name": "name of person on the call or null",
+  "contact_role": "owner|office_manager|receptionist|practitioner|other or null",
+  "contact_email": "email address if mentioned or null",
+  "decision_maker": true if they make purchasing decisions, false if not, null if unclear,
+  "practice_name": "name of clinic/practice/business or null",
+  "address": "street address if mentioned or null",
+  "city": "city name or null",
+  "province": "province/state or null",
+  "postal_code": "postal/zip code or null",
+  "practice_size": number of practitioners/staff or null,
+  "patient_volume": "description of patient volume (e.g. '50 patients per week') or null",
+  "interest_level": "high|medium|low|not_interested based on their enthusiasm, or null",
+  "pain_points": "challenges/problems they mentioned or null",
+  "current_solutions": "what products/solutions they currently use or null",
+  "objections": "concerns or hesitations they raised or null",
+  "best_callback_time": "preferred time to call back or null",
+  "follow_up_action": "send_info|callback|sample|demo|none based on agreed next steps, or null",
+  "follow_up_date": "specific date/time mentioned for follow-up or null",
+  "decision_timeline": "when they said they'd make a decision or null",
+  "appointment_time": "scheduled appointment/demo time or null",
+  "products_interested": "SuperPatch products mentioned (Freedom, Liberty, REM, Victory, Focus, Ignite, Kick It, Defend, Joy, Lumi, Rocket, Peace, Boost) or null",
+  "wants_sample": true if they requested samples, false if declined, null if not discussed,
+  "wants_demo": true if they want a demo/appointment, false if declined, null if not discussed,
+  "sample_quantity": number of samples requested or null
+}
+
+Be precise. Only include information explicitly stated in the transcript.
+
+TRANSCRIPT:
+${transcript}`;
+
+    const result = await model.generateContent(prompt);
+    const response = result.response.text();
+    
+    // Clean up response - remove markdown code blocks if present
+    const jsonStr = response.replace(/```json\n?|\n?```/g, "").trim();
+    const extracted = JSON.parse(jsonStr);
+    
+    // Filter out null values
+    const filtered: ExtractedVariables = {};
+    for (const [key, value] of Object.entries(extracted)) {
+      if (value !== null && value !== undefined && value !== "") {
+        (filtered as Record<string, unknown>)[key] = value;
+      }
+    }
+    
+    console.log(`✅ LLM extracted ${Object.keys(filtered).length} variables from transcript`);
+    return filtered;
+  } catch (error) {
+    console.error("❌ LLM extraction failed:", error);
+    return {};
+  }
+}
+
+// Webhook signature verification using HMAC SHA-256
+async function verifyWebhookSignature(
+  secret: string,
+  payload: string,
+  signature: string | null
+): Promise<boolean> {
+  if (!signature || !secret) {
+    console.warn("⚠️ Missing signature or secret for verification");
+    return false;
+  }
+  
+  try {
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      "raw",
+      encoder.encode(secret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+    
+    const signatureBuffer = await crypto.subtle.sign(
+      "HMAC",
+      key,
+      encoder.encode(payload)
+    );
+    
+    const expectedSignature = Array.from(new Uint8Array(signatureBuffer))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
+    
+    // Timing-safe comparison to prevent timing attacks
+    if (expectedSignature.length !== signature.length) {
+      console.warn("⚠️ Signature length mismatch");
+      return false;
+    }
+    
+    let result = 0;
+    for (let i = 0; i < expectedSignature.length; i++) {
+      result |= expectedSignature.charCodeAt(i) ^ signature.charCodeAt(i);
+    }
+    
+    return result === 0;
+  } catch (error) {
+    console.error("❌ Error verifying signature:", error);
+    return false;
+  }
+}
+
 // Main webhook handler
 serve(async (req) => {
   // Handle CORS
@@ -577,7 +727,39 @@ serve(async (req) => {
   console.log("🔔 WEBHOOK RECEIVED - Edge Function processing...");
 
   try {
-    const payload: BlandWebhookPayload = await req.json();
+    // Read raw body for signature verification
+    const rawBody = await req.text();
+    const signature = req.headers.get("x-webhook-signature");
+    
+    console.log("🔐 Webhook details:", {
+      signature_present: !!signature,
+      secret_configured: !!BLAND_WEBHOOK_SECRET,
+      body_length: rawBody.length,
+    });
+
+    // Verify signature if secret is configured
+    if (BLAND_WEBHOOK_SECRET) {
+      const isValid = await verifyWebhookSignature(BLAND_WEBHOOK_SECRET, rawBody, signature);
+      if (!isValid) {
+        console.error("❌ Invalid webhook signature - rejecting request");
+        return new Response(
+          JSON.stringify({ status: "error", message: "Invalid webhook signature" }),
+          {
+            status: 401,
+            headers: {
+              "Content-Type": "application/json",
+              "Access-Control-Allow-Origin": "*",
+            },
+          }
+        );
+      }
+      console.log("✅ Webhook signature verified successfully");
+    } else {
+      console.warn("⚠️ BLAND_WEBHOOK_SECRET not configured - skipping signature verification");
+    }
+
+    // Parse the body after verification
+    const payload: BlandWebhookPayload = JSON.parse(rawBody);
     
     console.log("📞 Received Bland webhook:", {
       call_id: payload.call_id,
@@ -591,8 +773,39 @@ serve(async (req) => {
     // Initialize Supabase client
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    const vars = payload.variables || {};
+    let vars = payload.variables || {};
     const meta = payload.metadata || {};
+
+    // LLM Fallback: Extract variables from transcript when pathway extraction is sparse
+    const hasTranscript = payload.concatenated_transcript?.length > 100;
+    const callSucceeded = payload.completed && payload.call_length > 30;
+    const pathwayExtractedLittle = Object.keys(vars).length < 5;
+
+    if (hasTranscript && callSucceeded && GEMINI_API_KEY && pathwayExtractedLittle) {
+      console.log(`🔍 Pathway extracted only ${Object.keys(vars).length} variables, running LLM fallback extraction...`);
+      try {
+        const extracted = await extractVariablesFromTranscript(payload.concatenated_transcript);
+        
+        // Merge extracted values into vars (only fills gaps, doesn't overwrite)
+        const enrichedVars: Record<string, string> = { ...vars };
+        let enrichedCount = 0;
+        
+        for (const [key, value] of Object.entries(extracted)) {
+          if (value !== undefined && value !== null && !vars[key]) {
+            enrichedVars[key] = typeof value === "boolean" ? (value ? "true" : "false") : String(value);
+            enrichedCount++;
+          }
+        }
+        
+        if (enrichedCount > 0) {
+          console.log(`✅ LLM enriched vars with ${enrichedCount} additional variables`);
+          vars = enrichedVars;
+        }
+      } catch (error) {
+        console.error("❌ LLM fallback extraction failed:", error);
+        // Continue with original sparse vars
+      }
+    }
 
     // Extract variables
     const wantsDemo = vars.wants_demo === "true" || vars.schedule_demo === "true";
