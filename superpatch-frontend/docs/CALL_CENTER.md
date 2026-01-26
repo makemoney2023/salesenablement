@@ -490,7 +490,19 @@ useRealtimeRetryQueue({
 
 ### Webhook Endpoint
 
-`POST /api/webhooks/bland`
+**Primary (Supabase Edge Function):**
+```
+POST https://<project-id>.supabase.co/functions/v1/webhook-processor
+```
+
+**Legacy (Vercel API Route - deprecated):**
+```
+POST /api/webhooks/bland
+```
+
+The webhook is now processed by the Supabase Edge Function `webhook-processor` for improved reliability and direct database access. Configure this URL in the Bland.ai dashboard under your pathway settings.
+
+**Note:** Webhook signature verification is currently disabled to allow direct Bland.ai integration. The Edge Function processes webhooks without requiring HMAC validation.
 
 Receives call completion data:
 - Call status and duration
@@ -498,6 +510,15 @@ Receives call completion data:
 - AI-generated summary
 - Sentiment analysis
 - Recording URL
+- Extracted variables (supports both string and boolean types)
+
+### Variable Type Handling
+
+Bland.ai may return variables as either strings or booleans:
+- `wants_sample`: `true` (boolean) or `"true"` (string)
+- `wants_demo`: `true` (boolean) or `"true"` (string)
+
+The webhook processor handles both formats automatically.
 
 ### Email Resolution
 
@@ -525,10 +546,13 @@ Cross-call context retention using Bland.ai Memory:
 BLAND_API_KEY=sk_...
 NEXT_PUBLIC_BLAND_MEMORY_ID=mem_...
 BLAND_MEMORY_ID=mem_...
-NEXT_PUBLIC_BLAND_WEBHOOK_URL=https://your-domain.vercel.app/api/webhooks/bland
+NEXT_PUBLIC_BLAND_WEBHOOK_URL=https://<project-id>.supabase.co/functions/v1/webhook-processor
 ```
 
-Note: `NEXT_PUBLIC_BLAND_WEBHOOK_URL` defaults to the production URL if not set. Set this when testing on a different deployment.
+**Bland Dashboard Configuration:**
+Set the webhook URL in Bland.ai dashboard to point directly to the Supabase Edge Function. This bypasses the Vercel API route and provides more reliable webhook processing.
+
+Note: `NEXT_PUBLIC_BLAND_WEBHOOK_URL` is used by the frontend when initiating calls. For production, this should match the URL configured in the Bland dashboard.
 
 ---
 

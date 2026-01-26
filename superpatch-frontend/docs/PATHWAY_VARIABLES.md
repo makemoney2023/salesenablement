@@ -103,6 +103,22 @@ These are already being captured in the current pathways:
 | `wants_sample` | Whether they want samples |
 | `sample_products` | Which products they want |
 
+### Variable Type Handling
+
+**Important:** Bland.ai may return boolean variables in different formats depending on the pathway configuration:
+
+| Variable | Possible Values |
+|----------|-----------------|
+| `wants_sample` | `true` (boolean), `"true"` (string), `"yes"` (string) |
+| `wants_demo` | `true` (boolean), `"true"` (string), `"yes"` (string) |
+| `decision_maker` | `true` (boolean), `"true"` (string), `"yes"` (string) |
+
+The `webhook-processor` Edge Function handles all these formats automatically by:
+1. Converting values to strings using `String(value).toLowerCase()`
+2. Checking for both boolean `true` and string `"true"`/`"yes"`
+
+When configuring pathways, you can use either format - the webhook will process them correctly.
+
 ## Lead Score Impact
 
 The system automatically calculates a lead score (0-100) based on:

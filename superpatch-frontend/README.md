@@ -81,6 +81,7 @@ SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 BLAND_API_KEY=your_bland_api_key
 NEXT_PUBLIC_BLAND_MEMORY_ID=your_memory_store_id
 BLAND_MEMORY_ID=your_memory_store_id
+NEXT_PUBLIC_BLAND_WEBHOOK_URL=https://your-project-id.supabase.co/functions/v1/webhook-processor
 
 # Cal.com (optional)
 CAL_API_KEY=your_cal_api_key
@@ -99,6 +100,16 @@ These secrets must be set in the Supabase Dashboard (Project Settings → Edge F
 # LLM Analysis (required for post-call analysis)
 GEMINI_API_KEY=your_google_gemini_api_key
 ```
+
+### Bland.ai Dashboard Configuration
+
+Configure the webhook URL in the Bland.ai dashboard to point to the Supabase Edge Function:
+
+```
+https://your-project-id.supabase.co/functions/v1/webhook-processor
+```
+
+This ensures call completion webhooks are processed directly by Supabase for reliable database updates.
 
 ## API Endpoints
 
