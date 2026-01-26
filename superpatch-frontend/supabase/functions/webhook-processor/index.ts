@@ -425,8 +425,11 @@ function extractQualificationData(
   if (contactEmail) qualification.contact_email = contactEmail;
   
   const decisionMaker = vars.decision_maker || vars.is_decision_maker;
-  if (decisionMaker) {
-    qualification.decision_maker = decisionMaker.toLowerCase() === "yes" || decisionMaker.toLowerCase() === "true";
+  if (decisionMaker !== undefined && decisionMaker !== null) {
+    // Handle both string and boolean values from Bland
+    qualification.decision_maker = decisionMaker === true || 
+      String(decisionMaker).toLowerCase() === "yes" || 
+      String(decisionMaker).toLowerCase() === "true";
   }
   
   const bestCallbackTime = vars.best_callback_time || vars.callback_time || vars.preferred_time_to_call;
