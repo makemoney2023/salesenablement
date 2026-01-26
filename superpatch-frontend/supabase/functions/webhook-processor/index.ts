@@ -193,7 +193,11 @@ function calculateLeadScore(
   if (callStatus === "booked" || callStatus === "calendar_sent") score += 50;
   
   const vars = payload.variables || {};
-  if (vars.wants_sample === "true" || vars.sample_requested === "true") score += 25;
+  // Handle both string and boolean values from Bland
+  if (String(vars.wants_sample || "").toLowerCase() === "true" || vars.wants_sample === true ||
+      String(vars.sample_requested || "").toLowerCase() === "true" || vars.sample_requested === true) {
+    score += 25;
+  }
   
   const sentiment = payload.analysis?.sentiment?.toLowerCase();
   if (sentiment === "positive") score += 15;
@@ -482,13 +486,17 @@ function extractQualificationData(
   if (productsInterested) qualification.products_interested = productsInterested;
   
   const wantsSample = vars.wants_sample || (productsInterested ? "true" : undefined);
-  if (wantsSample) {
-    qualification.wants_sample = wantsSample.toLowerCase() === "true" || wantsSample.toLowerCase() === "yes";
+  if (wantsSample !== undefined && wantsSample !== null) {
+    // Handle both string and boolean values from Bland
+    const sampleValue = String(wantsSample).toLowerCase();
+    qualification.wants_sample = sampleValue === "true" || sampleValue === "yes";
   }
   
   const wantsDemo = vars.wants_demo;
-  if (wantsDemo) {
-    qualification.wants_demo = wantsDemo.toLowerCase() === "true" || wantsDemo.toLowerCase() === "yes";
+  if (wantsDemo !== undefined && wantsDemo !== null) {
+    // Handle both string and boolean values from Bland
+    const demoValue = String(wantsDemo).toLowerCase();
+    qualification.wants_demo = demoValue === "true" || demoValue === "yes";
   }
   
   return qualification;
@@ -908,11 +916,19 @@ serve(async (req) => {
       status: callStatus,
       call_started_at: payload.created_at,
       call_ended_at: payload.ended_at,
-      duration_seconds: payload.call_length,
+      duration_seconds: payload.call_length ? Math.round(payload.call_length) : null,
       transcript: payload.concatenated_transcript,
       summary: payload.analysis?.summary,
       appointment_booked: callStatus === "booked" || callStatus === "calendar_sent",
-      appointment_time: appointmentTime ? new Date(appointmentTime).toISOString() : null,
+      appointment_time: (() => {
+        if (!appointmentTime) return null;
+        try {
+          const date = new Date(appointmentTime);
+          return isNaN(date.getTime()) ? null : date.toISOString();
+        } catch {
+          return null; // Invalid date format like "Tuesday at 1:00 PM"
+        }
+      })(),
       calendar_invite_sent: false,
       practitioner_email: resolvedEmail || null,
       sentiment_label: sentimentLabel,
@@ -925,17 +941,61 @@ serve(async (req) => {
 
     console.log("💾 Saving call record...");
 
-    // Upsert call record
-    const { data: savedRecord, error: saveError } = await supabase
+    // Build update object without created_at (keep original timestamp)
+    const updateData = {
+      practitioner_id: callRecord.practitioner_id,
+      practitioner_name: callRecord.practitioner_name,
+      practitioner_type: callRecord.practitioner_type,
+      phone: callRecord.phone,
+      address: callRecord.address,
+      city: callRecord.city,
+      province: callRecord.province,
+      status: callRecord.status,
+      call_started_at: callRecord.call_started_at,
+      call_ended_at: callRecord.call_ended_at,
+      duration_seconds: callRecord.duration_seconds,
+      transcript: callRecord.transcript,
+      summary: callRecord.summary,
+      appointment_booked: callRecord.appointment_booked,
+      appointment_time: callRecord.appointment_time,
+      calendar_invite_sent: callRecord.calendar_invite_sent,
+      practitioner_email: callRecord.practitioner_email,
+      sentiment_label: callRecord.sentiment_label,
+      sentiment_score: callRecord.sentiment_score,
+      recording_url: callRecord.recording_url,
+      lead_score: callRecord.lead_score,
+      updated_at: new Date().toISOString(),
+    };
+
+    // First try to UPDATE existing record by call_id
+    const { data: updatedRecord, error: updateError } = await supabase
       .from("call_records")
-      .upsert(callRecord, { onConflict: "call_id" })
+      .update(updateData)
+      .eq("call_id", payload.call_id)
       .select()
       .single();
 
-    if (saveError) {
+    let savedRecord = updatedRecord;
+    let saveError = updateError;
+
+    console.log("📊 Update result:", { hasRecord: !!updatedRecord, error: updateError?.message });
+
+    // If no existing record found (PGRST116 = no rows returned), insert new one
+    if (updateError?.code === "PGRST116") {
+      console.log("📝 No existing record, inserting new...");
+      const { data: insertedRecord, error: insertError } = await supabase
+        .from("call_records")
+        .insert(callRecord)
+        .select()
+        .single();
+      savedRecord = insertedRecord;
+      saveError = insertError;
+    }
+
+    if (saveError && saveError.code !== "PGRST116") {
       console.error("❌ Failed to save call record:", saveError);
-    } else {
-      console.log("✅ Call record saved:", savedRecord?.id);
+    } else if (savedRecord) {
+      console.log("✅ Call record saved:", savedRecord.id);
     }
 
     // Trigger LLM analysis (fire and forget - don't await to avoid webhook timeout)
@@ -959,8 +1019,12 @@ serve(async (req) => {
       });
     }
 
-    // Handle sample request
-    const wantsSample = vars.wants_sample === "true" || vars.sample_requested === "true";
+    // Handle sample request (handle both string and boolean values from Bland)
+    const wantsSample = 
+      String(vars.wants_sample || "").toLowerCase() === "true" || 
+      vars.wants_sample === true ||
+      String(vars.sample_requested || "").toLowerCase() === "true" ||
+      vars.sample_requested === true;
     if (wantsSample) {
       console.log("📦 Sample request detected...");
       const productsRaw = vars.products_interested || vars.sample_products || vars.products_requested || vars.products || "";
