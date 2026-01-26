@@ -56,6 +56,18 @@ export interface Practitioner {
   dnc_reason?: string | null;
   dnc_detected_at?: string | null;
   dnc_source?: 'ai_detected' | 'manual' | null;
+  // Contact info (from qualification or enrichment)
+  contact_email?: string | null;
+  postal_code?: string | null;
+  // Enrichment data (optional)
+  enrichment?: {
+    success?: boolean;
+    data?: {
+      emails?: string[];
+      phones?: string[];
+      [key: string]: unknown;
+    };
+  } | null;
 }
 
 export interface CallResult {
@@ -181,17 +193,24 @@ export class BatchCaller {
       });
     }
 
+    // Get best available email from practitioner data
+    const practitionerEmail = practitioner.contact_email || 
+      (practitioner.enrichment?.data?.emails?.[0]) || '';
+
     // Build request_data with practice context
     const requestData = {
       practice_name: practitioner.name || 'your practice',
       practice_address: practitioner.address || '',
       practice_city: practitioner.city || '',
       practice_province: practitioner.province || '',
+      practice_postal_code: practitioner.postal_code || '',
+      practice_email: practitionerEmail,
       google_rating: practitioner.rating?.toString() || '',
       review_count: practitioner.review_count?.toString() || '',
       website: practitioner.website || '',
       practitioner_type: practitioner.practitioner_type || '',
       has_address: practitioner.address ? 'true' : 'false',
+      has_email: practitionerEmail ? 'true' : 'false',
       // For greeting personalization in pathway
       greeting_name: practitioner.name || 'there',
     };
@@ -225,6 +244,11 @@ export class BatchCaller {
         address: practitioner.address || '',
         city: practitioner.city || '',
         province: practitioner.province || '',
+        postal_code: practitioner.postal_code || '',
+        // Include email for sample requests and appointment booking
+        // Priority: contact_email > enrichment emails
+        clinic_email: practitioner.contact_email || 
+          (practitioner.enrichment?.data?.emails?.[0]) || '',
       },
     };
 
