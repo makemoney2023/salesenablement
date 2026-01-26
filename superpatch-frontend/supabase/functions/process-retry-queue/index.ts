@@ -16,7 +16,7 @@ const BATCH_SIZE = 10;
 // Knowledge base and voice IDs (same as batch-caller.ts)
 const KB_ID = "b671527d-0c2d-4a21-9586-033dad3b0255";
 const VOICE_ID = "78c8543e-e5fe-448e-8292-20a7b8c45247";
-const WEBHOOK_URL = Deno.env.get("WEBHOOK_URL") || "https://sales-enablement-six.vercel.app/api/webhooks/bland";
+const WEBHOOK_URL = Deno.env.get("WEBHOOK_URL") || "https://gdwwppwaxyvudsecexuq.supabase.co/functions/v1/webhook-processor";
 // Bland Memory Store ID for cross-call context retention
 const MEMORY_ID = Deno.env.get("BLAND_MEMORY_ID") || "";
 
