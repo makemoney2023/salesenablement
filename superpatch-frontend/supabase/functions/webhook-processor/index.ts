@@ -737,7 +737,10 @@ serve(async (req) => {
       body_length: rawBody.length,
     });
 
-    // Verify signature if secret is configured
+    // Signature verification disabled - Bland webhooks don't include signatures by default
+    // If you want to enable this later, configure BLAND_WEBHOOK_SECRET in both Bland and Supabase
+    // and uncomment the verification block below:
+    /*
     if (BLAND_WEBHOOK_SECRET) {
       const isValid = await verifyWebhookSignature(BLAND_WEBHOOK_SECRET, rawBody, signature);
       if (!isValid) {
@@ -757,6 +760,8 @@ serve(async (req) => {
     } else {
       console.warn("⚠️ BLAND_WEBHOOK_SECRET not configured - skipping signature verification");
     }
+    */
+    console.log("ℹ️ Signature verification disabled - processing webhook directly");
 
     // Parse the body after verification
     const payload: BlandWebhookPayload = JSON.parse(rawBody);
