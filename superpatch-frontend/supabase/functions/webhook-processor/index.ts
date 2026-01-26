@@ -549,6 +549,76 @@ async function getPractitionerRetryCount(
   }
 }
 
+// LLM-based natural language date parsing
+async function parseNaturalLanguageDate(
+  dateString: string,
+  referenceDate?: Date
+): Promise<string | null> {
+  if (!GEMINI_API_KEY) {
+    console.warn("⚠️ GEMINI_API_KEY not configured, skipping date parsing");
+    return null;
+  }
+
+  // First try native parsing - if it works, use it
+  try {
+    const nativeDate = new Date(dateString);
+    if (!isNaN(nativeDate.getTime()) && nativeDate.getFullYear() > 2020) {
+      return nativeDate.toISOString();
+    }
+  } catch {
+    // Continue to LLM parsing
+  }
+
+  try {
+    const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+
+    const now = referenceDate || new Date();
+    const currentDate = now.toISOString().split('T')[0];
+    const currentDay = now.toLocaleDateString('en-US', { weekday: 'long' });
+    const timezone = "America/Toronto"; // EST/EDT
+
+    const prompt = `Convert this natural language date/time to an ISO 8601 timestamp.
+
+Current date: ${currentDate} (${currentDay})
+Timezone: ${timezone}
+
+Input: "${dateString}"
+
+Rules:
+- If a day of week is mentioned (e.g., "Tuesday"), use the NEXT occurrence of that day
+- If no time is specified, default to 2:00 PM (14:00)
+- If "morning" is mentioned, use 10:00 AM
+- If "afternoon" is mentioned, use 2:00 PM
+- If "evening" is mentioned, use 5:00 PM
+- Return ONLY the ISO 8601 timestamp (e.g., "2026-01-30T14:00:00-05:00")
+- If the input cannot be parsed as a date/time, return "INVALID"
+
+Output (just the timestamp, nothing else):`;
+
+    const result = await model.generateContent(prompt);
+    const response = result.response.text().trim();
+    
+    if (response === "INVALID" || !response) {
+      console.log(`⚠️ Could not parse date: "${dateString}"`);
+      return null;
+    }
+
+    // Validate the returned date
+    const parsedDate = new Date(response);
+    if (isNaN(parsedDate.getTime())) {
+      console.log(`⚠️ LLM returned invalid date format: "${response}"`);
+      return null;
+    }
+
+    console.log(`✅ Parsed "${dateString}" → ${parsedDate.toISOString()}`);
+    return parsedDate.toISOString();
+  } catch (error) {
+    console.error("❌ LLM date parsing failed:", error);
+    return null;
+  }
+}
+
 // LLM-based variable extraction from transcript (fallback when pathway extraction is sparse)
 interface ExtractedVariables {
   contact_name?: string;
@@ -840,6 +910,27 @@ serve(async (req) => {
     const qualificationData = extractQualificationData(vars, meta as Record<string, string | undefined>);
     console.log("📊 Extracted qualification data:", qualificationData);
 
+    // Parse appointment time with LLM fallback for natural language dates
+    let parsedAppointmentTime: string | null = null;
+    if (appointmentTime) {
+      // First try native parsing
+      try {
+        const nativeDate = new Date(appointmentTime);
+        if (!isNaN(nativeDate.getTime()) && nativeDate.getFullYear() > 2020) {
+          parsedAppointmentTime = nativeDate.toISOString();
+          console.log(`✅ Appointment time parsed natively: ${parsedAppointmentTime}`);
+        }
+      } catch {
+        // Will fall through to LLM parsing
+      }
+
+      // If native parsing failed, try LLM parsing
+      if (!parsedAppointmentTime) {
+        console.log(`🔄 Attempting LLM date parsing for: "${appointmentTime}"`);
+        parsedAppointmentTime = await parseNaturalLanguageDate(appointmentTime);
+      }
+    }
+
     // Resolve practitioner
     let resolvedPractitionerId: string | undefined | null = practitionerId;
     let resolvedPractitionerName = practitionerName || practiceName;
@@ -923,15 +1014,7 @@ serve(async (req) => {
       transcript: payload.concatenated_transcript,
       summary: payload.analysis?.summary,
       appointment_booked: callStatus === "booked" || callStatus === "calendar_sent",
-      appointment_time: (() => {
-        if (!appointmentTime) return null;
-        try {
-          const date = new Date(appointmentTime);
-          return isNaN(date.getTime()) ? null : date.toISOString();
-        } catch {
-          return null; // Invalid date format like "Tuesday at 1:00 PM"
-        }
-      })(),
+      appointment_time: parsedAppointmentTime,
       calendar_invite_sent: false,
       practitioner_email: resolvedEmail || null,
       sentiment_label: sentimentLabel,
@@ -1125,8 +1208,8 @@ serve(async (req) => {
 
     // Trigger appointment booking if needed (decoupled via edge function)
     // This will create both Cal.com booking AND appointment record in our table
-    if (wantsDemo && appointmentTime && resolvedPractitionerName && resolvedEmail && payload.completed && savedRecord?.id) {
-      console.log("🗓️ Triggering appointment booking...");
+    if (wantsDemo && parsedAppointmentTime && resolvedPractitionerName && resolvedEmail && payload.completed && savedRecord?.id) {
+      console.log("🗓️ Triggering appointment booking with parsed time:", parsedAppointmentTime);
       try {
         await fetch(`${SUPABASE_URL}/functions/v1/book-appointment`, {
           method: "POST",
@@ -1139,7 +1222,7 @@ serve(async (req) => {
             practitioner_id: resolvedPractitionerId,  // Pass practitioner ID for appointments table
             practitioner_name: resolvedPractitionerName,
             practitioner_email: resolvedEmail,
-            appointment_time: appointmentTime,
+            appointment_time: parsedAppointmentTime,  // Use LLM-parsed ISO date
             phone: practitionerPhone,
             address: resolvedAddress,
             practitioner_type: resolvedPractitionerType,
@@ -1153,6 +1236,8 @@ serve(async (req) => {
       } catch (bookingError) {
         console.error("Failed to trigger booking:", bookingError);
       }
+    } else if (wantsDemo && appointmentTime && !parsedAppointmentTime) {
+      console.warn(`⚠️ Could not parse appointment time "${appointmentTime}" - booking skipped. Manual follow-up needed.`);
     }
 
     // Return response
