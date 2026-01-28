@@ -111,21 +111,40 @@ function useQuickStats() {
         if (data) {
           const records = JSON.parse(data);
           const today = new Date().toDateString();
+          const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
           
           let active = 0;
           let queued = 0;
           let booked = 0;
+          let needsCleanup = false;
           
-          Object.values(records).forEach((record: any) => {
-            if (record.status === "in_progress") active++;
+          Object.entries(records).forEach(([id, record]: [string, any]) => {
+            const recordDate = new Date(record.updated_at || record.created_at).toDateString();
+            const recordTime = new Date(record.updated_at || record.created_at).getTime();
+            
+            // Clean up stale in_progress records (older than 24 hours)
+            if (record.status === "in_progress" && recordTime < oneDayAgo) {
+              record.status = "failed";
+              needsCleanup = true;
+            }
+            
+            // Only count as active if from today
+            if (record.status === "in_progress" && recordDate === today) {
+              active++;
+            }
             if (record.status === "queued") queued++;
             if (
               (record.status === "booked" || record.status === "calendar_sent") &&
-              new Date(record.updated_at).toDateString() === today
+              recordDate === today
             ) {
               booked++;
             }
           });
+          
+          // Save cleaned up records back to localStorage
+          if (needsCleanup) {
+            localStorage.setItem("superpatch_campaign_calls", JSON.stringify(records));
+          }
           
           setStats({ activeCalls: active, queuedCalls: queued, todayBooked: booked });
         }
