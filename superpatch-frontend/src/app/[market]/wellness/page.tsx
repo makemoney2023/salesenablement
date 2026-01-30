@@ -1,4 +1,3 @@
-import { AppShell } from "@/components/layout/app-shell";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -40,8 +39,7 @@ export default async function WellnessPage({ params }: WellnessPageProps) {
   const marketInfo = getMarketById(market as MarketId);
 
   return (
-    <AppShell defaultMarket={market as MarketId}>
-      <div className="flex flex-1 flex-col gap-6 p-4 md:p-6">
+    <div className="flex flex-1 flex-col gap-6 p-4 md:p-6">
         {/* Header */}
         <div className="flex flex-col gap-2">
           <div className="flex items-center gap-2">
@@ -255,8 +253,7 @@ export default async function WellnessPage({ params }: WellnessPageProps) {
             </div>
           </CardContent>
         </Card>
-      </div>
-    </AppShell>
+    </div>
   );
 }
 

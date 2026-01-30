@@ -3,7 +3,6 @@
 import { notFound } from "next/navigation";
 import Image from "next/image";
 import { use, useState } from "react";
-import { AppShell } from "@/components/layout/app-shell";
 import {
   Card,
   CardContent,
@@ -166,8 +165,7 @@ export default function RoadmapsPage({
         }));
 
   return (
-    <AppShell defaultMarket={market as MarketId}>
-      <div className="flex flex-1 flex-col gap-4 p-4 md:p-6">
+    <div className="flex flex-1 flex-col gap-4 p-4 md:p-6">
         {/* Header */}
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-2">
@@ -270,7 +268,6 @@ export default function RoadmapsPage({
             </p>
           </CardContent>
         </Card>
-      </div>
-    </AppShell>
+    </div>
   );
 }

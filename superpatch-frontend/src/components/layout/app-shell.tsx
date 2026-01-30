@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { useRouter, usePathname } from "next/navigation";
+import { User } from "@supabase/supabase-js";
 import {
   SidebarInset,
   SidebarProvider,
@@ -17,16 +18,20 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { AppSidebar } from "./app-sidebar";
+import { AuthProvider } from "@/contexts/auth-context";
 import { MarketId } from "@/types";
 import { products } from "@/data/products";
 import { markets } from "@/data/markets";
+import type { UserProfile } from "@/lib/db/types";
 
 interface AppShellProps {
   children: React.ReactNode;
   defaultMarket?: MarketId;
+  user?: User | null;
+  profile?: UserProfile | null;
 }
 
-export function AppShell({ children, defaultMarket = "d2c" }: AppShellProps) {
+export function AppShell({ children, defaultMarket = "d2c", user, profile }: AppShellProps) {
   const router = useRouter();
   const pathname = usePathname();
   const [currentMarket, setCurrentMarket] = React.useState<MarketId>(defaultMarket);
@@ -79,42 +84,46 @@ export function AppShell({ children, defaultMarket = "d2c" }: AppShellProps) {
   const breadcrumbs = generateBreadcrumbs();
 
   return (
-    <SidebarProvider>
-      <AppSidebar
-        currentMarket={currentMarket}
-        onMarketChange={handleMarketChange}
-      />
-      <SidebarInset>
-        <header className="flex h-16 shrink-0 items-center gap-2 border-b px-4">
-          <SidebarTrigger className="-ml-1" />
-          <Separator orientation="vertical" className="mr-2 h-4" />
-          <Breadcrumb>
-            <BreadcrumbList>
-              <BreadcrumbItem className="hidden md:block">
-                <BreadcrumbLink href="/">Home</BreadcrumbLink>
-              </BreadcrumbItem>
-              {breadcrumbs.map((crumb, index) => (
-                <React.Fragment key={crumb.href || index}>
-                  <BreadcrumbSeparator className="hidden md:block" />
-                  <BreadcrumbItem>
-                    {index === breadcrumbs.length - 1 ? (
-                      <BreadcrumbPage>{crumb.label}</BreadcrumbPage>
-                    ) : (
-                      <BreadcrumbLink href={crumb.href}>
-                        {crumb.label}
-                      </BreadcrumbLink>
-                    )}
-                  </BreadcrumbItem>
-                </React.Fragment>
-              ))}
-            </BreadcrumbList>
-          </Breadcrumb>
-        </header>
-        <main className="flex-1 overflow-auto">
-          {children}
-        </main>
-      </SidebarInset>
-    </SidebarProvider>
+    <AuthProvider initialUser={user} initialProfile={profile}>
+      <SidebarProvider>
+        <AppSidebar
+          currentMarket={currentMarket}
+          onMarketChange={handleMarketChange}
+          user={user}
+          profile={profile}
+        />
+        <SidebarInset>
+          <header className="flex h-16 shrink-0 items-center gap-2 border-b px-4">
+            <SidebarTrigger className="-ml-1" />
+            <Separator orientation="vertical" className="mr-2 h-4" />
+            <Breadcrumb>
+              <BreadcrumbList>
+                <BreadcrumbItem className="hidden md:block">
+                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
+                </BreadcrumbItem>
+                {breadcrumbs.map((crumb, index) => (
+                  <React.Fragment key={crumb.href || index}>
+                    <BreadcrumbSeparator className="hidden md:block" />
+                    <BreadcrumbItem>
+                      {index === breadcrumbs.length - 1 ? (
+                        <BreadcrumbPage>{crumb.label}</BreadcrumbPage>
+                      ) : (
+                        <BreadcrumbLink href={crumb.href}>
+                          {crumb.label}
+                        </BreadcrumbLink>
+                      )}
+                    </BreadcrumbItem>
+                  </React.Fragment>
+                ))}
+              </BreadcrumbList>
+            </Breadcrumb>
+          </header>
+          <main className="flex-1 overflow-auto">
+            {children}
+          </main>
+        </SidebarInset>
+      </SidebarProvider>
+    </AuthProvider>
   );
 }
 

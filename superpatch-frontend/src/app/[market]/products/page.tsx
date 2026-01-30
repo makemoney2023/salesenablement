@@ -1,4 +1,3 @@
-import { AppShell } from "@/components/layout/app-shell";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -25,8 +24,7 @@ export default async function ProductsPage({ params }: ProductsPageProps) {
   const marketProducts = getProductsByMarket(market);
 
   return (
-    <AppShell defaultMarket={market as MarketId}>
-      <div className="flex flex-1 flex-col gap-4 p-4 md:p-6">
+    <div className="flex flex-1 flex-col gap-4 p-4 md:p-6">
         {/* Header */}
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-2">
@@ -97,7 +95,6 @@ export default async function ProductsPage({ params }: ProductsPageProps) {
             </Link>
           ))}
         </div>
-      </div>
-    </AppShell>
+    </div>
   );
 }

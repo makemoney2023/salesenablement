@@ -1,3 +1,4 @@
+import { getAuthUser } from "@/lib/auth";
 import { AppShell } from "@/components/layout/app-shell";
 import {
   Card,
@@ -122,9 +123,11 @@ const clinicalStudies = [
   },
 ];
 
-export default function EvidencePage() {
+export default async function EvidencePage() {
+  const { user, profile } = await getAuthUser();
+
   return (
-    <AppShell>
+    <AppShell user={user} profile={profile}>
       <div className="flex flex-1 flex-col gap-4 p-4 md:p-6">
         {/* Header */}
         <div className="flex flex-col gap-1">

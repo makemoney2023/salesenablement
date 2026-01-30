@@ -6,6 +6,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
+import { User as SupabaseUser } from "@supabase/supabase-js";
 import {
   User,
   Building,
@@ -27,9 +28,14 @@ import {
   Lightbulb,
   Mail,
   Box,
+  Settings,
+  LogOut,
+  Shield,
+  ChevronsUpDown,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useSidebarBadges } from "@/hooks/useSidebarBadges";
+import type { UserProfile } from "@/lib/db/types";
 
 import {
   Sidebar,
@@ -52,6 +58,15 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { MarketSwitcher } from "./market-switcher";
 import { products } from "@/data/products";
 import { b2bPractitionerTypes } from "@/data/wordtracks";
@@ -91,6 +106,8 @@ interface NavItem {
 interface AppSidebarProps extends React.ComponentProps<typeof Sidebar> {
   currentMarket: MarketId;
   onMarketChange?: (market: MarketId) => void;
+  user?: SupabaseUser | null;
+  profile?: UserProfile | null;
 }
 
 // Quick stats hook for sidebar
@@ -173,11 +190,43 @@ function useQuickStats() {
 export function AppSidebar({
   currentMarket,
   onMarketChange,
+  user,
+  profile,
   ...props
 }: AppSidebarProps) {
   const pathname = usePathname();
   const quickStats = useQuickStats();
   const { counts: badgeCounts } = useSidebarBadges();
+  
+  // Track mounted state to avoid hydration mismatch with Radix UI dropdowns
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const handleSignOut = async () => {
+    // Use server-side signout to properly clear cookies
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = '/api/auth/signout';
+    document.body.appendChild(form);
+    form.submit();
+  };
+
+  const getUserInitials = () => {
+    if (profile?.full_name) {
+      return profile.full_name
+        .split(' ')
+        .map(n => n[0])
+        .join('')
+        .toUpperCase()
+        .slice(0, 2);
+    }
+    if (user?.email) {
+      return user.email[0].toUpperCase();
+    }
+    return 'U';
+  };
 
   // Filter products by current market (for D2C)
   const marketProducts = products.filter((p) =>
@@ -492,11 +541,105 @@ export function AppSidebar({
           </div>
         )}
         
+        {/* User Menu - only render dropdown after mount to avoid hydration mismatch */}
         <SidebarMenu>
           <SidebarMenuItem>
-            <div className="flex items-center gap-2 px-2 py-2 text-xs text-sidebar-foreground/60 group-data-[collapsible=icon]:hidden">
-              <span>SuperPatch © 2025</span>
-            </div>
+            {mounted && user ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <SidebarMenuButton
+                    size="lg"
+                    className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+                  >
+                    <Avatar className="h-8 w-8 rounded-lg">
+                      <AvatarImage src={profile?.avatar_url || undefined} alt={profile?.full_name || ''} />
+                      <AvatarFallback className="rounded-lg bg-primary/10 text-primary">
+                        {getUserInitials()}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="grid flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden">
+                      <span className="truncate font-semibold">
+                        {profile?.full_name || user.email?.split('@')[0]}
+                      </span>
+                      <span className="truncate text-xs text-muted-foreground flex items-center gap-1">
+                        {profile?.role === 'admin' && (
+                          <Shield className="h-3 w-3 text-primary" />
+                        )}
+                        {user.email}
+                      </span>
+                    </div>
+                    <ChevronsUpDown className="ml-auto size-4 group-data-[collapsible=icon]:hidden" />
+                  </SidebarMenuButton>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent
+                  className="w-[--radix-dropdown-menu-trigger-width] min-w-56 rounded-lg"
+                  side="bottom"
+                  align="end"
+                  sideOffset={4}
+                >
+                  <DropdownMenuLabel className="p-0 font-normal">
+                    <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
+                      <Avatar className="h-8 w-8 rounded-lg">
+                        <AvatarImage src={profile?.avatar_url || undefined} alt={profile?.full_name || ''} />
+                        <AvatarFallback className="rounded-lg">
+                          {getUserInitials()}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="grid flex-1 text-left text-sm leading-tight">
+                        <span className="truncate font-semibold">
+                          {profile?.full_name || user.email?.split('@')[0]}
+                        </span>
+                        <span className="truncate text-xs text-muted-foreground">
+                          {user.email}
+                        </span>
+                      </div>
+                      {profile?.role === 'admin' && (
+                        <Badge variant="default" className="ml-auto">
+                          <Shield className="h-3 w-3 mr-1" />
+                          Admin
+                        </Badge>
+                      )}
+                    </div>
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem asChild>
+                    <Link href="/settings" className="cursor-pointer">
+                      <Settings className="mr-2 h-4 w-4" />
+                      Settings
+                    </Link>
+                  </DropdownMenuItem>
+                  {profile?.role === 'admin' && (
+                    <DropdownMenuItem asChild>
+                      <Link href="/settings/users" className="cursor-pointer">
+                        <Users className="mr-2 h-4 w-4" />
+                        User Management
+                      </Link>
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={handleSignOut} className="text-destructive cursor-pointer">
+                    <LogOut className="mr-2 h-4 w-4" />
+                    Sign out
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : mounted && !user ? (
+              <SidebarMenuButton asChild>
+                <Link href="/login">
+                  <User className="h-4 w-4" />
+                  <span>Sign in</span>
+                </Link>
+              </SidebarMenuButton>
+            ) : (
+              // Loading skeleton while mounting
+              <SidebarMenuButton size="lg" disabled>
+                <div className="h-8 w-8 rounded-lg bg-muted animate-pulse" />
+                <div className="grid flex-1 gap-1 group-data-[collapsible=icon]:hidden">
+                  <div className="h-4 w-24 bg-muted rounded animate-pulse" />
+                  <div className="h-3 w-32 bg-muted rounded animate-pulse" />
+                </div>
+              </SidebarMenuButton>
+            )}
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarFooter>

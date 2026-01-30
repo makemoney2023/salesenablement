@@ -1,4 +1,3 @@
-import { AppShell } from "@/components/layout/app-shell";
 import {
   Card,
   CardContent,
@@ -103,8 +102,7 @@ export default async function ProductDetailPage({
   const getQuickReference = () => wordTrack?.quickReference;
 
   return (
-    <AppShell defaultMarket={market as MarketId}>
-      <div className="flex flex-1 flex-col gap-4 p-4 md:p-6">
+    <div className="flex flex-1 flex-col gap-4 p-4 md:p-6">
         {/* Product Header */}
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex items-start gap-4">
@@ -974,8 +972,7 @@ They thought our ${product.name} patch could be a great fit. Would you like to h
             </div>
           </TabsContent>
         </Tabs>
-      </div>
-    </AppShell>
+    </div>
   );
 }
 

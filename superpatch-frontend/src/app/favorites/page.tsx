@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { AppShell } from "@/components/layout/app-shell";
 import {
   Card,
   CardContent,
@@ -193,10 +192,9 @@ export default function FavoritesPage() {
   );
 
   return (
-    <AppShell>
-      <div className="flex flex-1 flex-col gap-4 p-4 md:p-6">
-        {/* Header */}
-        <div className="flex items-center justify-between">
+    <div className="flex flex-1 flex-col gap-4 p-4 md:p-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
           <div className="flex flex-col gap-1">
             <h1 className="text-2xl font-semibold tracking-tight">Favorites</h1>
             <p className="text-sm text-muted-foreground">
@@ -284,7 +282,6 @@ export default function FavoritesPage() {
             </TabsContent>
           </Tabs>
         )}
-      </div>
-    </AppShell>
+    </div>
   );
 }

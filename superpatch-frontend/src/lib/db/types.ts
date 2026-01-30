@@ -133,9 +133,46 @@ export interface PractitionerQualification {
   wants_demo: boolean | null;
 }
 
+// User role type
+export type UserRole = 'admin' | 'user';
+
 export interface Database {
   public: {
     Tables: {
+      user_profiles: {
+        Row: {
+          id: string;
+          email: string;
+          full_name: string | null;
+          avatar_url: string | null;
+          role: UserRole;
+          is_active: boolean;
+          invited_by: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id: string;
+          email: string;
+          full_name?: string | null;
+          avatar_url?: string | null;
+          role?: UserRole;
+          is_active?: boolean;
+          invited_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          email?: string;
+          full_name?: string | null;
+          avatar_url?: string | null;
+          role?: UserRole;
+          is_active?: boolean;
+          invited_by?: string | null;
+          updated_at?: string;
+        };
+      };
       call_records: {
         Row: {
           id: string;
@@ -443,6 +480,10 @@ export interface Database {
 }
 
 // Convenience types
+export type UserProfile = Database['public']['Tables']['user_profiles']['Row'];
+export type UserProfileInsert = Database['public']['Tables']['user_profiles']['Insert'];
+export type UserProfileUpdate = Database['public']['Tables']['user_profiles']['Update'];
+
 export type CallRecord = Database['public']['Tables']['call_records']['Row'];
 export type CallRecordInsert = Database['public']['Tables']['call_records']['Insert'];
 export type CallRecordUpdate = Database['public']['Tables']['call_records']['Update'];

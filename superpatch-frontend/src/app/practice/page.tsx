@@ -2,7 +2,6 @@
 
 import { useState, useMemo } from "react";
 import Image from "next/image";
-import { AppShell } from "@/components/layout/app-shell";
 import {
   Card,
   CardContent,
@@ -154,8 +153,7 @@ export default function PracticePage() {
     filteredCards.length > 0 ? (masteredCount / filteredCards.length) * 100 : 0;
 
   return (
-    <AppShell>
-      <div className="flex flex-1 flex-col gap-4 p-4 md:p-6">
+    <div className="flex flex-1 flex-col gap-4 p-4 md:p-6">
         {/* Header */}
         <div className="flex flex-col gap-1">
           <h1 className="text-2xl font-semibold tracking-tight">
@@ -311,7 +309,6 @@ export default function PracticePage() {
             </CardContent>
           </Card>
         )}
-      </div>
-    </AppShell>
+    </div>
   );
 }
