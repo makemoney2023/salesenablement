@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createAdminClient } from '@/lib/supabase/server'
 import type { UserProfile } from '@/lib/db/types'
 
 export interface AuthUser {
@@ -10,6 +10,7 @@ export interface AuthUser {
 /**
  * Get the authenticated user and profile from the server.
  * Redirects to login if not authenticated.
+ * Uses admin client to bypass RLS for reliable profile fetching.
  */
 export async function getAuthUser(): Promise<AuthUser> {
   const supabase = await createClient()
@@ -20,8 +21,10 @@ export async function getAuthUser(): Promise<AuthUser> {
     redirect('/login')
   }
 
-  // Get user profile
-  const { data: profile } = await supabase
+  // Use admin client to bypass RLS and reliably fetch profile
+  // This is safe because we've already authenticated the user above
+  const adminClient = await createAdminClient()
+  const { data: profile } = await adminClient
     .from('user_profiles')
     .select('*')
     .eq('id', user.id)

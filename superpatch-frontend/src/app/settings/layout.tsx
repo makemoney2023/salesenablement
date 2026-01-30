@@ -1,30 +1,15 @@
-import { redirect } from 'next/navigation'
-import { createClient } from '@/lib/supabase/server'
 import { AppShell } from '@/components/layout/app-shell'
-import type { UserProfile } from '@/lib/db/types'
+import { getAuthUser } from '@/lib/auth'
 
 export default async function SettingsLayout({
   children,
 }: {
   children: React.ReactNode
 }) {
-  const supabase = await createClient()
-  
-  const { data: { user } } = await supabase.auth.getUser()
-  
-  if (!user) {
-    redirect('/login')
-  }
-
-  // Get user profile
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('*')
-    .eq('id', user.id)
-    .single()
+  const { user, profile } = await getAuthUser()
 
   return (
-    <AppShell user={user} profile={profile as UserProfile | null}>
+    <AppShell user={user} profile={profile}>
       {children}
     </AppShell>
   )
