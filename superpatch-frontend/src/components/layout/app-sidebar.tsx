@@ -315,6 +315,20 @@ export function AppSidebar({
     },
   ];
 
+  // Admin navigation items
+  const adminNavigation: NavItem[] = profile?.role === 'admin' ? [
+    {
+      title: "User Management",
+      url: "/settings/users",
+      icon: Users,
+    },
+    {
+      title: "Settings",
+      url: "/settings",
+      icon: Settings,
+    },
+  ] : [];
+
   return (
     <Sidebar variant="sidebar" collapsible="icon" {...props}>
       <SidebarHeader className="border-b border-sidebar-border">
@@ -509,6 +523,36 @@ export function AppSidebar({
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+
+        {/* Admin Section - only visible to admins */}
+        {adminNavigation.length > 0 && (
+          <SidebarGroup>
+            <SidebarGroupLabel>Admin</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {adminNavigation.map((item) => {
+                  const Icon = item.icon;
+                  const isActive = pathname === item.url || pathname.startsWith(item.url + "/");
+                  
+                  return (
+                    <SidebarMenuItem key={item.title}>
+                      <SidebarMenuButton
+                        asChild
+                        tooltip={item.title}
+                        isActive={isActive}
+                      >
+                        <Link href={item.url} className="flex items-center gap-2">
+                          <Icon className="h-4 w-4" />
+                          <span>{item.title}</span>
+                        </Link>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  );
+                })}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
       </SidebarContent>
 
       <SidebarFooter className="border-t border-sidebar-border">
