@@ -8,11 +8,17 @@ export default function AuthLayout({
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-background to-muted/50 p-4">
       {/* Logo */}
-      <div className="mb-8 flex items-center gap-3">
-        <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-primary-foreground font-black text-xl">
-          SP
+      <div className="mb-8 flex flex-col items-center gap-3">
+        <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-black p-2">
+          <Image
+            src="/SuperPatch-SYMBL-3_SuperPatch_Logo_SYMBL_WHT.png"
+            alt="SuperPatch Logo"
+            width={48}
+            height={48}
+            className="object-contain"
+          />
         </div>
-        <div className="flex flex-col">
+        <div className="flex flex-col items-center">
           <span className="text-xl font-bold">SuperPatch</span>
           <span className="text-sm text-muted-foreground">Sales Enablement</span>
         </div>

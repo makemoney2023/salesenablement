@@ -334,8 +334,14 @@ export function AppSidebar({
       <SidebarHeader className="border-b border-sidebar-border">
         {/* Logo */}
         <div className="flex items-center gap-2 px-2 py-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground font-black text-sm">
-            SP
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-black p-1">
+            <Image
+              src="/SuperPatch-SYMBL-3_SuperPatch_Logo_SYMBL_WHT.png"
+              alt="SuperPatch"
+              width={24}
+              height={24}
+              className="object-contain"
+            />
           </div>
           <div className="flex flex-col group-data-[collapsible=icon]:hidden">
             <span className="text-sm font-bold text-sidebar-foreground">
