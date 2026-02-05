@@ -51,6 +51,63 @@ const practitionerTypeToFile: Record<string, string> = {
   "Integrative_Medicine": "Integrative_Medicine_pathway.json",
 };
 
+// Normalize practitioner type to match expected file names
+// Handles variations like "Massage Therapist" vs "Massage_Therapists"
+function normalizePractitionerType(type: string): string {
+  // Direct mapping for all known variations
+  const mapping: Record<string, string> = {
+    // Chiropractors variations
+    "Chiropractor": "Chiropractors",
+    "Chiropractors": "Chiropractors",
+    "chiropractor": "Chiropractors",
+    "chiropractors": "Chiropractors",
+    
+    // Naturopaths variations
+    "Naturopath": "Naturopaths",
+    "Naturopaths": "Naturopaths",
+    "naturopath": "Naturopaths",
+    "naturopaths": "Naturopaths",
+    
+    // Acupuncturists variations
+    "Acupuncturist": "Acupuncturists",
+    "Acupuncturists": "Acupuncturists",
+    "acupuncturist": "Acupuncturists",
+    "acupuncturists": "Acupuncturists",
+    
+    // Massage Therapists variations (space and underscore)
+    "Massage Therapist": "Massage_Therapists",
+    "Massage Therapists": "Massage_Therapists",
+    "Massage_Therapist": "Massage_Therapists",
+    "Massage_Therapists": "Massage_Therapists",
+    "massage therapist": "Massage_Therapists",
+    "massage therapists": "Massage_Therapists",
+    
+    // Functional Medicine variations
+    "Functional Medicine": "Functional_Medicine",
+    "Functional_Medicine": "Functional_Medicine",
+    "functional medicine": "Functional_Medicine",
+    "functional_medicine": "Functional_Medicine",
+    
+    // Integrative Medicine variations
+    "Integrative Medicine": "Integrative_Medicine",
+    "Integrative_Medicine": "Integrative_Medicine",
+    "integrative medicine": "Integrative_Medicine",
+    "integrative_medicine": "Integrative_Medicine",
+  };
+  
+  // Try direct lookup first
+  if (mapping[type]) {
+    return mapping[type];
+  }
+  
+  // Fallback: normalize and try again
+  const normalized = type
+    .trim()
+    .replace(/\s+/g, "_"); // Replace spaces with underscores
+  
+  return mapping[normalized] || type;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -100,10 +157,12 @@ export async function POST(request: NextRequest) {
     }
 
     // Read the current pathway JSON file
-    const fileName = practitionerTypeToFile[practitioner_type];
+    // Normalize the practitioner type to handle variations (spaces vs underscores, singular vs plural)
+    const normalizedType = normalizePractitionerType(practitioner_type);
+    const fileName = practitionerTypeToFile[normalizedType];
     if (!fileName) {
       return NextResponse.json(
-        { error: `Unknown practitioner type: ${practitioner_type}` },
+        { error: `Unknown practitioner type: ${practitioner_type} (normalized: ${normalizedType})` },
         { status: 400 }
       );
     }
@@ -223,7 +282,8 @@ export async function POST(request: NextRequest) {
     // Add metadata about the export
     const metadata = {
       exported_at: new Date().toISOString(),
-      practitioner_type,
+      practitioner_type: normalizedType,
+      original_type: practitioner_type,
       suggestions_applied: suggestions.length,
       changes: appliedChanges,
     };
@@ -238,7 +298,7 @@ export async function POST(request: NextRequest) {
       status: 200,
       headers: {
         "Content-Type": "application/json",
-        "Content-Disposition": `attachment; filename="${practitioner_type}_pathway_updated.json"`,
+        "Content-Disposition": `attachment; filename="${normalizedType}_pathway_updated.json"`,
       },
     });
   } catch (error) {
