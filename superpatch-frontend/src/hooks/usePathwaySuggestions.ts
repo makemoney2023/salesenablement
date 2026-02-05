@@ -10,7 +10,7 @@
  * - Aggregates counts by status and practitioner type
  */
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 import type { 
   PathwaySuggestion, 
@@ -83,6 +83,11 @@ export function usePathwaySuggestions(
   const [pendingByPractitioner, setPendingByPractitioner] = useState<PendingByPractitioner>({});
 
   const channelRef = useRef<ReturnType<NonNullable<typeof supabase>["channel"]> | null>(null);
+  const isMountedRef = useRef(true);
+  
+  // Store current filter values in refs so realtime handler can access them
+  const filtersRef = useRef({ status, practitionerType, suggestionType, severity });
+  filtersRef.current = { status, practitionerType, suggestionType, severity };
 
   // Fetch status counts
   const fetchStatusCounts = useCallback(async () => {
@@ -191,6 +196,9 @@ export function usePathwaySuggestions(
 
       const { data, error: fetchError, count } = await query;
 
+      // Check if component is still mounted before updating state
+      if (!isMountedRef.current) return;
+
       if (fetchError) {
         setError(fetchError.message);
       } else {
@@ -202,9 +210,16 @@ export function usePathwaySuggestions(
       // Also fetch counts and pending
       await Promise.all([fetchStatusCounts(), fetchPendingByPractitioner()]);
     } catch (err) {
+      // Ignore abort errors - they happen during normal cleanup
+      if (err instanceof Error && err.name === 'AbortError') {
+        return;
+      }
+      if (!isMountedRef.current) return;
       setError(err instanceof Error ? err.message : "Failed to fetch");
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+      }
     }
   }, [status, practitionerType, suggestionType, severity, search, fetchStatusCounts, fetchPendingByPractitioner]);
 
@@ -301,23 +316,27 @@ export function usePathwaySuggestions(
     }
   }, [fetchSuggestions]);
 
-  // Handle real-time changes
+  // Handle real-time changes - uses refs to avoid recreating the callback
   const handleChange = useCallback(
     (payload: {
       eventType: "INSERT" | "UPDATE" | "DELETE";
       new: PathwaySuggestion | null;
       old: Partial<PathwaySuggestion> | null;
     }) => {
+      if (!isMountedRef.current) return;
+      
       const { eventType, new: newRecord, old: oldRecord } = payload;
+      const { status: currentStatus, practitionerType: currentPractitionerType, 
+              suggestionType: currentSuggestionType, severity: currentSeverity } = filtersRef.current;
 
       console.log(`📡 Pathway suggestion ${eventType}:`, newRecord?.id || oldRecord?.id);
 
       if (eventType === "INSERT" && newRecord) {
         // Check if matches current filters
-        const matchesStatus = status === "all" || newRecord.status === status;
-        const matchesPractitioner = practitionerType === "all" || newRecord.practitioner_type === practitionerType;
-        const matchesSuggestionType = suggestionType === "all" || newRecord.suggestion_type === suggestionType;
-        const matchesSeverity = severity === "all" || newRecord.severity === severity;
+        const matchesStatus = currentStatus === "all" || newRecord.status === currentStatus;
+        const matchesPractitioner = currentPractitionerType === "all" || newRecord.practitioner_type === currentPractitionerType;
+        const matchesSuggestionType = currentSuggestionType === "all" || newRecord.suggestion_type === currentSuggestionType;
+        const matchesSeverity = currentSeverity === "all" || newRecord.severity === currentSeverity;
 
         if (matchesStatus && matchesPractitioner && matchesSuggestionType && matchesSeverity) {
           setSuggestions((prev) => [newRecord, ...prev]);
@@ -330,8 +349,8 @@ export function usePathwaySuggestions(
           const index = prev.findIndex((s) => s.id === newRecord.id);
           
           // Check if still matches filters
-          const matchesStatus = status === "all" || newRecord.status === status;
-          const matchesPractitioner = practitionerType === "all" || newRecord.practitioner_type === practitionerType;
+          const matchesStatus = currentStatus === "all" || newRecord.status === currentStatus;
+          const matchesPractitioner = currentPractitionerType === "all" || newRecord.practitioner_type === currentPractitionerType;
 
           if (index >= 0) {
             if (matchesStatus && matchesPractitioner) {
@@ -365,19 +384,18 @@ export function usePathwaySuggestions(
       fetchStatusCounts();
       fetchPendingByPractitioner();
     },
-    [status, practitionerType, suggestionType, severity, fetchStatusCounts, fetchPendingByPractitioner]
+    [fetchStatusCounts, fetchPendingByPractitioner]
   );
 
-  // Set up real-time subscription
+  // Set up real-time subscription - only runs once on mount
   useEffect(() => {
+    isMountedRef.current = true;
+    
     if (!isSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       setLoading(false);
       return;
     }
-
-    // Initial fetch
-    fetchSuggestions();
 
     // Subscribe to real-time changes
     const channel = supabase
@@ -399,7 +417,9 @@ export function usePathwaySuggestions(
       )
       .subscribe((subStatus) => {
         console.log("[Realtime Suggestions] Subscription status:", subStatus);
-        setIsConnected(subStatus === "SUBSCRIBED");
+        if (isMountedRef.current) {
+          setIsConnected(subStatus === "SUBSCRIBED");
+        }
       });
 
     channelRef.current = channel;
@@ -407,13 +427,18 @@ export function usePathwaySuggestions(
     // Cleanup
     return () => {
       console.log("[Realtime Suggestions] Unsubscribing from channel");
+      isMountedRef.current = false;
       if (channelRef.current && supabase) {
         supabase.removeChannel(channelRef.current);
         channelRef.current = null;
       }
-      setIsConnected(false);
     };
-  }, [fetchSuggestions, handleChange]);
+  }, [handleChange]);
+
+  // Fetch data when filters change - separate from subscription
+  useEffect(() => {
+    fetchSuggestions();
+  }, [fetchSuggestions]);
 
   return {
     suggestions,
