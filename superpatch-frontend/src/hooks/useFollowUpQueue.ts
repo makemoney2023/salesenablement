@@ -8,6 +8,7 @@
  * - Supports status filtering (draft, approved, sent, failed)
  * - Real-time updates via Supabase Realtime
  * - Approve/dismiss/send actions
+ * - Retry logic with direct fetch fallback for AbortError handling
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
@@ -86,6 +87,11 @@ export function useFollowUpQueue(
   });
 
   const channelRef = useRef<ReturnType<NonNullable<typeof supabase>["channel"]> | null>(null);
+  const isMountedRef = useRef(true);
+  const isConnectedRef = useRef(false);
+  const fetchItemsRef = useRef<(() => void) | null>(null);
+  const retryCountRef = useRef(0);
+  const maxRetries = 3;
 
   // Fetch status counts
   const fetchStatusCounts = useCallback(async () => {
@@ -97,7 +103,11 @@ export function useFollowUpQueue(
         .from("follow_up_queue")
         .select("status");
 
+      if (!isMountedRef.current) return;
+
       if (error) {
+        // Ignore abort errors
+        if (error.message?.includes('AbortError') || error.message?.includes('aborted')) return;
         console.error("Error fetching status counts:", error);
         return;
       }
@@ -117,16 +127,68 @@ export function useFollowUpQueue(
 
       setStatusCounts(counts);
     } catch (err) {
+      if (err instanceof Error && (err.name === 'AbortError' || err.message?.includes('aborted'))) return;
+      if (!isMountedRef.current) return;
       console.error("Error fetching status counts:", err);
     }
   }, []);
 
-  // Fetch follow-up items
-  const fetchItems = useCallback(async () => {
+  // Direct fetch fallback when Supabase client fails
+  const fetchWithDirectAPI = useCallback(async () => {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    
+    if (!supabaseUrl || !supabaseKey) {
+      throw new Error('Supabase not configured');
+    }
+
+    // Build query params
+    const params = new URLSearchParams();
+    params.append('select', '*');
+    params.append('order', 'created_at.desc');
+    params.append('limit', limit.toString());
+    
+    if (statusFilter !== 'all') {
+      params.append('status', `eq.${statusFilter}`);
+    }
+    if (typeFilter !== 'all') {
+      params.append('type', `eq.${typeFilter}`);
+    }
+
+    const url = `${supabaseUrl}/rest/v1/follow_up_queue?${params.toString()}`;
+    console.log('[FollowUpQueue] Using direct fetch fallback:', url);
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'apikey': supabaseKey,
+        'Authorization': `Bearer ${supabaseKey}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'count=exact',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    const count = parseInt(response.headers.get('content-range')?.split('/')[1] || '0', 10);
+    
+    return { data, count };
+  }, [statusFilter, typeFilter, limit]);
+
+  // Fetch follow-up items with retry logic
+  const fetchItems = useCallback(async (isRetry = false) => {
     if (!isSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       setLoading(false);
       return;
+    }
+
+    // Reset retry count on new fetch (not a retry)
+    if (!isRetry) {
+      retryCountRef.current = 0;
     }
 
     try {
@@ -154,7 +216,62 @@ export function useFollowUpQueue(
 
       const { data, error: fetchError, count } = await query;
 
+      console.log('[FollowUpQueue] Fetch result:', { 
+        dataLength: data?.length, 
+        count, 
+        error: fetchError,
+        retryCount: retryCountRef.current
+      });
+
+      if (!isMountedRef.current) return;
+
       if (fetchError) {
+        const isAbortError = fetchError.message?.includes('AbortError') || fetchError.message?.includes('aborted');
+        
+        if (isAbortError) {
+          console.log('[FollowUpQueue] AbortError in response');
+          
+          if (data && data.length > 0) {
+            // Transform and set data despite abort
+            const transformedData = (data || []).map((item: any) => ({
+              ...item,
+              practitioner_name: item.practitioners?.name,
+              practitioner_phone: item.practitioners?.phone,
+              practitioner_email: item.practitioners?.contact_email,
+            }));
+            setItems(transformedData);
+            setTotal(count || 0);
+            setError(null);
+          } else if (retryCountRef.current < maxRetries) {
+            retryCountRef.current++;
+            console.log(`[FollowUpQueue] Retrying fetch (attempt ${retryCountRef.current}/${maxRetries}) in 1 second...`);
+            setTimeout(() => {
+              if (isMountedRef.current) {
+                fetchItems(true);
+              }
+            }, 1000);
+          } else {
+            // Max retries reached - try direct API
+            console.log('[FollowUpQueue] Max retries reached, trying direct fetch fallback...');
+            try {
+              const { data: fallbackData, count: fallbackCount } = await fetchWithDirectAPI();
+              if (isMountedRef.current && fallbackData) {
+                console.log('[FollowUpQueue] Direct fetch succeeded:', fallbackData.length, 'items');
+                setItems(fallbackData as FollowUpItem[]);
+                setTotal(fallbackCount || fallbackData.length);
+                setError(null);
+                await fetchStatusCounts();
+              }
+            } catch (fallbackErr) {
+              console.error('[FollowUpQueue] Direct fetch also failed:', fallbackErr);
+              if (isMountedRef.current) {
+                setError('Failed to fetch follow-up items. Please try refreshing.');
+              }
+            }
+          }
+          return;
+        }
+        
         setError(fetchError.message);
       } else {
         // Transform data to include practitioner info
@@ -172,11 +289,29 @@ export function useFollowUpQueue(
       // Also fetch counts
       await fetchStatusCounts();
     } catch (err) {
+      const isAbortError = err instanceof Error && (err.name === 'AbortError' || err.message?.includes('aborted'));
+      
+      if (isAbortError) {
+        if (retryCountRef.current < maxRetries && isMountedRef.current) {
+          retryCountRef.current++;
+          console.log(`[FollowUpQueue] Retrying fetch (attempt ${retryCountRef.current}/${maxRetries}) in 1 second...`);
+          setTimeout(() => {
+            if (isMountedRef.current) {
+              fetchItems(true);
+            }
+          }, 1000);
+        }
+        return;
+      }
+      
+      if (!isMountedRef.current) return;
       setError(err instanceof Error ? err.message : "Failed to fetch");
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+      }
     }
-  }, [statusFilter, typeFilter, limit, fetchStatusCounts]);
+  }, [statusFilter, typeFilter, limit, fetchStatusCounts, fetchWithDirectAPI]);
 
   // Update item status
   const updateStatus = useCallback(async (id: string, newStatus: FollowUpStatus): Promise<boolean> => {
@@ -318,16 +453,24 @@ export function useFollowUpQueue(
     [statusFilter, typeFilter, fetchStatusCounts]
   );
 
-  // Set up real-time subscription
+  // Keep refs in sync
   useEffect(() => {
+    fetchItemsRef.current = fetchItems;
+  }, [fetchItems]);
+
+  useEffect(() => {
+    isConnectedRef.current = isConnected;
+  }, [isConnected]);
+
+  // Set up real-time subscription - runs once on mount
+  useEffect(() => {
+    isMountedRef.current = true;
+    
     if (!isSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       setLoading(false);
       return;
     }
-
-    // Initial fetch
-    fetchItems();
 
     // Subscribe to real-time changes
     const channel = supabase
@@ -340,16 +483,32 @@ export function useFollowUpQueue(
           table: "follow_up_queue",
         },
         (payload) => {
-          handleChange({
-            eventType: payload.eventType as "INSERT" | "UPDATE" | "DELETE",
-            new: payload.new as FollowUpItem | null,
-            old: payload.old as Partial<FollowUpItem> | null,
-          });
+          if (isMountedRef.current) {
+            handleChange({
+              eventType: payload.eventType as "INSERT" | "UPDATE" | "DELETE",
+              new: payload.new as FollowUpItem | null,
+              old: payload.old as Partial<FollowUpItem> | null,
+            });
+          }
         }
       )
       .subscribe((subStatus) => {
         console.log("[Realtime Follow-up] Subscription status:", subStatus);
-        setIsConnected(subStatus === "SUBSCRIBED");
+        if (isMountedRef.current) {
+          const wasConnected = isConnectedRef.current;
+          setIsConnected(subStatus === "SUBSCRIBED");
+          isConnectedRef.current = subStatus === "SUBSCRIBED";
+          
+          // If we just connected, trigger a refetch
+          if (subStatus === "SUBSCRIBED" && !wasConnected) {
+            console.log("[Realtime Follow-up] Connection established, triggering refetch");
+            setTimeout(() => {
+              if (isMountedRef.current && fetchItemsRef.current) {
+                fetchItemsRef.current();
+              }
+            }, 500);
+          }
+        }
       });
 
     channelRef.current = channel;
@@ -357,13 +516,18 @@ export function useFollowUpQueue(
     // Cleanup
     return () => {
       console.log("[Realtime Follow-up] Unsubscribing from channel");
+      isMountedRef.current = false;
       if (channelRef.current && supabase) {
         supabase.removeChannel(channelRef.current);
         channelRef.current = null;
       }
-      setIsConnected(false);
     };
-  }, [fetchItems, handleChange]);
+  }, [handleChange]);
+
+  // Fetch data when filters change - separate from subscription
+  useEffect(() => {
+    fetchItems();
+  }, [fetchItems]);
 
   return {
     items,
