@@ -99,6 +99,9 @@ export function usePathwaySuggestions(
         .from("pathway_suggestions")
         .select("status");
 
+      // Check if still mounted before updating state
+      if (!isMountedRef.current) return;
+
       if (error) {
         console.error("Error fetching status counts:", error);
         return;
@@ -120,6 +123,9 @@ export function usePathwaySuggestions(
 
       setStatusCounts(counts);
     } catch (err) {
+      // Ignore abort errors - they happen during normal cleanup
+      if (err instanceof Error && err.name === 'AbortError') return;
+      if (!isMountedRef.current) return;
       console.error("Error fetching status counts:", err);
     }
   }, []);
@@ -135,6 +141,9 @@ export function usePathwaySuggestions(
         .select("*")
         .eq("status", "approved")
         .order("created_at", { ascending: true });
+
+      // Check if still mounted before updating state
+      if (!isMountedRef.current) return;
 
       if (error) {
         console.error("Error fetching pending suggestions:", error);
@@ -153,6 +162,9 @@ export function usePathwaySuggestions(
 
       setPendingByPractitioner(grouped);
     } catch (err) {
+      // Ignore abort errors - they happen during normal cleanup
+      if (err instanceof Error && err.name === 'AbortError') return;
+      if (!isMountedRef.current) return;
       console.error("Error fetching pending by practitioner:", err);
     }
   }, []);
