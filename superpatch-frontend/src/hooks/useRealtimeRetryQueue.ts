@@ -81,6 +81,11 @@ export function useRealtimeRetryQueue(
 
   const channelRef = useRef<ReturnType<NonNullable<typeof supabase>["channel"]> | null>(null);
   const callbacksRef = useRef({ onRetryScheduled, onRetryProcessed });
+  const isMountedRef = useRef(true);
+  
+  // Store options in ref for realtime handler
+  const optionsRef = useRef({ hoursAhead, limit });
+  optionsRef.current = { hoursAhead, limit };
 
   // Keep callbacks ref updated
   useEffect(() => {
@@ -108,6 +113,9 @@ export function useRealtimeRetryQueue(
         .order("next_retry_at", { ascending: true })
         .limit(limit);
 
+      // Check if still mounted before updating state
+      if (!isMountedRef.current) return;
+      
       if (fetchError) {
         setError(fetchError.message);
       } else {
@@ -144,20 +152,26 @@ export function useRealtimeRetryQueue(
         });
       }
     } catch (err) {
+      // Ignore abort errors
+      if (err instanceof Error && err.name === 'AbortError') return;
+      if (!isMountedRef.current) return;
       setError(err instanceof Error ? err.message : "Failed to fetch");
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) setLoading(false);
     }
   }, [hoursAhead, limit]);
 
-  // Handle real-time changes
+  // Handle real-time changes - uses refs to avoid recreating callback
   const handleChange = useCallback(
     (payload: {
       eventType: "INSERT" | "UPDATE" | "DELETE";
       new: RetryQueueItem | null;
       old: Partial<RetryQueueItem> | null;
     }) => {
+      if (!isMountedRef.current) return;
+      
       const { eventType, new: newRecord, old: oldRecord } = payload;
+      const { hoursAhead: currentHoursAhead, limit: currentLimit } = optionsRef.current;
 
       if (eventType === "UPDATE" && newRecord && oldRecord) {
         const oldRetryAt = oldRecord.next_retry_at;
@@ -170,7 +184,7 @@ export function useRealtimeRetryQueue(
 
           // Add to queue if within window
           const now = new Date();
-          const futureLimit = new Date(now.getTime() + hoursAhead * 60 * 60 * 1000);
+          const futureLimit = new Date(now.getTime() + currentHoursAhead * 60 * 60 * 1000);
           const retryTime = new Date(newRetryAt);
 
           if (retryTime <= futureLimit) {
@@ -185,7 +199,7 @@ export function useRealtimeRetryQueue(
               } else {
                 newQueue.splice(insertIndex, 0, newRecord);
               }
-              return newQueue.slice(0, limit);
+              return newQueue.slice(0, currentLimit);
             });
           }
         }
@@ -207,7 +221,7 @@ export function useRealtimeRetryQueue(
 
             // Check if new time is within window
             const now = new Date();
-            const futureLimit = new Date(now.getTime() + hoursAhead * 60 * 60 * 1000);
+            const futureLimit = new Date(now.getTime() + currentHoursAhead * 60 * 60 * 1000);
             const retryTime = new Date(newRetryAt);
 
             if (retryTime <= futureLimit) {
@@ -221,24 +235,23 @@ export function useRealtimeRetryQueue(
               }
             }
 
-            return filtered.slice(0, limit);
+            return filtered.slice(0, currentLimit);
           });
         }
       }
     },
-    [hoursAhead, limit]
+    []
   );
 
-  // Set up real-time subscription
+  // Set up real-time subscription - runs once on mount
   useEffect(() => {
+    isMountedRef.current = true;
+    
     if (!isSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       setLoading(false);
       return;
     }
-
-    // Initial fetch
-    fetchQueue();
 
     // Subscribe to real-time changes on practitioners table
     const channel = supabase
@@ -260,27 +273,36 @@ export function useRealtimeRetryQueue(
       )
       .subscribe((status) => {
         console.log("[Realtime RetryQueue] Subscription status:", status);
-        setIsConnected(status === "SUBSCRIBED");
+        if (isMountedRef.current) {
+          setIsConnected(status === "SUBSCRIBED");
+        }
       });
 
     channelRef.current = channel;
 
     // Also set up an interval to refresh stats (for time-based calculations)
     const refreshInterval = setInterval(() => {
-      fetchQueue();
+      if (isMountedRef.current) {
+        fetchQueue();
+      }
     }, 60000); // Refresh every minute to update time-based stats
 
     // Cleanup
     return () => {
       console.log("[Realtime RetryQueue] Unsubscribing from channel");
+      isMountedRef.current = false;
       if (channelRef.current && supabase) {
         supabase.removeChannel(channelRef.current);
         channelRef.current = null;
       }
       clearInterval(refreshInterval);
-      setIsConnected(false);
     };
-  }, [fetchQueue, handleChange]);
+  }, [handleChange, fetchQueue]);
+
+  // Fetch data when options change - separate from subscription
+  useEffect(() => {
+    fetchQueue();
+  }, [fetchQueue]);
 
   return {
     queue,

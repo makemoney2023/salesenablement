@@ -82,6 +82,11 @@ export function useRealtimePractitioners(
 
   const channelRef = useRef<ReturnType<NonNullable<typeof supabase>["channel"]> | null>(null);
   const callbacksRef = useRef({ onEnrichmentComplete, onEnrichmentFailed });
+  const isMountedRef = useRef(true);
+  
+  // Store filter values in ref for realtime handler
+  const filtersRef = useRef({ enrichmentStatusFilter, limit });
+  filtersRef.current = { enrichmentStatusFilter, limit };
 
   // Keep callbacks ref updated
   useEffect(() => {
@@ -172,20 +177,26 @@ export function useRealtimePractitioners(
         });
       }
     } catch (err) {
+      // Ignore abort errors
+      if (err instanceof Error && err.name === 'AbortError') return;
+      if (!isMountedRef.current) return;
       setError(err instanceof Error ? err.message : "Failed to fetch");
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) setLoading(false);
     }
   }, [enrichmentStatusFilter, limit]);
 
-  // Handle real-time changes
+  // Handle real-time changes - uses refs to avoid recreating callback
   const handleChange = useCallback(
     (payload: {
       eventType: "INSERT" | "UPDATE" | "DELETE";
       new: Practitioner | null;
       old: Partial<Practitioner> | null;
     }) => {
+      if (!isMountedRef.current) return;
+      
       const { eventType, new: newRecord, old: oldRecord } = payload;
+      const { enrichmentStatusFilter: currentFilter, limit: currentLimit } = filtersRef.current;
 
       // Only care about enrichment_status changes
       if (eventType === "UPDATE" && newRecord && oldRecord) {
@@ -224,9 +235,9 @@ export function useRealtimePractitioners(
           // Update in list if matches filter
           setPractitioners((prev) => {
             const matchesFilter =
-              !enrichmentStatusFilter ||
-              enrichmentStatusFilter.length === 0 ||
-              (newStatus && enrichmentStatusFilter.includes(newStatus));
+              !currentFilter ||
+              currentFilter.length === 0 ||
+              (newStatus && currentFilter.includes(newStatus));
 
             const index = prev.findIndex((p) => p.id === newRecord.id);
 
@@ -239,7 +250,7 @@ export function useRealtimePractitioners(
                 return prev.filter((p) => p.id !== newRecord.id);
               }
             } else if (matchesFilter) {
-              return [newRecord, ...prev].slice(0, limit);
+              return [newRecord, ...prev].slice(0, currentLimit);
             }
 
             return prev;
@@ -255,19 +266,18 @@ export function useRealtimePractitioners(
         }));
       }
     },
-    [enrichmentStatusFilter, limit]
+    []
   );
 
-  // Set up real-time subscription
+  // Set up real-time subscription - runs once on mount
   useEffect(() => {
+    isMountedRef.current = true;
+    
     if (!isSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       setLoading(false);
       return;
     }
-
-    // Initial fetch
-    fetchPractitioners();
 
     // Subscribe to real-time changes on enrichment_status column
     const channel = supabase
@@ -289,7 +299,9 @@ export function useRealtimePractitioners(
       )
       .subscribe((status) => {
         console.log("[Realtime Practitioners] Subscription status:", status);
-        setIsConnected(status === "SUBSCRIBED");
+        if (isMountedRef.current) {
+          setIsConnected(status === "SUBSCRIBED");
+        }
       });
 
     channelRef.current = channel;
@@ -297,13 +309,18 @@ export function useRealtimePractitioners(
     // Cleanup
     return () => {
       console.log("[Realtime Practitioners] Unsubscribing from channel");
+      isMountedRef.current = false;
       if (channelRef.current && supabase) {
         supabase.removeChannel(channelRef.current);
         channelRef.current = null;
       }
-      setIsConnected(false);
     };
-  }, [fetchPractitioners, handleChange]);
+  }, [handleChange]);
+
+  // Fetch data when filters change - separate from subscription
+  useEffect(() => {
+    fetchPractitioners();
+  }, [fetchPractitioners]);
 
   return {
     practitioners,

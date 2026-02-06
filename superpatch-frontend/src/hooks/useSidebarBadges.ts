@@ -49,6 +49,7 @@ export function useSidebarBadges(): UseSidebarBadgesResult {
   });
   const [loading, setLoading] = useState(true);
   const channelRef = useRef<ReturnType<NonNullable<typeof supabase>["channel"]> | null>(null);
+  const isMountedRef = useRef(true);
 
   // Update last visit time when user navigates to a badge page
   useEffect(() => {
@@ -69,16 +70,11 @@ export function useSidebarBadges(): UseSidebarBadgesResult {
   // Fetch badge counts
   const fetchCounts = useCallback(async () => {
     if (!isSupabaseConfigured || !supabase) {
-      setLoading(false);
+      if (isMountedRef.current) setLoading(false);
       return;
     }
 
     try {
-      // Get last visit times from localStorage
-      const lastSamplesVisit = localStorage.getItem(LAST_VISIT_KEYS.samples);
-      const lastAppointmentsVisit = localStorage.getItem(LAST_VISIT_KEYS.appointments);
-      const lastPathwayVisit = localStorage.getItem(LAST_VISIT_KEYS.pathwayInsights);
-
       // Fetch counts in parallel
       const [samplesResult, appointmentsResult, pathwayResult] = await Promise.all([
         // Pending sample requests
@@ -101,27 +97,32 @@ export function useSidebarBadges(): UseSidebarBadgesResult {
           .eq("status", "new"),
       ]);
 
+      // Check if still mounted before updating state
+      if (!isMountedRef.current) return;
+
       setCounts({
         samples: samplesResult.count || 0,
         appointments: appointmentsResult.count || 0,
         pathwayInsights: pathwayResult.count || 0,
       });
     } catch (err) {
+      // Ignore abort errors
+      if (err instanceof Error && err.name === 'AbortError') return;
+      if (!isMountedRef.current) return;
       console.error("Error fetching sidebar badge counts:", err);
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) setLoading(false);
     }
   }, []);
 
-  // Set up real-time subscriptions
+  // Set up real-time subscriptions - runs once on mount
   useEffect(() => {
+    isMountedRef.current = true;
+    
     if (!isSupabaseConfigured || !supabase) {
       setLoading(false);
       return;
     }
-
-    // Initial fetch
-    fetchCounts();
 
     // Subscribe to changes on all three tables
     const channel = supabase
@@ -130,24 +131,30 @@ export function useSidebarBadges(): UseSidebarBadgesResult {
         "postgres_changes",
         { event: "*", schema: "public", table: "sample_requests" },
         () => {
-          console.log("📡 Sample requests changed, refreshing badge");
-          fetchCounts();
+          if (isMountedRef.current) {
+            console.log("📡 Sample requests changed, refreshing badge");
+            fetchCounts();
+          }
         }
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "appointments" },
         () => {
-          console.log("📡 Appointments changed, refreshing badge");
-          fetchCounts();
+          if (isMountedRef.current) {
+            console.log("📡 Appointments changed, refreshing badge");
+            fetchCounts();
+          }
         }
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "pathway_suggestions" },
         () => {
-          console.log("📡 Pathway suggestions changed, refreshing badge");
-          fetchCounts();
+          if (isMountedRef.current) {
+            console.log("📡 Pathway suggestions changed, refreshing badge");
+            fetchCounts();
+          }
         }
       )
       .subscribe((status) => {
@@ -157,11 +164,17 @@ export function useSidebarBadges(): UseSidebarBadgesResult {
     channelRef.current = channel;
 
     return () => {
+      isMountedRef.current = false;
       if (channelRef.current && supabase) {
         supabase.removeChannel(channelRef.current);
         channelRef.current = null;
       }
     };
+  }, [fetchCounts]);
+
+  // Fetch data on mount and when fetchCounts changes
+  useEffect(() => {
+    fetchCounts();
   }, [fetchCounts]);
 
   return {
