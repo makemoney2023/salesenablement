@@ -102,6 +102,8 @@ export function usePathwaySuggestions(
       // Check if still mounted before updating state
       if (!isMountedRef.current) return;
 
+      console.log('[PathwaySuggestions] Status counts raw data:', { dataLength: data?.length, error });
+
       if (error) {
         // Ignore abort errors - they happen during normal cleanup
         if (error.message?.includes('AbortError') || error.message?.includes('aborted')) return;
@@ -211,6 +213,13 @@ export function usePathwaySuggestions(
       }
 
       const { data, error: fetchError, count } = await query;
+
+      console.log('[PathwaySuggestions] Fetch result:', { 
+        dataLength: data?.length, 
+        count, 
+        error: fetchError,
+        filters: { status, practitionerType, suggestionType, severity, search }
+      });
 
       // Check if component is still mounted before updating state
       if (!isMountedRef.current) return;
