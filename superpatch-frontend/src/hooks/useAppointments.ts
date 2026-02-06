@@ -81,6 +81,7 @@ export function useAppointments(
   });
 
   const channelRef = useRef<ReturnType<NonNullable<typeof supabase>["channel"]> | null>(null);
+  const isMountedRef = useRef(true);
 
   // Fetch status counts
   const fetchStatusCounts = useCallback(async () => {
@@ -92,7 +93,11 @@ export function useAppointments(
         .from("appointments")
         .select("status");
 
+      if (!isMountedRef.current) return;
+
       if (error) {
+        // Ignore abort errors
+        if (error.message?.includes('AbortError') || error.message?.includes('aborted')) return;
         console.error("Error fetching status counts:", error);
         return;
       }
@@ -114,6 +119,8 @@ export function useAppointments(
 
       setStatusCounts(counts);
     } catch (err) {
+      if (err instanceof Error && (err.name === 'AbortError' || err.message?.includes('aborted'))) return;
+      if (!isMountedRef.current) return;
       console.error("Error fetching status counts:", err);
     }
   }, []);
@@ -335,6 +342,8 @@ export function useAppointments(
 
   // Set up real-time subscription
   useEffect(() => {
+    isMountedRef.current = true;
+    
     if (!isSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       setLoading(false);
@@ -355,16 +364,20 @@ export function useAppointments(
           table: "appointments",
         },
         (payload) => {
-          handleChange({
-            eventType: payload.eventType as "INSERT" | "UPDATE" | "DELETE",
-            new: payload.new as Appointment | null,
-            old: payload.old as Partial<Appointment> | null,
-          });
+          if (isMountedRef.current) {
+            handleChange({
+              eventType: payload.eventType as "INSERT" | "UPDATE" | "DELETE",
+              new: payload.new as Appointment | null,
+              old: payload.old as Partial<Appointment> | null,
+            });
+          }
         }
       )
       .subscribe((subStatus) => {
         console.log("[Realtime Appointments] Subscription status:", subStatus);
-        setIsConnected(subStatus === "SUBSCRIBED");
+        if (isMountedRef.current) {
+          setIsConnected(subStatus === "SUBSCRIBED");
+        }
       });
 
     channelRef.current = channel;
@@ -372,11 +385,11 @@ export function useAppointments(
     // Cleanup
     return () => {
       console.log("[Realtime Appointments] Unsubscribing from channel");
+      isMountedRef.current = false;
       if (channelRef.current && supabase) {
         supabase.removeChannel(channelRef.current);
         channelRef.current = null;
       }
-      setIsConnected(false);
     };
   }, [fetchAppointments, handleChange]);
 

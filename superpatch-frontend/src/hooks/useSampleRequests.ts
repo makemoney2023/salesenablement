@@ -73,6 +73,7 @@ export function useSampleRequests(
   });
 
   const channelRef = useRef<ReturnType<NonNullable<typeof supabase>["channel"]> | null>(null);
+  const isMountedRef = useRef(true);
 
   // Fetch status counts
   const fetchStatusCounts = useCallback(async () => {
@@ -84,7 +85,11 @@ export function useSampleRequests(
         .from("sample_requests")
         .select("status");
 
+      if (!isMountedRef.current) return;
+
       if (error) {
+        // Ignore abort errors
+        if (error.message?.includes('AbortError') || error.message?.includes('aborted')) return;
         console.error("Error fetching status counts:", error);
         return;
       }
@@ -105,6 +110,8 @@ export function useSampleRequests(
 
       setStatusCounts(counts);
     } catch (err) {
+      if (err instanceof Error && (err.name === 'AbortError' || err.message?.includes('aborted'))) return;
+      if (!isMountedRef.current) return;
       console.error("Error fetching status counts:", err);
     }
   }, []);
@@ -227,6 +234,8 @@ export function useSampleRequests(
 
   // Set up real-time subscription
   useEffect(() => {
+    isMountedRef.current = true;
+    
     if (!isSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       setLoading(false);
@@ -247,16 +256,20 @@ export function useSampleRequests(
           table: "sample_requests",
         },
         (payload) => {
-          handleChange({
-            eventType: payload.eventType as "INSERT" | "UPDATE" | "DELETE",
-            new: payload.new as SampleRequest | null,
-            old: payload.old as Partial<SampleRequest> | null,
-          });
+          if (isMountedRef.current) {
+            handleChange({
+              eventType: payload.eventType as "INSERT" | "UPDATE" | "DELETE",
+              new: payload.new as SampleRequest | null,
+              old: payload.old as Partial<SampleRequest> | null,
+            });
+          }
         }
       )
       .subscribe((subStatus) => {
         console.log("[Realtime Samples] Subscription status:", subStatus);
-        setIsConnected(subStatus === "SUBSCRIBED");
+        if (isMountedRef.current) {
+          setIsConnected(subStatus === "SUBSCRIBED");
+        }
       });
 
     channelRef.current = channel;
@@ -264,11 +277,11 @@ export function useSampleRequests(
     // Cleanup
     return () => {
       console.log("[Realtime Samples] Unsubscribing from channel");
+      isMountedRef.current = false;
       if (channelRef.current && supabase) {
         supabase.removeChannel(channelRef.current);
         channelRef.current = null;
       }
-      setIsConnected(false);
     };
   }, [fetchSamples, handleChange]);
 
