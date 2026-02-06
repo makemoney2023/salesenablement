@@ -1,0 +1,21 @@
+{
+  "name": "SuperPatch Sales Enablement",
+  "short_name": "SP Sales",
+  "description": "Internal sales reference app for SuperPatch word tracks, roadmaps, and clinical evidence",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#101010",
+  "theme_color": "#101010",
+  "icons": [
+    {
+      "src": "/SuperPatch-SYMBL-3_SuperPatch_Logo_SYMBL_WHT.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/SuperPatch-SYMBL-3_SuperPatch_Logo_SYMBL_WHT.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
