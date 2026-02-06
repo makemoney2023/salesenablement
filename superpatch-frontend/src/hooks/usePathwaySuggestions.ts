@@ -233,6 +233,12 @@ export function usePathwaySuggestions(
         // Ignore abort errors - they happen during normal cleanup
         if (fetchError.message?.includes('AbortError') || fetchError.message?.includes('aborted')) {
           console.log('[PathwaySuggestions] AbortError in response, ignoring');
+          // Still set the data if we got some
+          if (data && data.length > 0) {
+            console.log('[PathwaySuggestions] Setting suggestions despite abort:', data.length, 'items');
+            setSuggestions((data as PathwaySuggestion[]) || []);
+            setTotal(count || 0);
+          }
           return;
         }
         console.log('[PathwaySuggestions] Setting error:', fetchError.message);

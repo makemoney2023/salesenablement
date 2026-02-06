@@ -36,6 +36,25 @@ export function AppShell({ children, defaultMarket = "d2c", user, profile }: App
   const pathname = usePathname();
   const [currentMarket, setCurrentMarket] = React.useState<MarketId>(defaultMarket);
 
+  // Global handler for unhandled promise rejections (AbortError from Supabase)
+  React.useEffect(() => {
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      // Check if it's an AbortError
+      if (
+        event.reason?.name === 'AbortError' || 
+        event.reason?.message?.includes('AbortError') ||
+        event.reason?.message?.includes('aborted')
+      ) {
+        // Prevent the error from propagating
+        event.preventDefault();
+        console.log('[AppShell] Suppressed AbortError:', event.reason?.message);
+      }
+    };
+
+    window.addEventListener('unhandledrejection', handleUnhandledRejection);
+    return () => window.removeEventListener('unhandledrejection', handleUnhandledRejection);
+  }, []);
+
   // Extract market from URL if present
   React.useEffect(() => {
     const pathParts = pathname.split("/").filter(Boolean);
