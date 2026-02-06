@@ -218,32 +218,50 @@ export function usePathwaySuggestions(
         dataLength: data?.length, 
         count, 
         error: fetchError,
-        filters: { status, practitionerType, suggestionType, severity, search }
+        filters: { status, practitionerType, suggestionType, severity, search },
+        isMounted: isMountedRef.current,
+        data: data
       });
 
       // Check if component is still mounted before updating state
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current) {
+        console.log('[PathwaySuggestions] Component unmounted, skipping state update');
+        return;
+      }
 
       if (fetchError) {
         // Ignore abort errors - they happen during normal cleanup
-        if (fetchError.message?.includes('AbortError') || fetchError.message?.includes('aborted')) return;
+        if (fetchError.message?.includes('AbortError') || fetchError.message?.includes('aborted')) {
+          console.log('[PathwaySuggestions] AbortError in response, ignoring');
+          return;
+        }
+        console.log('[PathwaySuggestions] Setting error:', fetchError.message);
         setError(fetchError.message);
       } else {
+        console.log('[PathwaySuggestions] Setting suggestions:', data?.length, 'items');
         setSuggestions((data as PathwaySuggestion[]) || []);
         setTotal(count || 0);
         setError(null);
       }
 
       // Also fetch counts and pending
+      console.log('[PathwaySuggestions] Fetching counts and pending...');
       await Promise.all([fetchStatusCounts(), fetchPendingByPractitioner()]);
+      console.log('[PathwaySuggestions] Counts and pending fetched');
     } catch (err) {
+      console.log('[PathwaySuggestions] Caught error:', err);
       // Ignore abort errors - they happen during normal cleanup
       if (err instanceof Error && (err.name === 'AbortError' || err.message?.includes('aborted'))) {
+        console.log('[PathwaySuggestions] AbortError caught, ignoring');
         return;
       }
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current) {
+        console.log('[PathwaySuggestions] Component unmounted in catch, skipping error state');
+        return;
+      }
       setError(err instanceof Error ? err.message : "Failed to fetch");
     } finally {
+      console.log('[PathwaySuggestions] Finally block, isMounted:', isMountedRef.current);
       if (isMountedRef.current) {
         setLoading(false);
       }
