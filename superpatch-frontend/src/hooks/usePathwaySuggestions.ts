@@ -181,6 +181,56 @@ export function usePathwaySuggestions(
   const retryCountRef = useRef(0);
   const maxRetries = 3;
 
+  // Direct fetch fallback when Supabase client fails
+  const fetchWithDirectAPI = useCallback(async () => {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    
+    if (!supabaseUrl || !supabaseKey) {
+      throw new Error('Supabase not configured');
+    }
+
+    // Build query params
+    const params = new URLSearchParams();
+    params.append('select', '*');
+    params.append('order', 'frequency_count.desc,severity.desc,created_at.desc');
+    
+    if (status !== 'all') {
+      params.append('status', `eq.${status}`);
+    }
+    if (practitionerType !== 'all') {
+      params.append('practitioner_type', `eq.${practitionerType}`);
+    }
+    if (suggestionType !== 'all') {
+      params.append('suggestion_type', `eq.${suggestionType}`);
+    }
+    if (severity !== 'all') {
+      params.append('severity', `eq.${severity}`);
+    }
+
+    const url = `${supabaseUrl}/rest/v1/pathway_suggestions?${params.toString()}`;
+    console.log('[PathwaySuggestions] Using direct fetch fallback:', url);
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'apikey': supabaseKey,
+        'Authorization': `Bearer ${supabaseKey}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'count=exact',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    const count = parseInt(response.headers.get('content-range')?.split('/')[1] || '0', 10);
+    
+    return { data, count };
+  }, [status, practitionerType, suggestionType, severity]);
+
   // Fetch suggestions from database with retry logic
   const fetchSuggestions = useCallback(async (isRetry = false) => {
     if (!isSupabaseConfigured || !supabase) {
@@ -263,7 +313,25 @@ export function usePathwaySuggestions(
               }
             }, 1000);
           } else {
-            console.log('[PathwaySuggestions] Max retries reached, giving up');
+            // Max retries reached - try direct API as fallback
+            console.log('[PathwaySuggestions] Max retries reached, trying direct fetch fallback...');
+            try {
+              const { data: fallbackData, count: fallbackCount } = await fetchWithDirectAPI();
+              if (isMountedRef.current && fallbackData) {
+                console.log('[PathwaySuggestions] Direct fetch succeeded:', fallbackData.length, 'items');
+                setSuggestions(fallbackData as PathwaySuggestion[]);
+                setTotal(fallbackCount || fallbackData.length);
+                setError(null);
+                
+                // Also fetch counts
+                await Promise.all([fetchStatusCounts(), fetchPendingByPractitioner()]);
+              }
+            } catch (fallbackErr) {
+              console.error('[PathwaySuggestions] Direct fetch also failed:', fallbackErr);
+              if (isMountedRef.current) {
+                setError('Failed to fetch suggestions. Please try refreshing the page.');
+              }
+            }
           }
           return;
         }
@@ -311,7 +379,7 @@ export function usePathwaySuggestions(
         setLoading(false);
       }
     }
-  }, [status, practitionerType, suggestionType, severity, search, fetchStatusCounts, fetchPendingByPractitioner]);
+  }, [status, practitionerType, suggestionType, severity, search, fetchStatusCounts, fetchPendingByPractitioner, fetchWithDirectAPI]);
 
   // Keep refs in sync with state/callbacks
   useEffect(() => {
