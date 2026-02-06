@@ -100,6 +100,17 @@ export function useSidebarBadges(): UseSidebarBadgesResult {
       // Check if still mounted before updating state
       if (!isMountedRef.current) return;
 
+      // Check for AbortErrors in any of the results
+      const hasAbortError = [samplesResult, appointmentsResult, pathwayResult].some(
+        (result) => result.error?.message?.includes('AbortError') || result.error?.message?.includes('aborted')
+      );
+      if (hasAbortError) return;
+
+      // Log any non-abort errors but still update with available counts
+      if (samplesResult.error) console.error("Error fetching samples count:", samplesResult.error);
+      if (appointmentsResult.error) console.error("Error fetching appointments count:", appointmentsResult.error);
+      if (pathwayResult.error) console.error("Error fetching pathway count:", pathwayResult.error);
+
       setCounts({
         samples: samplesResult.count || 0,
         appointments: appointmentsResult.count || 0,
@@ -107,7 +118,7 @@ export function useSidebarBadges(): UseSidebarBadgesResult {
       });
     } catch (err) {
       // Ignore abort errors
-      if (err instanceof Error && err.name === 'AbortError') return;
+      if (err instanceof Error && (err.name === 'AbortError' || err.message?.includes('aborted'))) return;
       if (!isMountedRef.current) return;
       console.error("Error fetching sidebar badge counts:", err);
     } finally {

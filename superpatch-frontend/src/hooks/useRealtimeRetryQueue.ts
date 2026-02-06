@@ -117,6 +117,8 @@ export function useRealtimeRetryQueue(
       if (!isMountedRef.current) return;
       
       if (fetchError) {
+        // Ignore abort errors - they happen during normal cleanup
+        if (fetchError.message?.includes('AbortError') || fetchError.message?.includes('aborted')) return;
         setError(fetchError.message);
       } else {
         setQueue((data as RetryQueueItem[]) || []);
@@ -153,7 +155,7 @@ export function useRealtimeRetryQueue(
       }
     } catch (err) {
       // Ignore abort errors
-      if (err instanceof Error && err.name === 'AbortError') return;
+      if (err instanceof Error && (err.name === 'AbortError' || err.message?.includes('aborted'))) return;
       if (!isMountedRef.current) return;
       setError(err instanceof Error ? err.message : "Failed to fetch");
     } finally {

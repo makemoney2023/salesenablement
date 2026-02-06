@@ -103,6 +103,8 @@ export function usePathwaySuggestions(
       if (!isMountedRef.current) return;
 
       if (error) {
+        // Ignore abort errors - they happen during normal cleanup
+        if (error.message?.includes('AbortError') || error.message?.includes('aborted')) return;
         console.error("Error fetching status counts:", error);
         return;
       }
@@ -124,7 +126,7 @@ export function usePathwaySuggestions(
       setStatusCounts(counts);
     } catch (err) {
       // Ignore abort errors - they happen during normal cleanup
-      if (err instanceof Error && err.name === 'AbortError') return;
+      if (err instanceof Error && (err.name === 'AbortError' || err.message?.includes('aborted'))) return;
       if (!isMountedRef.current) return;
       console.error("Error fetching status counts:", err);
     }
@@ -146,6 +148,8 @@ export function usePathwaySuggestions(
       if (!isMountedRef.current) return;
 
       if (error) {
+        // Ignore abort errors - they happen during normal cleanup
+        if (error.message?.includes('AbortError') || error.message?.includes('aborted')) return;
         console.error("Error fetching pending suggestions:", error);
         return;
       }
@@ -163,7 +167,7 @@ export function usePathwaySuggestions(
       setPendingByPractitioner(grouped);
     } catch (err) {
       // Ignore abort errors - they happen during normal cleanup
-      if (err instanceof Error && err.name === 'AbortError') return;
+      if (err instanceof Error && (err.name === 'AbortError' || err.message?.includes('aborted'))) return;
       if (!isMountedRef.current) return;
       console.error("Error fetching pending by practitioner:", err);
     }
@@ -212,6 +216,8 @@ export function usePathwaySuggestions(
       if (!isMountedRef.current) return;
 
       if (fetchError) {
+        // Ignore abort errors - they happen during normal cleanup
+        if (fetchError.message?.includes('AbortError') || fetchError.message?.includes('aborted')) return;
         setError(fetchError.message);
       } else {
         setSuggestions((data as PathwaySuggestion[]) || []);
@@ -223,7 +229,7 @@ export function usePathwaySuggestions(
       await Promise.all([fetchStatusCounts(), fetchPendingByPractitioner()]);
     } catch (err) {
       // Ignore abort errors - they happen during normal cleanup
-      if (err instanceof Error && err.name === 'AbortError') {
+      if (err instanceof Error && (err.name === 'AbortError' || err.message?.includes('aborted'))) {
         return;
       }
       if (!isMountedRef.current) return;
