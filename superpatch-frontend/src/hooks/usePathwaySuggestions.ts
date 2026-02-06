@@ -84,6 +84,8 @@ export function usePathwaySuggestions(
 
   const channelRef = useRef<ReturnType<NonNullable<typeof supabase>["channel"]> | null>(null);
   const isMountedRef = useRef(true);
+  const isConnectedRef = useRef(false);
+  const fetchSuggestionsRef = useRef<(() => void) | null>(null);
   
   // Store current filter values in refs so realtime handler can access them
   const filtersRef = useRef({ status, practitionerType, suggestionType, severity });
@@ -175,12 +177,21 @@ export function usePathwaySuggestions(
     }
   }, []);
 
-  // Fetch suggestions from database
-  const fetchSuggestions = useCallback(async () => {
+  // Retry count ref
+  const retryCountRef = useRef(0);
+  const maxRetries = 3;
+
+  // Fetch suggestions from database with retry logic
+  const fetchSuggestions = useCallback(async (isRetry = false) => {
     if (!isSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       setLoading(false);
       return;
+    }
+
+    // Reset retry count on new fetch (not a retry)
+    if (!isRetry) {
+      retryCountRef.current = 0;
     }
 
     try {
@@ -220,7 +231,7 @@ export function usePathwaySuggestions(
         error: fetchError,
         filters: { status, practitionerType, suggestionType, severity, search },
         isMounted: isMountedRef.current,
-        data: data
+        retryCount: retryCountRef.current
       });
 
       // Check if component is still mounted before updating state
@@ -230,17 +241,33 @@ export function usePathwaySuggestions(
       }
 
       if (fetchError) {
-        // Ignore abort errors - they happen during normal cleanup
-        if (fetchError.message?.includes('AbortError') || fetchError.message?.includes('aborted')) {
-          console.log('[PathwaySuggestions] AbortError in response, ignoring');
-          // Still set the data if we got some
+        // Check if it's an abort error
+        const isAbortError = fetchError.message?.includes('AbortError') || fetchError.message?.includes('aborted');
+        
+        if (isAbortError) {
+          console.log('[PathwaySuggestions] AbortError in response');
+          
+          // If we got data despite the abort, use it
           if (data && data.length > 0) {
             console.log('[PathwaySuggestions] Setting suggestions despite abort:', data.length, 'items');
             setSuggestions((data as PathwaySuggestion[]) || []);
             setTotal(count || 0);
+            setError(null);
+          } else if (retryCountRef.current < maxRetries) {
+            // No data and we can retry - wait and try again
+            retryCountRef.current++;
+            console.log(`[PathwaySuggestions] Retrying fetch (attempt ${retryCountRef.current}/${maxRetries}) in 1 second...`);
+            setTimeout(() => {
+              if (isMountedRef.current) {
+                fetchSuggestions(true);
+              }
+            }, 1000);
+          } else {
+            console.log('[PathwaySuggestions] Max retries reached, giving up');
           }
           return;
         }
+        
         console.log('[PathwaySuggestions] Setting error:', fetchError.message);
         setError(fetchError.message);
       } else {
@@ -256,11 +283,23 @@ export function usePathwaySuggestions(
       console.log('[PathwaySuggestions] Counts and pending fetched');
     } catch (err) {
       console.log('[PathwaySuggestions] Caught error:', err);
-      // Ignore abort errors - they happen during normal cleanup
-      if (err instanceof Error && (err.name === 'AbortError' || err.message?.includes('aborted'))) {
-        console.log('[PathwaySuggestions] AbortError caught, ignoring');
+      // Check if abort error
+      const isAbortError = err instanceof Error && (err.name === 'AbortError' || err.message?.includes('aborted'));
+      
+      if (isAbortError) {
+        console.log('[PathwaySuggestions] AbortError caught');
+        if (retryCountRef.current < maxRetries && isMountedRef.current) {
+          retryCountRef.current++;
+          console.log(`[PathwaySuggestions] Retrying fetch (attempt ${retryCountRef.current}/${maxRetries}) in 1 second...`);
+          setTimeout(() => {
+            if (isMountedRef.current) {
+              fetchSuggestions(true);
+            }
+          }, 1000);
+        }
         return;
       }
+      
       if (!isMountedRef.current) {
         console.log('[PathwaySuggestions] Component unmounted in catch, skipping error state');
         return;
@@ -273,6 +312,15 @@ export function usePathwaySuggestions(
       }
     }
   }, [status, practitionerType, suggestionType, severity, search, fetchStatusCounts, fetchPendingByPractitioner]);
+
+  // Keep refs in sync with state/callbacks
+  useEffect(() => {
+    fetchSuggestionsRef.current = fetchSuggestions;
+  }, [fetchSuggestions]);
+
+  useEffect(() => {
+    isConnectedRef.current = isConnected;
+  }, [isConnected]);
 
   // Update suggestion status
   const updateStatus = useCallback(async (id: string, newStatus: PathwaySuggestionStatus): Promise<boolean> => {
@@ -469,7 +517,20 @@ export function usePathwaySuggestions(
       .subscribe((subStatus) => {
         console.log("[Realtime Suggestions] Subscription status:", subStatus);
         if (isMountedRef.current) {
+          const wasConnected = isConnectedRef.current;
           setIsConnected(subStatus === "SUBSCRIBED");
+          isConnectedRef.current = subStatus === "SUBSCRIBED";
+          
+          // If we just connected, trigger a refetch
+          if (subStatus === "SUBSCRIBED" && !wasConnected) {
+            console.log("[Realtime Suggestions] Connection established, triggering refetch");
+            // Small delay to let connection stabilize
+            setTimeout(() => {
+              if (isMountedRef.current && fetchSuggestionsRef.current) {
+                fetchSuggestionsRef.current();
+              }
+            }, 500);
+          }
         }
       });
 
