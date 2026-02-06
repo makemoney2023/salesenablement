@@ -65,6 +65,16 @@ export default function PathwaySuggestionsPage() {
     search: searchFilter,
   });
 
+  // Debug: Log state on every render
+  console.log('[PathwaySuggestionsPage] Render state:', { 
+    suggestionsCount: suggestions.length, 
+    loading, 
+    error, 
+    isConnected,
+    statusCounts,
+    statusFilter
+  });
+
   // Handlers
   const handleApprove = async (id: string) => {
     return await updateStatus(id, "approved");
