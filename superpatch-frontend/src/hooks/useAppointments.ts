@@ -82,6 +82,10 @@ export function useAppointments(
 
   const channelRef = useRef<ReturnType<NonNullable<typeof supabase>["channel"]> | null>(null);
   const isMountedRef = useRef(true);
+  const isConnectedRef = useRef(false);
+  const fetchAppointmentsRef = useRef<(() => void) | null>(null);
+  const retryCountRef = useRef(0);
+  const maxRetries = 3;
 
   // Fetch status counts
   const fetchStatusCounts = useCallback(async () => {
@@ -125,12 +129,66 @@ export function useAppointments(
     }
   }, []);
 
-  // Fetch appointments
-  const fetchAppointments = useCallback(async () => {
+  // Direct fetch fallback when Supabase client fails
+  const fetchWithDirectAPI = useCallback(async () => {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    
+    if (!supabaseUrl || !supabaseKey) {
+      throw new Error('Supabase not configured');
+    }
+
+    const params = new URLSearchParams();
+    params.append('select', '*');
+    params.append('order', 'scheduled_at.asc');
+    params.append('limit', limit.toString());
+    
+    if (statusFilter !== 'all') {
+      params.append('status', `eq.${statusFilter}`);
+    }
+    if (startDate) {
+      params.append('scheduled_at', `gte.${startDate.toISOString()}`);
+    }
+    if (endDate) {
+      params.append('scheduled_at', `lte.${endDate.toISOString()}`);
+    }
+    if (practitionerId) {
+      params.append('practitioner_id', `eq.${practitionerId}`);
+    }
+
+    const url = `${supabaseUrl}/rest/v1/appointments?${params.toString()}`;
+    console.log('[Appointments] Using direct fetch fallback:', url);
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'apikey': supabaseKey,
+        'Authorization': `Bearer ${supabaseKey}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'count=exact',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    const count = parseInt(response.headers.get('content-range')?.split('/')[1] || '0', 10);
+    
+    return { data, count };
+  }, [statusFilter, startDate, endDate, practitionerId, limit]);
+
+  // Fetch appointments with retry logic
+  const fetchAppointments = useCallback(async (isRetry = false) => {
     if (!isSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       setLoading(false);
       return;
+    }
+
+    if (!isRetry) {
+      retryCountRef.current = 0;
     }
 
     try {
@@ -168,7 +226,54 @@ export function useAppointments(
 
       const { data, error: fetchError, count } = await query;
 
+      console.log('[Appointments] Fetch result:', { 
+        dataLength: data?.length, 
+        count, 
+        error: fetchError,
+        retryCount: retryCountRef.current
+      });
+
+      if (!isMountedRef.current) return;
+
       if (fetchError) {
+        const isAbortError = fetchError.message?.includes('AbortError') || fetchError.message?.includes('aborted');
+        
+        if (isAbortError) {
+          console.log('[Appointments] AbortError in response');
+          
+          if (data && data.length > 0) {
+            setAppointments(data || []);
+            setTotal(count || 0);
+            setError(null);
+          } else if (retryCountRef.current < maxRetries) {
+            retryCountRef.current++;
+            console.log(`[Appointments] Retrying fetch (attempt ${retryCountRef.current}/${maxRetries}) in 1 second...`);
+            setTimeout(() => {
+              if (isMountedRef.current) {
+                fetchAppointments(true);
+              }
+            }, 1000);
+          } else {
+            console.log('[Appointments] Max retries reached, trying direct fetch fallback...');
+            try {
+              const { data: fallbackData, count: fallbackCount } = await fetchWithDirectAPI();
+              if (isMountedRef.current && fallbackData) {
+                console.log('[Appointments] Direct fetch succeeded:', fallbackData.length, 'items');
+                setAppointments(fallbackData as AppointmentWithPractitioner[]);
+                setTotal(fallbackCount || fallbackData.length);
+                setError(null);
+                await fetchStatusCounts();
+              }
+            } catch (fallbackErr) {
+              console.error('[Appointments] Direct fetch also failed:', fallbackErr);
+              if (isMountedRef.current) {
+                setError('Failed to fetch appointments. Please try refreshing.');
+              }
+            }
+          }
+          return;
+        }
+        
         setError(fetchError.message);
       } else {
         setAppointments(data || []);
@@ -179,11 +284,29 @@ export function useAppointments(
       // Also fetch counts
       await fetchStatusCounts();
     } catch (err) {
+      const isAbortError = err instanceof Error && (err.name === 'AbortError' || err.message?.includes('aborted'));
+      
+      if (isAbortError) {
+        if (retryCountRef.current < maxRetries && isMountedRef.current) {
+          retryCountRef.current++;
+          console.log(`[Appointments] Retrying fetch (attempt ${retryCountRef.current}/${maxRetries}) in 1 second...`);
+          setTimeout(() => {
+            if (isMountedRef.current) {
+              fetchAppointments(true);
+            }
+          }, 1000);
+        }
+        return;
+      }
+      
+      if (!isMountedRef.current) return;
       setError(err instanceof Error ? err.message : "Failed to fetch");
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+      }
     }
-  }, [statusFilter, startDate, endDate, practitionerId, limit, fetchStatusCounts]);
+  }, [statusFilter, startDate, endDate, practitionerId, limit, fetchStatusCounts, fetchWithDirectAPI]);
 
   // Update appointment status
   const updateStatus = useCallback(async (
@@ -340,7 +463,16 @@ export function useAppointments(
     [fetchAppointments, fetchStatusCounts]
   );
 
-  // Set up real-time subscription
+  // Keep refs in sync
+  useEffect(() => {
+    fetchAppointmentsRef.current = fetchAppointments;
+  }, [fetchAppointments]);
+
+  useEffect(() => {
+    isConnectedRef.current = isConnected;
+  }, [isConnected]);
+
+  // Set up real-time subscription - runs once on mount
   useEffect(() => {
     isMountedRef.current = true;
     
@@ -349,9 +481,6 @@ export function useAppointments(
       setLoading(false);
       return;
     }
-
-    // Initial fetch
-    fetchAppointments();
 
     // Subscribe to real-time changes
     const channel = supabase
@@ -376,7 +505,19 @@ export function useAppointments(
       .subscribe((subStatus) => {
         console.log("[Realtime Appointments] Subscription status:", subStatus);
         if (isMountedRef.current) {
+          const wasConnected = isConnectedRef.current;
           setIsConnected(subStatus === "SUBSCRIBED");
+          isConnectedRef.current = subStatus === "SUBSCRIBED";
+          
+          // If we just connected, trigger a refetch
+          if (subStatus === "SUBSCRIBED" && !wasConnected) {
+            console.log("[Realtime Appointments] Connection established, triggering refetch");
+            setTimeout(() => {
+              if (isMountedRef.current && fetchAppointmentsRef.current) {
+                fetchAppointmentsRef.current();
+              }
+            }, 500);
+          }
         }
       });
 
@@ -391,7 +532,12 @@ export function useAppointments(
         channelRef.current = null;
       }
     };
-  }, [fetchAppointments, handleChange]);
+  }, [handleChange]);
+
+  // Fetch data when filters change - separate from subscription
+  useEffect(() => {
+    fetchAppointments();
+  }, [fetchAppointments]);
 
   return {
     appointments,
