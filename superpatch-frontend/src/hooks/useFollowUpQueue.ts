@@ -13,6 +13,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import { useRetryTimeouts } from "@/hooks/useRetryTimeout";
 
 // Follow-up queue types
 export type FollowUpType = 'email' | 'sms' | 'callback_notes';
@@ -92,6 +93,9 @@ export function useFollowUpQueue(
   const fetchItemsRef = useRef<(() => void) | null>(null);
   const retryCountRef = useRef(0);
   const maxRetries = 3;
+  const scheduleRetry = useRetryTimeouts();
+  const statusFilterRef = useRef(statusFilter);
+  const typeFilterRef = useRef(typeFilter);
 
   // Fetch status counts
   const fetchStatusCounts = useCallback(async () => {
@@ -245,7 +249,7 @@ export function useFollowUpQueue(
           } else if (retryCountRef.current < maxRetries) {
             retryCountRef.current++;
             console.log(`[FollowUpQueue] Retrying fetch (attempt ${retryCountRef.current}/${maxRetries}) in 1 second...`);
-            setTimeout(() => {
+            scheduleRetry(() => {
               if (isMountedRef.current) {
                 fetchItems(true);
               }
@@ -295,7 +299,7 @@ export function useFollowUpQueue(
         if (retryCountRef.current < maxRetries && isMountedRef.current) {
           retryCountRef.current++;
           console.log(`[FollowUpQueue] Retrying fetch (attempt ${retryCountRef.current}/${maxRetries}) in 1 second...`);
-          setTimeout(() => {
+          scheduleRetry(() => {
             if (isMountedRef.current) {
               fetchItems(true);
             }
@@ -311,87 +315,206 @@ export function useFollowUpQueue(
         setLoading(false);
       }
     }
-  }, [statusFilter, typeFilter, limit, fetchStatusCounts, fetchWithDirectAPI]);
+  }, [statusFilter, typeFilter, limit, fetchStatusCounts, fetchWithDirectAPI, scheduleRetry]);
 
-  // Update item status
+  // Direct API update fallback
+  const updateWithDirectAPI = useCallback(async (id: string, updateData: Record<string, unknown>): Promise<boolean> => {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    
+    if (!supabaseUrl || !supabaseKey) return false;
+
+    try {
+      const response = await fetch(`${supabaseUrl}/rest/v1/follow_up_queue?id=eq.${id}`, {
+        method: 'PATCH',
+        headers: {
+          'apikey': supabaseKey,
+          'Authorization': `Bearer ${supabaseKey}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'return=minimal',
+        },
+        body: JSON.stringify(updateData),
+      });
+
+      return response.ok;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  // Update item status with retry logic
   const updateStatus = useCallback(async (id: string, newStatus: FollowUpStatus): Promise<boolean> => {
     if (!isSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       return false;
     }
 
-    try {
-      const updateData: Record<string, unknown> = {
-        status: newStatus,
-        updated_at: new Date().toISOString(),
-      };
+    const updateData: Record<string, unknown> = {
+      status: newStatus,
+      updated_at: new Date().toISOString(),
+    };
 
-      if (newStatus === "sent") {
-        updateData.sent_at = new Date().toISOString();
-      }
+    if (newStatus === "sent") {
+      updateData.sent_at = new Date().toISOString();
+    }
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error: updateError } = await (supabase as any)
-        .from("follow_up_queue")
-        .update(updateData)
-        .eq("id", id);
+    // Retry logic for AbortError
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { error: updateError } = await (supabase as any)
+          .from("follow_up_queue")
+          .update(updateData)
+          .eq("id", id);
 
-      if (updateError) {
-        setError(updateError.message);
+        if (updateError) {
+          const isAbortError = updateError.message?.includes('AbortError') || updateError.message?.includes('aborted');
+          
+          if (isAbortError) {
+            if (attempt < maxRetries) {
+              console.log(`[FollowUpQueue] Update retry (attempt ${attempt + 1}/${maxRetries})...`);
+              await new Promise(r => setTimeout(r, 1000));
+              continue;
+            }
+            // Fall back to direct API
+            console.log('[FollowUpQueue] Using direct API for update...');
+            const success = await updateWithDirectAPI(id, updateData);
+            if (success) {
+              // Update local state on success
+              setItems((prev) =>
+                prev.map((item) =>
+                  item.id === id
+                    ? { ...item, status: newStatus, ...updateData } as FollowUpItem
+                    : item
+                )
+              );
+              await fetchStatusCounts();
+              return true;
+            }
+            return false;
+          }
+          
+          setError(updateError.message);
+          return false;
+        }
+
+        // Success - update local state
+        setItems((prev) =>
+          prev.map((item) =>
+            item.id === id
+              ? { ...item, status: newStatus, ...updateData } as FollowUpItem
+              : item
+          )
+        );
+
+        // Refresh counts
+        await fetchStatusCounts();
+        return true;
+      } catch (err) {
+        const isAbortError = err instanceof Error && (err.name === 'AbortError' || err.message?.includes('aborted'));
+        
+        if (isAbortError && attempt < maxRetries) {
+          console.log(`[FollowUpQueue] Update retry (attempt ${attempt + 1}/${maxRetries})...`);
+          await new Promise(r => setTimeout(r, 1000));
+          continue;
+        }
+        
+        if (!isMountedRef.current) return false;
+        setError(err instanceof Error ? err.message : "Failed to update");
         return false;
       }
+    }
+    
+    return false;
+  }, [fetchStatusCounts, updateWithDirectAPI]);
 
-      // Update local state
-      setItems((prev) =>
-        prev.map((item) =>
-          item.id === id
-            ? { ...item, status: newStatus, ...updateData } as FollowUpItem
-            : item
-        )
-      );
+  // Direct API delete fallback
+  const deleteWithDirectAPI = useCallback(async (id: string): Promise<boolean> => {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    
+    if (!supabaseUrl || !supabaseKey) return false;
 
-      // Refresh counts
-      await fetchStatusCounts();
+    try {
+      const response = await fetch(`${supabaseUrl}/rest/v1/follow_up_queue?id=eq.${id}`, {
+        method: 'DELETE',
+        headers: {
+          'apikey': supabaseKey,
+          'Authorization': `Bearer ${supabaseKey}`,
+        },
+      });
 
-      return true;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update");
+      return response.ok;
+    } catch {
       return false;
     }
-  }, [fetchStatusCounts]);
+  }, []);
 
-  // Delete item
+  // Delete item with retry logic
   const deleteItem = useCallback(async (id: string): Promise<boolean> => {
     if (!isSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       return false;
     }
 
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error: deleteError } = await (supabase as any)
-        .from("follow_up_queue")
-        .delete()
-        .eq("id", id);
+    // Retry logic for AbortError
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { error: deleteError } = await (supabase as any)
+          .from("follow_up_queue")
+          .delete()
+          .eq("id", id);
 
-      if (deleteError) {
-        setError(deleteError.message);
+        if (deleteError) {
+          const isAbortError = deleteError.message?.includes('AbortError') || deleteError.message?.includes('aborted');
+          
+          if (isAbortError) {
+            if (attempt < maxRetries) {
+              console.log(`[FollowUpQueue] Delete retry (attempt ${attempt + 1}/${maxRetries})...`);
+              await new Promise(r => setTimeout(r, 1000));
+              continue;
+            }
+            // Fall back to direct API
+            console.log('[FollowUpQueue] Using direct API for delete...');
+            const success = await deleteWithDirectAPI(id);
+            if (success) {
+              setItems((prev) => prev.filter((item) => item.id !== id));
+              setTotal((prev) => Math.max(0, prev - 1));
+              await fetchStatusCounts();
+              return true;
+            }
+            return false;
+          }
+          
+          setError(deleteError.message);
+          return false;
+        }
+
+        // Success - update local state
+        setItems((prev) => prev.filter((item) => item.id !== id));
+        setTotal((prev) => Math.max(0, prev - 1));
+
+        // Refresh counts
+        await fetchStatusCounts();
+        return true;
+      } catch (err) {
+        const isAbortError = err instanceof Error && (err.name === 'AbortError' || err.message?.includes('aborted'));
+        
+        if (isAbortError && attempt < maxRetries) {
+          console.log(`[FollowUpQueue] Delete retry (attempt ${attempt + 1}/${maxRetries})...`);
+          await new Promise(r => setTimeout(r, 1000));
+          continue;
+        }
+        
+        if (!isMountedRef.current) return false;
+        setError(err instanceof Error ? err.message : "Failed to delete");
         return false;
       }
-
-      // Update local state
-      setItems((prev) => prev.filter((item) => item.id !== id));
-      setTotal((prev) => Math.max(0, prev - 1));
-
-      // Refresh counts
-      await fetchStatusCounts();
-
-      return true;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete");
-      return false;
     }
-  }, [fetchStatusCounts]);
+    
+    return false;
+  }, [fetchStatusCounts, deleteWithDirectAPI]);
 
   // Handle real-time changes
   const handleChange = useCallback(
@@ -405,8 +528,8 @@ export function useFollowUpQueue(
       console.log(`📡 Follow-up queue ${eventType}:`, newRecord?.id || oldRecord?.id);
 
       if (eventType === "INSERT" && newRecord) {
-        const matchesStatus = statusFilter === "all" || newRecord.status === statusFilter;
-        const matchesType = typeFilter === "all" || newRecord.type === typeFilter;
+        const matchesStatus = statusFilterRef.current === "all" || newRecord.status === statusFilterRef.current;
+        const matchesType = typeFilterRef.current === "all" || newRecord.type === typeFilterRef.current;
 
         if (matchesStatus && matchesType) {
           setItems((prev) => [newRecord, ...prev]);
@@ -417,7 +540,7 @@ export function useFollowUpQueue(
       if (eventType === "UPDATE" && newRecord) {
         setItems((prev) => {
           const index = prev.findIndex((item) => item.id === newRecord.id);
-          const matchesStatus = statusFilter === "all" || newRecord.status === statusFilter;
+          const matchesStatus = statusFilterRef.current === "all" || newRecord.status === statusFilterRef.current;
 
           if (index >= 0) {
             if (matchesStatus) {
@@ -450,7 +573,7 @@ export function useFollowUpQueue(
       // Refresh counts
       fetchStatusCounts();
     },
-    [statusFilter, typeFilter, fetchStatusCounts]
+    [fetchStatusCounts]
   );
 
   // Keep refs in sync
@@ -461,6 +584,14 @@ export function useFollowUpQueue(
   useEffect(() => {
     isConnectedRef.current = isConnected;
   }, [isConnected]);
+
+  useEffect(() => {
+    statusFilterRef.current = statusFilter;
+  }, [statusFilter]);
+
+  useEffect(() => {
+    typeFilterRef.current = typeFilter;
+  }, [typeFilter]);
 
   // Set up real-time subscription - runs once on mount
   useEffect(() => {
@@ -502,7 +633,7 @@ export function useFollowUpQueue(
           // If we just connected, trigger a refetch
           if (subStatus === "SUBSCRIBED" && !wasConnected) {
             console.log("[Realtime Follow-up] Connection established, triggering refetch");
-            setTimeout(() => {
+            scheduleRetry(() => {
               if (isMountedRef.current && fetchItemsRef.current) {
                 fetchItemsRef.current();
               }
@@ -522,7 +653,7 @@ export function useFollowUpQueue(
         channelRef.current = null;
       }
     };
-  }, [handleChange]);
+  }, [handleChange, scheduleRetry]);
 
   // Fetch data when filters change - separate from subscription
   useEffect(() => {

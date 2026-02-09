@@ -77,6 +77,7 @@ import { LeadScoreGauge } from "./lead-score-gauge";
 import { DrawerCallTimeline } from "./drawer-call-timeline";
 import { LLMAnalysisPanel } from "./llm-analysis-panel";
 import type { LLMAnalysisData, AnalysisStatus } from "@/lib/db/types";
+import { toast } from "sonner";
 
 // Enrichment data types
 interface EnrichmentPractitioner {
@@ -446,11 +447,11 @@ export function PractitionerDetailDrawer({
         setCallRecord(updatedRecord);
         onCallStarted?.(result.call_id);
       } else {
-        alert(`Call failed: ${result.error}`);
+        toast.error(`Call failed: ${result.error}`);
       }
     } catch (error) {
       console.error("Call error:", error);
-      alert("Failed to initiate call");
+      toast.error("Failed to initiate call");
     }
 
     setIsCalling(false);
@@ -479,11 +480,11 @@ export function PractitionerDetailDrawer({
         // Close the drawer and let parent refresh
         onOpenChange(false);
       } else {
-        alert(`Failed to mark as DNC: ${result.error}`);
+        toast.error(`Failed to mark as DNC: ${result.error}`);
       }
     } catch (error) {
       console.error("Error marking as DNC:", error);
-      alert("Failed to mark as Do Not Call");
+      toast.error("Failed to mark as Do Not Call");
     }
     setDncLoading(false);
   };
@@ -511,11 +512,11 @@ export function PractitionerDetailDrawer({
         // Close the drawer and let parent refresh
         onOpenChange(false);
       } else {
-        alert(`Failed to restore: ${result.error}`);
+        toast.error(`Failed to restore: ${result.error}`);
       }
     } catch (error) {
       console.error("Error restoring from DNC:", error);
-      alert("Failed to restore practitioner");
+      toast.error("Failed to restore practitioner");
     }
     setRestoreLoading(false);
   };
@@ -1287,8 +1288,7 @@ export function PractitionerDetailDrawer({
                   
                   <DropdownMenuItem
                     onClick={() => {
-                      // Add to queue functionality
-                      console.log("Add to queue:", practitioner.id);
+                      toast.error("Feature not yet implemented");
                     }}
                   >
                     <UserPlus className="w-4 h-4 mr-2" />
@@ -1320,8 +1320,7 @@ export function PractitionerDetailDrawer({
                   
                   <DropdownMenuItem
                     onClick={() => {
-                      // TODO: Implement edit practitioner modal
-                      console.log("Edit practitioner:", practitioner.id);
+                      toast.error("Feature not yet implemented");
                     }}
                   >
                     <Edit className="w-4 h-4 mr-2" />
@@ -1388,9 +1387,7 @@ export function PractitionerDetailDrawer({
                   <DropdownMenuItem
                     className="text-red-600 focus:text-red-600"
                     onClick={() => {
-                      if (confirm(`Are you sure you want to delete ${practitioner.name}?`)) {
-                        console.log("Delete practitioner:", practitioner.id);
-                      }
+                      toast.error("Delete not yet implemented");
                     }}
                   >
                     <Trash2 className="w-4 h-4 mr-2" />

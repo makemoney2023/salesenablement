@@ -1,6 +1,16 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback, useRef, Suspense } from "react";
+
+// Simple debounce hook for search input
+function useDebouncedValue<T>(value: T, delay: number): T {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedValue(value), delay);
+    return () => clearTimeout(timer);
+  }, [value, delay]);
+  return debouncedValue;
+}
 import { useSearchParams } from "next/navigation";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Button } from "@/components/ui/button";
@@ -67,6 +77,9 @@ import {
 import { PractitionerSearchTab } from "@/components/campaign/practitioner-search-tab";
 import { ActiveCallsMonitor } from "@/components/campaign/active-calls-monitor";
 import { RetryQueuePanel } from "@/components/campaign/retry-queue-panel";
+import { ErrorBoundary } from "@/components/error-boundary";
+import { QuickCallTab } from "@/components/campaign/quick-call-tab";
+import { PATHWAY_IDS_SHORT, KB_ID, VOICE_ID } from "@/lib/config/pathways";
 import dynamic from "next/dynamic";
 
 // Dynamically import map to avoid SSR issues with Leaflet
@@ -191,6 +204,7 @@ function CampaignPageContent() {
   const [city, setCity] = useState<string>("");
   const [practitionerType, setPractitionerType] = useState<string>("");
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search, 300);
   const [minRating, setMinRating] = useState<string>("");
   const [hasPhoneOnly, setHasPhoneOnly] = useState(true);
   const [hasWebsiteOnly, setHasWebsiteOnly] = useState(false);
@@ -291,6 +305,27 @@ function CampaignPageContent() {
   // Refs
   const parentRef = useRef<HTMLDivElement>(null);
   const batchCaller = useRef(getBatchCaller());
+  const refreshTimeoutIds = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  // Schedule delayed call record refreshes (with cleanup tracking)
+  const scheduleCallRecordRefreshes = useCallback(() => {
+    // Clear any pending refresh timeouts before scheduling new ones
+    refreshTimeoutIds.current.forEach(id => clearTimeout(id));
+    refreshTimeoutIds.current = [];
+    // Schedule refreshes to catch webhook data after call completes
+    // Calls typically last 30s-3min, so refresh at key intervals
+    refreshTimeoutIds.current.push(setTimeout(() => loadCallRecords(), 30000));  // 30 seconds
+    refreshTimeoutIds.current.push(setTimeout(() => loadCallRecords(), 60000));  // 1 minute
+    refreshTimeoutIds.current.push(setTimeout(() => loadCallRecords(), 120000)); // 2 minutes
+  }, []);
+
+  // Cleanup refresh timeouts on unmount
+  useEffect(() => {
+    const timeouts = refreshTimeoutIds.current;
+    return () => {
+      timeouts.forEach(id => clearTimeout(id));
+    };
+  }, []);
 
   // Load practitioners function
   const loadPractitioners = useCallback(async (page: number) => {
@@ -309,7 +344,7 @@ function CampaignPageContent() {
       if (province) params.set('province', province);
       if (city) params.set('city', city);
       if (practitionerType) params.set('type', practitionerType);
-      if (search) params.set('search', search);
+      if (debouncedSearch) params.set('search', debouncedSearch);
       if (minRating) params.set('minRating', minRating);
       if (hasPhoneOnly) params.set('hasPhone', 'true');
 
@@ -333,7 +368,7 @@ function CampaignPageContent() {
       setLoading(false);
       setLoadingMore(false);
     }
-  }, [country, province, city, practitionerType, search, minRating, hasPhoneOnly]);
+  }, [country, province, city, practitionerType, debouncedSearch, minRating, hasPhoneOnly]);
 
   // Load metadata on mount (call records are loaded by useSupabaseCallRecords hook)
   useEffect(() => {
@@ -619,12 +654,14 @@ function CampaignPageContent() {
     const newSelected = new Set(selectedIds);
     
     if (event.shiftKey && lastSelectedIndex !== null) {
-      // Range selection
+      // Range selection - use filteredPractitioners to match displayed rows
       const start = Math.min(lastSelectedIndex, index);
       const end = Math.max(lastSelectedIndex, index);
       
       for (let i = start; i <= end; i++) {
-        newSelected.add(practitioners[i].id);
+        if (filteredPractitioners[i]) {
+          newSelected.add(filteredPractitioners[i].id);
+        }
       }
     } else {
       // Toggle single
@@ -637,7 +674,7 @@ function CampaignPageContent() {
     
     setSelectedIds(newSelected);
     setLastSelectedIndex(index);
-  }, [selectedIds, lastSelectedIndex, practitioners]);
+  }, [selectedIds, lastSelectedIndex, filteredPractitioners]);
 
   // Handle row click to open detail drawer
   const handleRowClick = useCallback((practitioner: PractitionerData) => {
@@ -753,7 +790,7 @@ function CampaignPageContent() {
     const selectedPractitioners = practitioners.filter(p => selectedIds.has(p.id) && p.phone);
     
     if (selectedPractitioners.length === 0) {
-      alert('Please select practitioners with phone numbers');
+      toast.warning('Please select practitioners with phone numbers');
       return;
     }
 
@@ -817,7 +854,7 @@ function CampaignPageContent() {
     );
 
     if (toEnrich.length === 0) {
-      alert("No selected practitioners need enrichment (must have website and not already enriched)");
+      toast.warning("No selected practitioners need enrichment (must have website and not already enriched)");
       return;
     }
 
@@ -874,10 +911,10 @@ function CampaignPageContent() {
       // Refresh data to get updated enrichment status
       loadPractitioners(1);
       
-      alert(`Enrichment complete!\n✓ ${successCount} succeeded\n✗ ${failCount} failed`);
+      toast.success(`Enrichment complete! ${successCount} succeeded, ${failCount} failed`);
     } catch (err) {
       console.error("[Bulk Enrich] Error:", err);
-      alert(`Enrichment failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+      toast.error(`Enrichment failed: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
       setIsEnrichingBulk(false);
       setEnrichmentProgress({ current: 0, total: 0, currentName: "" });
@@ -973,15 +1010,8 @@ function CampaignPageContent() {
           ? `+${phoneDigits}`
           : `+${phoneDigits}`;
       
-      // Get pathway ID based on selected type
-      const pathways: Record<string, string> = {
-        chiropractor: "9aa760af-6f9a-430f-8d0c-25bf84afd8fb",
-        massage: "1fee31b1-8179-48c6-b6fa-12fcd434ed2b",
-        naturopath: "db955b59-d278-410e-981e-5728dfa2dafd",
-        integrative: "b6240419-3b24-4415-9541-804994cce425",
-        functional: "70f3a50a-9055-4f41-bc0d-81964dfae19a",
-        acupuncturist: "084673ec-84d6-4c3a-bedb-ba9d72bd7e3b",
-      };
+      // Get pathway ID based on selected type (from shared config)
+      const pathways = PATHWAY_IDS_SHORT;
       
       // Build request_data for pathway variable substitution
       const requestData = {
@@ -1003,8 +1033,8 @@ function CampaignPageContent() {
         phone_number: formattedPhone,
         pathway_id: pathways[quickCallType] || pathways.chiropractor,
         // Don't specify pathway_version - uses production version by default
-        knowledge_base: "b671527d-0c2d-4a21-9586-033dad3b0255",
-        voice: "78c8543e-e5fe-448e-8292-20a7b8c45247",
+        knowledge_base: KB_ID,
+        voice: VOICE_ID,
         wait_for_greeting: true,
         record: true,
         max_duration: 15,
@@ -1050,11 +1080,7 @@ function CampaignPageContent() {
         });
         loadCallRecords();
         
-        // Schedule refreshes to catch webhook data after call completes
-        // Calls typically last 30s-3min, so refresh at key intervals
-        setTimeout(() => loadCallRecords(), 30000);  // 30 seconds
-        setTimeout(() => loadCallRecords(), 60000);  // 1 minute
-        setTimeout(() => loadCallRecords(), 120000); // 2 minutes
+        scheduleCallRecordRefreshes();
         
         callNotifications.started(quickCallResult.name);
         setQuickCallPhone('');
@@ -1085,15 +1111,8 @@ function CampaignPageContent() {
           ? `+${phoneDigits}`
           : `+${phoneDigits}`;
 
-      // Get pathway ID
-      const pathways: Record<string, string> = {
-        chiropractor: "9aa760af-6f9a-430f-8d0c-25bf84afd8fb",
-        massage: "1fee31b1-8179-48c6-b6fa-12fcd434ed2b",
-        naturopath: "db955b59-d278-410e-981e-5728dfa2dafd",
-        integrative: "b6240419-3b24-4415-9541-804994cce425",
-        functional: "70f3a50a-9055-4f41-bc0d-81964dfae19a",
-        acupuncturist: "084673ec-84d6-4c3a-bedb-ba9d72bd7e3b",
-      };
+      // Get pathway ID (from shared config)
+      const pathways = PATHWAY_IDS_SHORT;
 
       // Get practitioner type label for display
       const pathwayLabels: Record<string, string> = {
@@ -1142,8 +1161,8 @@ function CampaignPageContent() {
         phone_number: formattedPhone,
         pathway_id: pathways[quickCallType] || pathways.chiropractor,
         // Don't specify pathway_version - uses production version by default
-        knowledge_base: "b671527d-0c2d-4a21-9586-033dad3b0255",
-        voice: "78c8543e-e5fe-448e-8292-20a7b8c45247",
+        knowledge_base: KB_ID,
+        voice: VOICE_ID,
         wait_for_greeting: true,
         record: true,
         max_duration: 15,
@@ -1248,16 +1267,13 @@ function CampaignPageContent() {
         loadCallRecords();
         loadPractitioners(1);
         
-        // Schedule refreshes to catch webhook data after call completes
-        setTimeout(() => loadCallRecords(), 30000);  // 30 seconds
-        setTimeout(() => loadCallRecords(), 60000);  // 1 minute
-        setTimeout(() => loadCallRecords(), 120000); // 2 minutes
+        scheduleCallRecordRefreshes();
       } else {
         callNotifications.failed(quickCallPracticeName || 'Unknown', result.message);
       }
     } catch (error) {
       console.error('Quick call failed:', error);
-      alert('Failed to initiate call');
+      toast.error('Failed to initiate call');
     }
     
     setQuickCallMaking(false);
@@ -1266,11 +1282,7 @@ function CampaignPageContent() {
   // Handle call started from detail drawer
   const handleCallStarted = (callId: string) => {
     loadCallRecords();
-    
-    // Schedule refreshes to catch webhook data after call completes
-    setTimeout(() => loadCallRecords(), 30000);  // 30 seconds
-    setTimeout(() => loadCallRecords(), 60000);  // 1 minute
-    setTimeout(() => loadCallRecords(), 120000); // 2 minutes
+    scheduleCallRecordRefreshes();
     setQueueDrawerOpen(true);
     if (selectedPractitioner) {
       callNotifications.started(selectedPractitioner.name);
@@ -1690,6 +1702,7 @@ function CampaignPageContent() {
 
         {/* Practitioner List Tab */}
         <TabsContent value="practitioners" className="flex-1 flex flex-col overflow-hidden m-0">
+        <ErrorBoundary section="Practitioner List">
           {/* Filters */}
       <div className="border-b px-6 py-4">
         <div className="flex items-end gap-4 flex-wrap">
@@ -1797,6 +1810,7 @@ function CampaignPageContent() {
               <div className="w-10">
                 <input
                   type="checkbox"
+                  aria-label="Select all practitioners"
                   checked={selectedIds.size > 0 && selectedIds.size === practitioners.length}
                   onChange={(e) => e.target.checked ? selectAll() : clearSelection()}
                   className="rounded"
@@ -1985,6 +1999,9 @@ function CampaignPageContent() {
                         height: `${virtualRow.size}px`,
                         transform: `translateY(${virtualRow.start}px)`,
                       }}
+                      role="row"
+                      tabIndex={0}
+                      aria-selected={isSelected}
                       className={`flex items-center px-6 border-b cursor-pointer transition-colors data-table-row ${
                         isSelected 
                           ? 'bg-blue-50 dark:bg-blue-950/30' 
@@ -1993,11 +2010,18 @@ function CampaignPageContent() {
                             : 'hover:bg-muted/30'
                       }`}
                       onClick={() => handleRowClick(practitioner)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          handleRowClick(practitioner);
+                        }
+                      }}
                     >
                       {visibleColumns.find(c => c.id === "select") && (
                         <div className="w-10" onClick={(e) => handleCheckboxClick(practitioner, virtualRow.index, e)}>
                           <input
                             type="checkbox"
+                            aria-label={`Select ${practitioner.name}`}
                             checked={isSelected}
                             onChange={() => {}}
                             className="rounded cursor-pointer"
@@ -2340,10 +2364,12 @@ function CampaignPageContent() {
               </div>
             </div>
           )}
+        </ErrorBoundary>
         </TabsContent>
 
         {/* Pipeline Tab */}
         <TabsContent value="pipeline" className="flex-1 m-0 overflow-hidden">
+        <ErrorBoundary section="Pipeline">
           {Object.keys(callRecords).length === 0 ? (
             <NoPipelineData 
               onAddToQueue={() => setActiveTab("practitioners")}
@@ -2400,10 +2426,12 @@ function CampaignPageContent() {
               }}
             />
           )}
+        </ErrorBoundary>
         </TabsContent>
 
         {/* Analytics Tab */}
         <TabsContent value="analytics" className="flex-1 m-0 overflow-hidden">
+        <ErrorBoundary section="Analytics">
           {Object.keys(callRecords).length === 0 ? (
             <NoAnalyticsData 
               onMakeCalls={() => setActiveTab("practitioners")}
@@ -2411,288 +2439,50 @@ function CampaignPageContent() {
           ) : (
             <AnalyticsDashboard records={callRecords} stats={stats} />
           )}
+        </ErrorBoundary>
         </TabsContent>
 
         {/* Quick Call Tab */}
         <TabsContent value="quick-call" className="flex-1 m-0 p-6 overflow-auto">
-          <div className="max-w-2xl mx-auto">
-            <Card>
-              <CardContent className="pt-6">
-                <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                  <Zap className="w-5 h-5" />
-                  Quick Call
-                </h2>
-                <p className="text-sm text-muted-foreground mb-6">
-                  Enter a phone number to search for a practitioner in our database. 
-                  If found, you can call with full context. If not, make a manual call.
-                </p>
-
-                <div className="space-y-4">
-                  {/* Phone Number Input */}
-                  <div>
-                    <Label htmlFor="quick-phone">Phone Number</Label>
-                    <div className="flex gap-2 mt-1">
-                      <Input
-                        id="quick-phone"
-                        placeholder="(555) 123-4567"
-                        value={quickCallPhone}
-                        onChange={(e) => {
-                          setQuickCallPhone(e.target.value);
-                          setQuickCallResult(null);
-                          setQuickCallNotFound(false);
-                          // Clear manual entry fields when phone changes
-                          setQuickCallPracticeName("");
-                          setQuickCallContactName("");
-                          setQuickCallEmail("");
-                          setQuickCallAddress("");
-                          setQuickCallCity("");
-                          setQuickCallProvince("");
-                          setQuickCallPostalCode("");
-                        }}
-                        className="flex-1"
-                      />
-                      <Button 
-                        onClick={handleQuickCallSearch}
-                        disabled={!quickCallPhone.trim() || quickCallSearching}
-                      >
-                        {quickCallSearching ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <Search className="w-4 h-4" />
-                        )}
-                        <span className="ml-2">Search</span>
-                      </Button>
-                    </div>
-                  </div>
-
-                  {/* Search Result: Practitioner Found */}
-                  {quickCallResult && (
-                    <Card className="border-green-200 bg-green-50">
-                      <CardContent className="pt-4">
-                        <div className="space-y-4">
-                          <div className="flex items-start justify-between">
-                            <div>
-                              <p className="font-medium text-green-800">Practitioner Found!</p>
-                              <p className="font-semibold mt-1">{quickCallResult.name}</p>
-                              <p className="text-sm text-muted-foreground">{quickCallResult.practitioner_type}</p>
-                              <p className="text-sm text-muted-foreground">{quickCallResult.address}</p>
-                              <p className="text-sm text-muted-foreground">{quickCallResult.city}, {quickCallResult.province}</p>
-                              {quickCallResult.rating && (
-                                <p className="text-sm flex items-center gap-1 mt-1">
-                                  <Star className="w-3 h-3 fill-yellow-400 text-yellow-400" />
-                                  {quickCallResult.rating} ({quickCallResult.review_count} reviews)
-                                </p>
-                              )}
-                            </div>
-                            <Button variant="outline" size="sm" onClick={handleQuickCallViewPractitioner}>
-                              View Details
-                            </Button>
-                          </div>
-                          
-                          {/* Pathway Selection for Found Practitioner */}
-                          <div className="pt-3 border-t border-green-200">
-                            <Label htmlFor="quick-type-found" className="text-green-800">Conversational Pathway</Label>
-                            <p className="text-xs text-green-700 mb-2">Select the script/pathway to use for this call</p>
-                            <Select value={quickCallType} onValueChange={setQuickCallType}>
-                              <SelectTrigger className="mt-1 bg-white">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="chiropractor">🦴 Chiropractor</SelectItem>
-                                <SelectItem value="massage">💆 Massage Therapist</SelectItem>
-                                <SelectItem value="naturopath">🌿 Naturopath</SelectItem>
-                                <SelectItem value="integrative">⚕️ Integrative Medicine</SelectItem>
-                                <SelectItem value="functional">🔬 Functional Medicine</SelectItem>
-                                <SelectItem value="acupuncturist">📍 Acupuncturist</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          
-                          <Button 
-                            onClick={handleQuickCallWithPathway}
-                            disabled={quickCallMaking}
-                            className="w-full bg-green-600 hover:bg-green-700"
-                          >
-                            {quickCallMaking ? (
-                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                            ) : (
-                              <Phone className="w-4 h-4 mr-2" />
-                            )}
-                            Call with Selected Pathway
-                          </Button>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  )}
-
-                  {/* Search Result: Not Found */}
-                  {quickCallNotFound && (
-                    <Card className="border-yellow-200 bg-yellow-50">
-                      <CardContent className="pt-4">
-                        <p className="font-medium text-yellow-800 mb-3">
-                          No practitioner found with this phone number
-                        </p>
-                        <p className="text-sm text-muted-foreground mb-4">
-                          Enter the practice details below. This info will be used by the AI during the call.
-                        </p>
-
-                        <div className="space-y-4">
-                          {/* Practice & Contact Info */}
-                          <div className="space-y-3">
-                            <p className="text-xs font-medium text-yellow-800 uppercase tracking-wide">Practice Information</p>
-                            <div className="grid grid-cols-2 gap-3">
-                              <div>
-                                <Label htmlFor="quick-practice-name">Practice Name *</Label>
-                                <Input
-                                  id="quick-practice-name"
-                                  placeholder="ABC Wellness Clinic"
-                                  value={quickCallPracticeName}
-                                  onChange={(e) => setQuickCallPracticeName(e.target.value)}
-                                  className="mt-1 bg-white"
-                                />
-                              </div>
-                              <div>
-                                <Label htmlFor="quick-contact-name">Contact / Dr. Name</Label>
-                                <Input
-                                  id="quick-contact-name"
-                                  placeholder="Dr. Smith"
-                                  value={quickCallContactName}
-                                  onChange={(e) => setQuickCallContactName(e.target.value)}
-                                  className="mt-1 bg-white"
-                                />
-                              </div>
-                            </div>
-                            <div>
-                              <Label htmlFor="quick-email">Email Address</Label>
-                              <Input
-                                id="quick-email"
-                                type="email"
-                                placeholder="info@abcwellness.com"
-                                value={quickCallEmail}
-                                onChange={(e) => setQuickCallEmail(e.target.value)}
-                                className="mt-1 bg-white"
-                              />
-                            </div>
-                          </div>
-
-                          {/* Address */}
-                          <div className="space-y-3">
-                            <p className="text-xs font-medium text-yellow-800 uppercase tracking-wide">Location</p>
-                            <div>
-                              <Label htmlFor="quick-address">Street Address</Label>
-                              <Input
-                                id="quick-address"
-                                placeholder="123 Main Street, Suite 200"
-                                value={quickCallAddress}
-                                onChange={(e) => setQuickCallAddress(e.target.value)}
-                                className="mt-1 bg-white"
-                              />
-                            </div>
-                            <div className="grid grid-cols-3 gap-3">
-                              <div>
-                                <Label htmlFor="quick-city">City</Label>
-                                <Input
-                                  id="quick-city"
-                                  placeholder="Toronto"
-                                  value={quickCallCity}
-                                  onChange={(e) => setQuickCallCity(e.target.value)}
-                                  className="mt-1 bg-white"
-                                />
-                              </div>
-                              <div>
-                                <Label htmlFor="quick-province">Province</Label>
-                                <Select value={quickCallProvince} onValueChange={setQuickCallProvince}>
-                                  <SelectTrigger className="mt-1 bg-white">
-                                    <SelectValue placeholder="Select" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="Alberta">Alberta</SelectItem>
-                                    <SelectItem value="British Columbia">British Columbia</SelectItem>
-                                    <SelectItem value="Manitoba">Manitoba</SelectItem>
-                                    <SelectItem value="New Brunswick">New Brunswick</SelectItem>
-                                    <SelectItem value="Newfoundland and Labrador">Newfoundland</SelectItem>
-                                    <SelectItem value="Nova Scotia">Nova Scotia</SelectItem>
-                                    <SelectItem value="Ontario">Ontario</SelectItem>
-                                    <SelectItem value="Prince Edward Island">PEI</SelectItem>
-                                    <SelectItem value="Quebec">Quebec</SelectItem>
-                                    <SelectItem value="Saskatchewan">Saskatchewan</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                              </div>
-                              <div>
-                                <Label htmlFor="quick-postal">Postal Code</Label>
-                                <Input
-                                  id="quick-postal"
-                                  placeholder="M5V 1A1"
-                                  value={quickCallPostalCode}
-                                  onChange={(e) => setQuickCallPostalCode(e.target.value.toUpperCase())}
-                                  className="mt-1 bg-white"
-                                  maxLength={7}
-                                />
-                              </div>
-                            </div>
-                          </div>
-
-                          <Separator />
-
-                          {/* Pathway Selection */}
-                          <div>
-                            <Label htmlFor="quick-type">Conversational Pathway</Label>
-                            <p className="text-xs text-muted-foreground mb-2">Select the script/pathway to use for this call</p>
-                            <Select value={quickCallType} onValueChange={setQuickCallType}>
-                              <SelectTrigger className="mt-1 bg-white">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="chiropractor">🦴 Chiropractor</SelectItem>
-                                <SelectItem value="massage">💆 Massage Therapist</SelectItem>
-                                <SelectItem value="naturopath">🌿 Naturopath</SelectItem>
-                                <SelectItem value="integrative">⚕️ Integrative Medicine</SelectItem>
-                                <SelectItem value="functional">🔬 Functional Medicine</SelectItem>
-                                <SelectItem value="acupuncturist">📍 Acupuncturist</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-
-                          <Button 
-                            onClick={handleQuickCallManual}
-                            disabled={quickCallMaking || !quickCallPracticeName.trim()}
-                            className="w-full"
-                          >
-                            {quickCallMaking ? (
-                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                            ) : (
-                              <Phone className="w-4 h-4 mr-2" />
-                            )}
-                            Call {quickCallPracticeName || 'Practice'}
-                          </Button>
-
-                          {!quickCallPracticeName.trim() && (
-                            <p className="text-xs text-yellow-700 text-center">
-                              Please enter a practice name to make the call
-                            </p>
-                          )}
-                        </div>
-                      </CardContent>
-                    </Card>
-                  )}
-
-                  {/* Instructions */}
-                  {!quickCallResult && !quickCallNotFound && (
-                    <div className="text-sm text-muted-foreground border rounded-lg p-4 bg-muted/30">
-                      <p className="font-medium mb-2">How it works:</p>
-                      <ol className="list-decimal list-inside space-y-1">
-                        <li>Enter a phone number and click Search</li>
-                        <li>If we find a matching practitioner, you can call with full context</li>
-                        <li>If not found, you can still make a manual call</li>
-                        <li>All calls are logged and tracked in the Call Queue</li>
-                      </ol>
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
+          <QuickCallTab
+            onCallStarted={(practitioner, callId) => {
+              createCallRecord({
+                id: practitioner.id,
+                name: practitioner.name,
+                practitioner_type: practitioner.practitioner_type,
+                phone: practitioner.phone,
+                address: practitioner.address,
+                city: practitioner.city,
+                province: practitioner.province,
+                call_id: callId,
+              });
+              loadCallRecords();
+              scheduleCallRecordRefreshes();
+            }}
+            onManualCallStarted={(practitioner, callId) => {
+              createCallRecord({
+                id: practitioner.id,
+                name: practitioner.name,
+                practitioner_type: practitioner.practitioner_type,
+                phone: practitioner.phone,
+                address: practitioner.address,
+                city: practitioner.city,
+                province: practitioner.province,
+                call_id: callId,
+              });
+              loadCallRecords();
+              scheduleCallRecordRefreshes();
+            }}
+            onViewPractitioner={(p) => {
+              // QuickCallTab's PractitionerData is a subset - cast via unknown
+              setSelectedPractitioner(p as unknown as PractitionerData);
+              setDetailDrawerOpen(true);
+            }}
+            onCallSuccess={(name) => callNotifications.started(name)}
+            onCallFailed={(name, msg) => callNotifications.failed(name, msg)}
+            loadCallRecords={loadCallRecords}
+            loadPractitioners={loadPractitioners}
+          />
         </TabsContent>
 
         {/* Map Tab */}

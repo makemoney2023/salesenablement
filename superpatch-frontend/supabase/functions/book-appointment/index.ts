@@ -5,6 +5,12 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 30000): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timeout));
+}
+
 const CAL_API_KEY = Deno.env.get("CAL_API_KEY") || "";
 const CAL_EVENT_TYPE_ID = Number(Deno.env.get("CAL_EVENT_TYPE_ID")) || 4352394;
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
@@ -86,7 +92,7 @@ async function bookCalComAppointment(data: BookingRequest): Promise<CalComBookin
 
   console.log("📅 Cal.com booking payload:", JSON.stringify(bookingPayload, null, 2));
 
-  const response = await fetch(`https://api.cal.com/v1/bookings?apiKey=${CAL_API_KEY}`, {
+  const response = await fetchWithTimeout(`https://api.cal.com/v1/bookings?apiKey=${CAL_API_KEY}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -186,15 +192,33 @@ async function logBookingFailure(
     .eq("id", callRecordId);
 }
 
+// CORS and auth helpers
+const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "*";
+
+function corsHeaders() {
+  return {
+    "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  };
+}
+
+function verifyServiceAuth(req: Request): boolean {
+  const authHeader = req.headers.get("authorization") || "";
+  return authHeader === `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`;
+}
+
 serve(async (req) => {
   // Handle CORS preflight
   if (req.method === "OPTIONS") {
-    return new Response("ok", {
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "POST, OPTIONS",
-        "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-      },
+    return new Response("ok", { headers: corsHeaders() });
+  }
+
+  // Verify caller is authorized (service role key)
+  if (!verifyServiceAuth(req)) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
+      headers: { ...corsHeaders(), "Content-Type": "application/json" },
     });
   }
 

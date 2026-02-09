@@ -64,13 +64,14 @@ export function CommandSearch({
 
   // Load recent searches from localStorage
   useEffect(() => {
-    const saved = localStorage.getItem(RECENT_SEARCHES_KEY);
-    if (saved) {
-      try {
+    if (typeof window === "undefined") return;
+    try {
+      const saved = localStorage.getItem(RECENT_SEARCHES_KEY);
+      if (saved) {
         setRecentSearches(JSON.parse(saved));
-      } catch {
-        console.error("Failed to load recent searches");
       }
+    } catch {
+      console.error("Failed to load recent searches");
     }
   }, []);
 
@@ -80,7 +81,9 @@ export function CommandSearch({
     
     setRecentSearches((prev) => {
       const updated = [term, ...prev.filter((s) => s !== term)].slice(0, MAX_RECENT_SEARCHES);
-      localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(updated));
+      if (typeof window !== "undefined") {
+        localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(updated));
+      }
       return updated;
     });
   }, []);
@@ -88,7 +91,9 @@ export function CommandSearch({
   // Clear recent searches
   const clearRecentSearches = useCallback(() => {
     setRecentSearches([]);
-    localStorage.removeItem(RECENT_SEARCHES_KEY);
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(RECENT_SEARCHES_KEY);
+    }
   }, []);
 
   // Global keyboard shortcut

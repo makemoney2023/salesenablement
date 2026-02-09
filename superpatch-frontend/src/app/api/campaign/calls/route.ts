@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireApiAuth } from "@/lib/auth";
+import { CreateCallRecordSchema, UpdateCallRecordSchema, validateBody } from "@/lib/validation";
 import {
   getAllCallRecords,
   getCallRecord,
@@ -14,6 +16,9 @@ import type { CallRecordInsert, CallStatus } from "@/lib/db/types";
 
 // GET - Retrieve campaign calls
 export async function GET(request: NextRequest) {
+  const auth = await requireApiAuth();
+  if (!auth.authorized) return auth.response;
+
   try {
     const searchParams = request.nextUrl.searchParams;
     const callId = searchParams.get("call_id");
@@ -80,13 +85,15 @@ export async function GET(request: NextRequest) {
 
 // POST - Create or update a campaign call record
 export async function POST(request: NextRequest) {
+  const auth = await requireApiAuth();
+  if (!auth.authorized) return auth.response;
+
   try {
     const body = await request.json();
-
-    // Validate required fields
-    if (!body.practitioner_id && !body.call_id) {
+    const validation = validateBody(CreateCallRecordSchema, body);
+    if (!validation.success) {
       return NextResponse.json(
-        { status: "error", message: "practitioner_id or call_id is required" },
+        { status: "error", message: validation.error },
         { status: 400 }
       );
     }
@@ -149,16 +156,19 @@ export async function POST(request: NextRequest) {
 
 // PATCH - Update a specific field on a record
 export async function PATCH(request: NextRequest) {
+  const auth = await requireApiAuth();
+  if (!auth.authorized) return auth.response;
+
   try {
     const body = await request.json();
-    const { practitioner_id, ...updates } = body;
-
-    if (!practitioner_id) {
+    const validation = validateBody(UpdateCallRecordSchema, body);
+    if (!validation.success) {
       return NextResponse.json(
-        { status: "error", message: "practitioner_id is required" },
+        { status: "error", message: validation.error },
         { status: 400 }
       );
     }
+    const { practitioner_id, ...updates } = validation.data;
 
     const record = await updateCallRecord(practitioner_id, updates);
 
@@ -184,6 +194,9 @@ export async function PATCH(request: NextRequest) {
 
 // DELETE - Clear all records or a specific one
 export async function DELETE(request: NextRequest) {
+  const auth = await requireApiAuth();
+  if (!auth.authorized) return auth.response;
+
   try {
     const searchParams = request.nextUrl.searchParams;
     const practitionerId = searchParams.get("practitioner_id");

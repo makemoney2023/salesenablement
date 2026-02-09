@@ -1,8 +1,33 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireApiAuth } from "@/lib/auth";
+import { EnrichRequestSchema, validateBody } from "@/lib/validation";
 import { supabaseAdmin, isSupabaseConfigured } from "@/lib/supabase";
 
-const FIRECRAWL_API_KEY = process.env.FIRECRAWL_API_KEY || "";
+import { getEnvVar } from "@/lib/config/env";
+
+const FIRECRAWL_API_KEY = getEnvVar("FIRECRAWL_API_KEY");
 const FIRECRAWL_SCRAPE_URL = "https://api.firecrawl.dev/v1/scrape";
+
+/**
+ * Validates a URL is safe for external fetching (prevents SSRF).
+ * Rejects localhost, private IPs, and non-http(s) protocols.
+ */
+function isValidExternalUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (!["http:", "https:"].includes(parsed.protocol)) return false;
+    const hostname = parsed.hostname.toLowerCase();
+    // Block localhost variants
+    if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "0.0.0.0" || hostname === "[::1]") return false;
+    // Block private IP ranges
+    if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.)/.test(hostname)) return false;
+    // Block .local domains
+    if (hostname.endsWith(".local") || hostname.endsWith(".internal")) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 // Practitioner credential patterns for extraction
 const CREDENTIALS = [
@@ -203,7 +228,7 @@ async function scrapeWebsite(websiteUrl: string): Promise<EnrichmentData | null>
     const response = await fetch(FIRECRAWL_SCRAPE_URL, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${FIRECRAWL_API_KEY}`,
+        Authorization: `Bearer ${FIRECRAWL_API_KEY!}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -249,6 +274,9 @@ async function scrapeWebsite(websiteUrl: string): Promise<EnrichmentData | null>
 
 // POST /api/search/enrich - Enrich a practitioner with website data
 export async function POST(request: NextRequest) {
+  const auth = await requireApiAuth();
+  if (!auth.authorized) return auth.response;
+
   try {
     // Check for Firecrawl API key
     if (!FIRECRAWL_API_KEY) {
@@ -261,15 +289,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body: EnrichRequest = await request.json();
-    const { practitionerId, websiteUrl, force } = body;
-
-    if (!websiteUrl) {
+    const body = await request.json();
+    const validation = validateBody(EnrichRequestSchema, body);
+    if (!validation.success) {
       return NextResponse.json(
-        {
-          success: false,
-          error: "Website URL is required",
-        },
+        { success: false, error: validation.error },
+        { status: 400 }
+      );
+    }
+    const { practitionerId, websiteUrl, force } = validation.data;
+
+    // SSRF protection: validate URL before fetching
+    if (!isValidExternalUrl(websiteUrl)) {
+      return NextResponse.json(
+        { success: false, error: "Invalid or disallowed URL" },
         { status: 400 }
       );
     }
@@ -387,6 +420,9 @@ export async function POST(request: NextRequest) {
 
 // GET endpoint for testing/info
 export async function GET() {
+  const auth = await requireApiAuth();
+  if (!auth.authorized) return auth.response;
+
   return NextResponse.json({
     status: "ok",
     message: "Firecrawl Website Enrichment API",

@@ -184,8 +184,8 @@ export function useCallRecords(options: UseCallRecordsOptions = {}): UseCallReco
     } catch (err) {
       console.error("Error updating record:", err);
       
-      // Fallback to localStorage
-      if (!isSupabaseConfigured && records[practitionerId]) {
+      // Fallback to localStorage — avoid reading closed-over `records`; use localStorage directly
+      if (!isSupabaseConfigured) {
         const localRecord = localStorage.getCallRecord(practitionerId);
         if (localRecord) {
           const updated = localStorage.updateCallStatus(
@@ -202,7 +202,7 @@ export function useCallRecords(options: UseCallRecordsOptions = {}): UseCallReco
         }
       }
     }
-  }, [records]);
+  }, []);
 
   // Update status
   const updateStatus = useCallback(async (practitionerId: string, status: CallStatus) => {

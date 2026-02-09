@@ -5,6 +5,12 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 30000): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timeout));
+}
+
 const BLAND_API_KEY = Deno.env.get("BLAND_API_KEY") || "";
 const BLAND_API_URL = "https://api.bland.ai/v1";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
@@ -20,6 +26,9 @@ const WEBHOOK_URL = Deno.env.get("WEBHOOK_URL") || "https://gdwwppwaxyvudsecexuq
 // Bland Memory Store ID for cross-call context retention
 const MEMORY_ID = Deno.env.get("BLAND_MEMORY_ID") || "";
 
+// SYNC NOTE: These pathway IDs must match the values in src/lib/config/pathways.ts
+// If you update pathways here, update the frontend config too.
+//
 // Pathway IDs for different practitioner types (same as batch-caller.ts)
 // Each practitioner type has its own conversation pathway
 const PATHWAYS: Record<string, string> = {
@@ -40,6 +49,38 @@ const PATHWAYS: Record<string, string> = {
 
 // Default pathway (chiropractor) for unknown types
 const DEFAULT_PATHWAY = "9aa760af-6f9a-430f-8d0c-25bf84afd8fb";
+
+// Business hours configuration
+const BUSINESS_TIMEZONE = Deno.env.get("BUSINESS_TIMEZONE") || "America/Toronto";
+const BUSINESS_HOURS = { start: 9, end: 17 }; // 9 AM - 5 PM
+
+/**
+ * Check if current time is within business hours in the configured timezone.
+ * Returns false on weekends and outside 9 AM - 5 PM.
+ */
+function isWithinBusinessHours(): boolean {
+  try {
+    const now = new Date();
+    const formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: BUSINESS_TIMEZONE,
+      hour: "numeric",
+      hour12: false,
+      weekday: "short",
+    });
+    const parts = formatter.formatToParts(now);
+    const hour = parseInt(parts.find(p => p.type === "hour")?.value || "0", 10);
+    const weekday = parts.find(p => p.type === "weekday")?.value || "";
+    
+    // Weekend check
+    if (weekday === "Sat" || weekday === "Sun") return false;
+    
+    // Business hours check
+    return hour >= BUSINESS_HOURS.start && hour < BUSINESS_HOURS.end;
+  } catch (error) {
+    console.warn("[RetryQueue] Business hours check failed, defaulting to allow:", error);
+    return true; // Default to allowing calls if timezone check fails
+  }
+}
 
 /**
  * Get pathway ID for a practitioner type
@@ -156,7 +197,7 @@ async function initiateCall(practitioner: RetryQueueEntry): Promise<CallResult> 
     console.log(`[RetryQueue] Initiating call to ${practitioner.name} (${practitioner.phone})`);
     console.log(`   Retry #${practitioner.retry_count}, Reason: ${practitioner.retry_reason}`);
 
-    const response = await fetch(`${BLAND_API_URL}/calls`, {
+    const response = await fetchWithTimeout(`${BLAND_API_URL}/calls`, {
       method: "POST",
       headers: {
         "Authorization": BLAND_API_KEY,
@@ -211,15 +252,28 @@ async function updatePractitionerAfterCall(
       })
       .eq("id", practitionerId);
   } else {
-    // On failure, increment retry and reschedule
-    const { data: current } = await supabase
-      .from("practitioners")
-      .select("retry_count")
-      .eq("id", practitionerId)
-      .single();
-
-    const newRetryCount = ((current as { retry_count: number } | null)?.retry_count || 0) + 1;
+    // On failure, use atomic increment to prevent race conditions
     const maxAttempts = 3;
+    let newRetryCount: number;
+    
+    // Try atomic increment first (uses database RPC for thread safety)
+    const { data: rpcResult, error: rpcError } = await supabase.rpc(
+      "increment_retry_count",
+      { practitioner_id: practitionerId }
+    );
+
+    if (!rpcError && rpcResult !== null && rpcResult !== undefined) {
+      newRetryCount = rpcResult as number;
+    } else {
+      // Fallback to non-atomic read/write if RPC not available
+      console.warn("[RetryQueue] Atomic increment RPC failed, using fallback:", rpcError);
+      const { data: current } = await supabase
+        .from("practitioners")
+        .select("retry_count")
+        .eq("id", practitionerId)
+        .single();
+      newRetryCount = ((current as { retry_count: number } | null)?.retry_count || 0) + 1;
+    }
 
     if (newRetryCount >= maxAttempts) {
       // Max retries reached, mark for manual review
@@ -252,8 +306,15 @@ async function processRetryQueue(supabase: ReturnType<typeof createClient>): Pro
   processed: number;
   successful: number;
   failed: number;
+  skipped_reason?: string;
   results: CallResult[];
 }> {
+  // Check business hours before initiating any calls
+  if (!isWithinBusinessHours()) {
+    console.log("[RetryQueue] Outside business hours — skipping retry processing");
+    return { processed: 0, successful: 0, failed: 0, skipped_reason: "outside_business_hours", results: [] };
+  }
+
   // Get practitioners due for retry
   const queue = await getRetryQueue(supabase, 50);
 
@@ -301,16 +362,34 @@ async function processRetryQueue(supabase: ReturnType<typeof createClient>): Pro
 }
 
 // Main handler
-serve(async (req: Request) => {
-  // CORS headers
-  const corsHeaders = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
-  };
+// CORS and auth helpers
+const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "*";
+if (ALLOWED_ORIGIN === "*") {
+  console.warn("⚠️ ALLOWED_ORIGIN not set - using wildcard CORS. Set ALLOWED_ORIGIN in production!");
+}
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+function verifyServiceAuth(req: Request): boolean {
+  const authHeader = req.headers.get("authorization") || "";
+  return authHeader === `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`;
+}
+
+serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders });
+  }
+
+  // Verify caller is authorized (service role key)
+  if (!verifyServiceAuth(req)) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 
   // Verify configuration

@@ -14,6 +14,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { requireApiAuth } from "@/lib/auth";
 import { serverUpsertCallRecord, serverUpdateByCallId } from "@/lib/db/call-records";
 import { supabaseAdmin, isSupabaseConfigured } from "@/lib/supabase";
 import type { 
@@ -1249,8 +1250,11 @@ async function bookCalComAppointment(data: {
   return response.json();
 }
 
-// GET endpoint for testing
+// GET endpoint for testing (auth-protected)
 export async function GET(request: NextRequest) {
+  const auth = await requireApiAuth();
+  if (!auth.authorized) return auth.response;
+
   const searchParams = request.nextUrl.searchParams;
   
   // Test Supabase connection

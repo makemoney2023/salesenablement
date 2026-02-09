@@ -132,13 +132,14 @@ export function FilterPanel({ metadata, filters, onFilterChange, onClearAll }: F
 
   // Load saved filters from localStorage
   useEffect(() => {
-    const saved = localStorage.getItem("campaign_saved_filters");
-    if (saved) {
-      try {
+    if (typeof window === "undefined") return;
+    try {
+      const saved = localStorage.getItem("campaign_saved_filters");
+      if (saved) {
         setSavedFilters(JSON.parse(saved));
-      } catch {
-        console.error("Failed to load saved filters");
       }
+    } catch {
+      console.error("Failed to load saved filters");
     }
   }, []);
 
@@ -155,7 +156,9 @@ export function FilterPanel({ metadata, filters, onFilterChange, onClearAll }: F
 
     const updated = [...savedFilters, newFilter];
     setSavedFilters(updated);
-    localStorage.setItem("campaign_saved_filters", JSON.stringify(updated));
+    if (typeof window !== "undefined") {
+      localStorage.setItem("campaign_saved_filters", JSON.stringify(updated));
+    }
     setFilterName("");
     setSaveDialogOpen(false);
   };
@@ -164,7 +167,9 @@ export function FilterPanel({ metadata, filters, onFilterChange, onClearAll }: F
   const deleteSavedFilter = (id: string) => {
     const updated = savedFilters.filter((f) => f.id !== id);
     setSavedFilters(updated);
-    localStorage.setItem("campaign_saved_filters", JSON.stringify(updated));
+    if (typeof window !== "undefined") {
+      localStorage.setItem("campaign_saved_filters", JSON.stringify(updated));
+    }
   };
 
   // Apply saved filter

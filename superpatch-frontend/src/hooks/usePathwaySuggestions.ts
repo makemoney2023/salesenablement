@@ -10,7 +10,7 @@
  * - Aggregates counts by status and practitioner type
  */
 
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 import type { 
   PathwaySuggestion, 
@@ -18,6 +18,7 @@ import type {
   PathwaySuggestionType,
   PathwaySuggestionSeverity 
 } from "@/lib/db/types";
+import { useRetryTimeouts } from "@/hooks/useRetryTimeout";
 
 interface PathwaySuggestionFilters {
   status?: PathwaySuggestionStatus | "all";
@@ -86,6 +87,7 @@ export function usePathwaySuggestions(
   const isMountedRef = useRef(true);
   const isConnectedRef = useRef(false);
   const fetchSuggestionsRef = useRef<(() => void) | null>(null);
+  const scheduleRetry = useRetryTimeouts();
   
   // Store current filter values in refs so realtime handler can access them
   const filtersRef = useRef({ status, practitionerType, suggestionType, severity });
@@ -307,7 +309,7 @@ export function usePathwaySuggestions(
             // No data and we can retry - wait and try again
             retryCountRef.current++;
             console.log(`[PathwaySuggestions] Retrying fetch (attempt ${retryCountRef.current}/${maxRetries}) in 1 second...`);
-            setTimeout(() => {
+            scheduleRetry(() => {
               if (isMountedRef.current) {
                 fetchSuggestions(true);
               }
@@ -359,7 +361,7 @@ export function usePathwaySuggestions(
         if (retryCountRef.current < maxRetries && isMountedRef.current) {
           retryCountRef.current++;
           console.log(`[PathwaySuggestions] Retrying fetch (attempt ${retryCountRef.current}/${maxRetries}) in 1 second...`);
-          setTimeout(() => {
+          scheduleRetry(() => {
             if (isMountedRef.current) {
               fetchSuggestions(true);
             }
@@ -379,7 +381,7 @@ export function usePathwaySuggestions(
         setLoading(false);
       }
     }
-  }, [status, practitionerType, suggestionType, severity, search, fetchStatusCounts, fetchPendingByPractitioner, fetchWithDirectAPI]);
+  }, [status, practitionerType, suggestionType, severity, search, fetchStatusCounts, fetchPendingByPractitioner, fetchWithDirectAPI, scheduleRetry]);
 
   // Keep refs in sync with state/callbacks
   useEffect(() => {
@@ -390,98 +392,226 @@ export function usePathwaySuggestions(
     isConnectedRef.current = isConnected;
   }, [isConnected]);
 
-  // Update suggestion status
+  // Direct API update fallback for suggestions
+  const updateSuggestionWithDirectAPI = useCallback(async (id: string, updatePayload: Record<string, unknown>): Promise<boolean> => {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    
+    if (!supabaseUrl || !supabaseKey) return false;
+
+    try {
+      const response = await fetch(`${supabaseUrl}/rest/v1/pathway_suggestions?id=eq.${id}`, {
+        method: 'PATCH',
+        headers: {
+          'apikey': supabaseKey,
+          'Authorization': `Bearer ${supabaseKey}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'return=minimal',
+        },
+        body: JSON.stringify(updatePayload),
+      });
+
+      return response.ok;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  // Update suggestion status with retry logic
   const updateStatus = useCallback(async (id: string, newStatus: PathwaySuggestionStatus): Promise<boolean> => {
     if (!isSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       return false;
     }
 
-    try {
-      const now = new Date().toISOString();
-      
-      // Build update object based on new status
-      let updatePayload: {
-        status: PathwaySuggestionStatus;
-        updated_at: string;
-        reviewed_at?: string;
-        implemented_at?: string;
-      } = {
-        status: newStatus,
-        updated_at: now,
-      };
+    const now = new Date().toISOString();
+    
+    // Build update object based on new status
+    let updatePayload: {
+      status: PathwaySuggestionStatus;
+      updated_at: string;
+      reviewed_at?: string;
+      implemented_at?: string;
+    } = {
+      status: newStatus,
+      updated_at: now,
+    };
 
-      if (newStatus === "approved" || newStatus === "dismissed" || newStatus === "reviewed") {
-        updatePayload = { ...updatePayload, reviewed_at: now };
-      }
+    if (newStatus === "approved" || newStatus === "dismissed" || newStatus === "reviewed") {
+      updatePayload = { ...updatePayload, reviewed_at: now };
+    }
 
-      if (newStatus === "implemented") {
-        updatePayload = { ...updatePayload, implemented_at: now };
-      }
+    if (newStatus === "implemented") {
+      updatePayload = { ...updatePayload, implemented_at: now };
+    }
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error: updateError } = await (supabase as any)
-        .from("pathway_suggestions")
-        .update(updatePayload)
-        .eq("id", id);
+    // Retry logic for AbortError
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { error: updateError } = await (supabase as any)
+          .from("pathway_suggestions")
+          .update(updatePayload)
+          .eq("id", id);
 
-      if (updateError) {
-        setError(updateError.message);
+        if (updateError) {
+          const isAbortError = updateError.message?.includes('AbortError') || updateError.message?.includes('aborted');
+          
+          if (isAbortError) {
+            if (attempt < maxRetries) {
+              console.log(`[PathwaySuggestions] Update retry (attempt ${attempt + 1}/${maxRetries})...`);
+              await new Promise(r => setTimeout(r, 1000));
+              continue;
+            }
+            // Fall back to direct API
+            console.log('[PathwaySuggestions] Using direct API for update...');
+            const success = await updateSuggestionWithDirectAPI(id, updatePayload);
+            if (success) {
+              setSuggestions((prev) =>
+                prev.map((s) =>
+                  s.id === id
+                    ? { ...s, ...updatePayload }
+                    : s
+                ) as PathwaySuggestion[]
+              );
+              await Promise.all([fetchStatusCounts(), fetchPendingByPractitioner()]);
+              return true;
+            }
+            return false;
+          }
+          
+          setError(updateError.message);
+          return false;
+        }
+
+        // Success - update local state
+        setSuggestions((prev) =>
+          prev.map((s) =>
+            s.id === id
+              ? { ...s, ...updatePayload }
+              : s
+          ) as PathwaySuggestion[]
+        );
+
+        // Refresh counts
+        await Promise.all([fetchStatusCounts(), fetchPendingByPractitioner()]);
+        return true;
+      } catch (err) {
+        const isAbortError = err instanceof Error && (err.name === 'AbortError' || err.message?.includes('aborted'));
+        
+        if (isAbortError && attempt < maxRetries) {
+          console.log(`[PathwaySuggestions] Update retry (attempt ${attempt + 1}/${maxRetries})...`);
+          await new Promise(r => setTimeout(r, 1000));
+          continue;
+        }
+        
+        if (!isMountedRef.current) return false;
+        setError(err instanceof Error ? err.message : "Failed to update");
         return false;
       }
+    }
+    
+    return false;
+  }, [fetchStatusCounts, fetchPendingByPractitioner, updateSuggestionWithDirectAPI]);
 
-      // Update local state
-      setSuggestions((prev) =>
-        prev.map((s) =>
-          s.id === id
-            ? { ...s, ...updatePayload }
-            : s
-        ) as PathwaySuggestion[]
+  // Direct API for mark all implemented
+  const markAllWithDirectAPI = useCallback(async (type: string): Promise<boolean> => {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    
+    if (!supabaseUrl || !supabaseKey) return false;
+
+    try {
+      const response = await fetch(
+        `${supabaseUrl}/rest/v1/pathway_suggestions?practitioner_type=eq.${encodeURIComponent(type)}&status=eq.approved`,
+        {
+          method: 'PATCH',
+          headers: {
+            'apikey': supabaseKey,
+            'Authorization': `Bearer ${supabaseKey}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=minimal',
+          },
+          body: JSON.stringify({
+            status: "implemented",
+            implemented_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }),
+        }
       );
 
-      // Refresh counts
-      await Promise.all([fetchStatusCounts(), fetchPendingByPractitioner()]);
-
-      return true;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update");
+      return response.ok;
+    } catch {
       return false;
     }
-  }, [fetchStatusCounts, fetchPendingByPractitioner]);
+  }, []);
 
-  // Mark all approved suggestions for a practitioner type as implemented
+  // Mark all approved suggestions for a practitioner type as implemented with retry logic
   const markAllImplemented = useCallback(async (type: string): Promise<boolean> => {
     if (!isSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       return false;
     }
 
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error: updateError } = await (supabase as any)
-        .from("pathway_suggestions")
-        .update({
-          status: "implemented",
-          implemented_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq("practitioner_type", type)
-        .eq("status", "approved");
+    const updatePayload = {
+      status: "implemented" as const,
+      implemented_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
 
-      if (updateError) {
-        setError(updateError.message);
+    // Retry logic for AbortError
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { error: updateError } = await (supabase as any)
+          .from("pathway_suggestions")
+          .update(updatePayload)
+          .eq("practitioner_type", type)
+          .eq("status", "approved");
+
+        if (updateError) {
+          const isAbortError = updateError.message?.includes('AbortError') || updateError.message?.includes('aborted');
+          
+          if (isAbortError) {
+            if (attempt < maxRetries) {
+              console.log(`[PathwaySuggestions] Mark all retry (attempt ${attempt + 1}/${maxRetries})...`);
+              await new Promise(r => setTimeout(r, 1000));
+              continue;
+            }
+            // Fall back to direct API
+            console.log('[PathwaySuggestions] Using direct API for mark all...');
+            const success = await markAllWithDirectAPI(type);
+            if (success) {
+              await fetchSuggestions();
+              return true;
+            }
+            return false;
+          }
+          
+          setError(updateError.message);
+          return false;
+        }
+
+        // Refresh data
+        await fetchSuggestions();
+        return true;
+      } catch (err) {
+        const isAbortError = err instanceof Error && (err.name === 'AbortError' || err.message?.includes('aborted'));
+        
+        if (isAbortError && attempt < maxRetries) {
+          console.log(`[PathwaySuggestions] Mark all retry (attempt ${attempt + 1}/${maxRetries})...`);
+          await new Promise(r => setTimeout(r, 1000));
+          continue;
+        }
+        
+        if (!isMountedRef.current) return false;
+        setError(err instanceof Error ? err.message : "Failed to update");
         return false;
       }
-
-      // Refresh data
-      await fetchSuggestions();
-
-      return true;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update");
-      return false;
     }
-  }, [fetchSuggestions]);
+    
+    return false;
+  }, [fetchSuggestions, markAllWithDirectAPI]);
 
   // Handle real-time changes - uses refs to avoid recreating the callback
   const handleChange = useCallback(
@@ -593,7 +723,7 @@ export function usePathwaySuggestions(
           if (subStatus === "SUBSCRIBED" && !wasConnected) {
             console.log("[Realtime Suggestions] Connection established, triggering refetch");
             // Small delay to let connection stabilize
-            setTimeout(() => {
+            scheduleRetry(() => {
               if (isMountedRef.current && fetchSuggestionsRef.current) {
                 fetchSuggestionsRef.current();
               }
@@ -613,7 +743,7 @@ export function usePathwaySuggestions(
         channelRef.current = null;
       }
     };
-  }, [handleChange]);
+  }, [handleChange, scheduleRetry]);
 
   // Fetch data when filters change - separate from subscription
   useEffect(() => {

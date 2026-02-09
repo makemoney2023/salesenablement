@@ -12,6 +12,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 import type { Appointment, AppointmentStatus, AppointmentInsert, AppointmentUpdate } from "@/lib/db/types";
+import { useRetryTimeouts } from "@/hooks/useRetryTimeout";
 
 interface UseAppointmentsOptions {
   statusFilter?: AppointmentStatus | "all";
@@ -86,6 +87,7 @@ export function useAppointments(
   const fetchAppointmentsRef = useRef<(() => void) | null>(null);
   const retryCountRef = useRef(0);
   const maxRetries = 3;
+  const scheduleRetry = useRetryTimeouts();
 
   // Fetch status counts
   const fetchStatusCounts = useCallback(async () => {
@@ -248,7 +250,7 @@ export function useAppointments(
           } else if (retryCountRef.current < maxRetries) {
             retryCountRef.current++;
             console.log(`[Appointments] Retrying fetch (attempt ${retryCountRef.current}/${maxRetries}) in 1 second...`);
-            setTimeout(() => {
+            scheduleRetry(() => {
               if (isMountedRef.current) {
                 fetchAppointments(true);
               }
@@ -290,7 +292,7 @@ export function useAppointments(
         if (retryCountRef.current < maxRetries && isMountedRef.current) {
           retryCountRef.current++;
           console.log(`[Appointments] Retrying fetch (attempt ${retryCountRef.current}/${maxRetries}) in 1 second...`);
-          setTimeout(() => {
+          scheduleRetry(() => {
             if (isMountedRef.current) {
               fetchAppointments(true);
             }
@@ -306,9 +308,34 @@ export function useAppointments(
         setLoading(false);
       }
     }
-  }, [statusFilter, startDate, endDate, practitionerId, limit, fetchStatusCounts, fetchWithDirectAPI]);
+  }, [statusFilter, startDate, endDate, practitionerId, limit, fetchStatusCounts, fetchWithDirectAPI, scheduleRetry]);
 
-  // Update appointment status
+  // Direct API update fallback
+  const updateWithDirectAPI = useCallback(async (id: string, updateData: Record<string, unknown>): Promise<boolean> => {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    
+    if (!supabaseUrl || !supabaseKey) return false;
+
+    try {
+      const response = await fetch(`${supabaseUrl}/rest/v1/appointments?id=eq.${id}`, {
+        method: 'PATCH',
+        headers: {
+          'apikey': supabaseKey,
+          'Authorization': `Bearer ${supabaseKey}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'return=minimal',
+        },
+        body: JSON.stringify(updateData),
+      });
+
+      return response.ok;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  // Update appointment status with retry logic
   const updateStatus = useCallback(async (
     id: string,
     newStatus: AppointmentStatus,
@@ -319,112 +346,263 @@ export function useAppointments(
       return false;
     }
 
-    try {
-      const updateData: Record<string, unknown> = {
-        status: newStatus,
-        updated_at: new Date().toISOString(),
-        ...additionalData,
-      };
+    const updateData: Record<string, unknown> = {
+      status: newStatus,
+      updated_at: new Date().toISOString(),
+      ...additionalData,
+    };
 
-      // Set timestamps based on status
-      if (newStatus === "completed") {
-        updateData.completed_at = new Date().toISOString();
-      } else if (newStatus === "cancelled") {
-        updateData.cancelled_at = new Date().toISOString();
-      }
+    // Set timestamps based on status
+    if (newStatus === "completed") {
+      updateData.completed_at = new Date().toISOString();
+    } else if (newStatus === "cancelled") {
+      updateData.cancelled_at = new Date().toISOString();
+    }
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error: updateError } = await (supabase as any)
-        .from("appointments")
-        .update(updateData)
-        .eq("id", id);
+    // Retry logic for AbortError
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { error: updateError } = await (supabase as any)
+          .from("appointments")
+          .update(updateData)
+          .eq("id", id);
 
-      if (updateError) {
-        setError(updateError.message);
+        if (updateError) {
+          const isAbortError = updateError.message?.includes('AbortError') || updateError.message?.includes('aborted');
+          
+          if (isAbortError) {
+            if (attempt < maxRetries) {
+              console.log(`[Appointments] Update retry (attempt ${attempt + 1}/${maxRetries})...`);
+              await new Promise(r => setTimeout(r, 1000));
+              continue;
+            }
+            // Fall back to direct API
+            console.log('[Appointments] Using direct API for update...');
+            const success = await updateWithDirectAPI(id, updateData);
+            if (success) {
+              setAppointments((prev) =>
+                prev.map((apt) =>
+                  apt.id === id
+                    ? { ...apt, status: newStatus, ...updateData } as AppointmentWithPractitioner
+                    : apt
+                )
+              );
+              await fetchStatusCounts();
+              return true;
+            }
+            return false;
+          }
+          
+          setError(updateError.message);
+          return false;
+        }
+
+        // Success - update local state
+        setAppointments((prev) =>
+          prev.map((apt) =>
+            apt.id === id
+              ? { ...apt, status: newStatus, ...updateData } as AppointmentWithPractitioner
+              : apt
+          )
+        );
+
+        // Refresh counts
+        await fetchStatusCounts();
+        return true;
+      } catch (err) {
+        const isAbortError = err instanceof Error && (err.name === 'AbortError' || err.message?.includes('aborted'));
+        
+        if (isAbortError && attempt < maxRetries) {
+          console.log(`[Appointments] Update retry (attempt ${attempt + 1}/${maxRetries})...`);
+          await new Promise(r => setTimeout(r, 1000));
+          continue;
+        }
+        
+        if (!isMountedRef.current) return false;
+        setError(err instanceof Error ? err.message : "Failed to update");
         return false;
       }
-
-      // Update local state
-      setAppointments((prev) =>
-        prev.map((apt) =>
-          apt.id === id
-            ? { ...apt, status: newStatus, ...updateData } as AppointmentWithPractitioner
-            : apt
-        )
-      );
-
-      // Refresh counts
-      await fetchStatusCounts();
-
-      return true;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update");
-      return false;
     }
-  }, [fetchStatusCounts]);
+    
+    return false;
+  }, [fetchStatusCounts, updateWithDirectAPI]);
 
-  // Create new appointment
+  // Direct API create fallback
+  const createWithDirectAPI = useCallback(async (data: AppointmentInsert): Promise<Appointment | null> => {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    
+    if (!supabaseUrl || !supabaseKey) return null;
+
+    try {
+      const response = await fetch(`${supabaseUrl}/rest/v1/appointments`, {
+        method: 'POST',
+        headers: {
+          'apikey': supabaseKey,
+          'Authorization': `Bearer ${supabaseKey}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'return=representation',
+        },
+        body: JSON.stringify(data),
+      });
+
+      if (!response.ok) return null;
+      const result = await response.json();
+      return Array.isArray(result) ? result[0] : result;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  // Create new appointment with retry logic
   const createAppointment = useCallback(async (data: AppointmentInsert): Promise<Appointment | null> => {
     if (!isSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       return null;
     }
 
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: newApt, error: createError } = await (supabase as any)
-        .from("appointments")
-        .insert(data)
-        .select()
-        .single();
+    // Retry logic for AbortError
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: newApt, error: createError } = await (supabase as any)
+          .from("appointments")
+          .insert(data)
+          .select()
+          .single();
 
-      if (createError) {
-        setError(createError.message);
+        if (createError) {
+          const isAbortError = createError.message?.includes('AbortError') || createError.message?.includes('aborted');
+          
+          if (isAbortError) {
+            if (attempt < maxRetries) {
+              console.log(`[Appointments] Create retry (attempt ${attempt + 1}/${maxRetries})...`);
+              await new Promise(r => setTimeout(r, 1000));
+              continue;
+            }
+            // Fall back to direct API
+            console.log('[Appointments] Using direct API for create...');
+            const result = await createWithDirectAPI(data);
+            if (result) {
+              await fetchAppointments();
+              return result;
+            }
+            return null;
+          }
+          
+          setError(createError.message);
+          return null;
+        }
+
+        // Refresh list
+        await fetchAppointments();
+        return newApt;
+      } catch (err) {
+        const isAbortError = err instanceof Error && (err.name === 'AbortError' || err.message?.includes('aborted'));
+        
+        if (isAbortError && attempt < maxRetries) {
+          console.log(`[Appointments] Create retry (attempt ${attempt + 1}/${maxRetries})...`);
+          await new Promise(r => setTimeout(r, 1000));
+          continue;
+        }
+        
+        if (!isMountedRef.current) return null;
+        setError(err instanceof Error ? err.message : "Failed to create");
         return null;
       }
-
-      // Refresh list
-      await fetchAppointments();
-
-      return newApt;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create");
-      return null;
     }
-  }, [fetchAppointments]);
+    
+    return null;
+  }, [fetchAppointments, createWithDirectAPI]);
 
-  // Delete appointment
+  // Direct API delete fallback
+  const deleteWithDirectAPI = useCallback(async (id: string): Promise<boolean> => {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    
+    if (!supabaseUrl || !supabaseKey) return false;
+
+    try {
+      const response = await fetch(`${supabaseUrl}/rest/v1/appointments?id=eq.${id}`, {
+        method: 'DELETE',
+        headers: {
+          'apikey': supabaseKey,
+          'Authorization': `Bearer ${supabaseKey}`,
+        },
+      });
+
+      return response.ok;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  // Delete appointment with retry logic
   const deleteAppointment = useCallback(async (id: string): Promise<boolean> => {
     if (!isSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       return false;
     }
 
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error: deleteError } = await (supabase as any)
-        .from("appointments")
-        .delete()
-        .eq("id", id);
+    // Retry logic for AbortError
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { error: deleteError } = await (supabase as any)
+          .from("appointments")
+          .delete()
+          .eq("id", id);
 
-      if (deleteError) {
-        setError(deleteError.message);
+        if (deleteError) {
+          const isAbortError = deleteError.message?.includes('AbortError') || deleteError.message?.includes('aborted');
+          
+          if (isAbortError) {
+            if (attempt < maxRetries) {
+              console.log(`[Appointments] Delete retry (attempt ${attempt + 1}/${maxRetries})...`);
+              await new Promise(r => setTimeout(r, 1000));
+              continue;
+            }
+            // Fall back to direct API
+            console.log('[Appointments] Using direct API for delete...');
+            const success = await deleteWithDirectAPI(id);
+            if (success) {
+              setAppointments((prev) => prev.filter((apt) => apt.id !== id));
+              setTotal((prev) => Math.max(0, prev - 1));
+              await fetchStatusCounts();
+              return true;
+            }
+            return false;
+          }
+          
+          setError(deleteError.message);
+          return false;
+        }
+
+        // Success - update local state
+        setAppointments((prev) => prev.filter((apt) => apt.id !== id));
+        setTotal((prev) => Math.max(0, prev - 1));
+
+        // Refresh counts
+        await fetchStatusCounts();
+        return true;
+      } catch (err) {
+        const isAbortError = err instanceof Error && (err.name === 'AbortError' || err.message?.includes('aborted'));
+        
+        if (isAbortError && attempt < maxRetries) {
+          console.log(`[Appointments] Delete retry (attempt ${attempt + 1}/${maxRetries})...`);
+          await new Promise(r => setTimeout(r, 1000));
+          continue;
+        }
+        
+        if (!isMountedRef.current) return false;
+        setError(err instanceof Error ? err.message : "Failed to delete");
         return false;
       }
-
-      // Update local state
-      setAppointments((prev) => prev.filter((apt) => apt.id !== id));
-      setTotal((prev) => Math.max(0, prev - 1));
-
-      // Refresh counts
-      await fetchStatusCounts();
-
-      return true;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete");
-      return false;
     }
-  }, [fetchStatusCounts]);
+    
+    return false;
+  }, [fetchStatusCounts, deleteWithDirectAPI]);
 
   // Handle real-time changes
   const handleChange = useCallback(
@@ -512,7 +690,7 @@ export function useAppointments(
           // If we just connected, trigger a refetch
           if (subStatus === "SUBSCRIBED" && !wasConnected) {
             console.log("[Realtime Appointments] Connection established, triggering refetch");
-            setTimeout(() => {
+            scheduleRetry(() => {
               if (isMountedRef.current && fetchAppointmentsRef.current) {
                 fetchAppointmentsRef.current();
               }
@@ -532,7 +710,7 @@ export function useAppointments(
         channelRef.current = null;
       }
     };
-  }, [handleChange]);
+  }, [handleChange, scheduleRetry]);
 
   // Fetch data when filters change - separate from subscription
   useEffect(() => {

@@ -12,6 +12,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 import type { SampleRequest, SampleStatus, SampleRequestUpdate } from "@/lib/db/types";
+import { useRetryTimeouts } from "@/hooks/useRetryTimeout";
 
 interface UseSampleRequestsOptions {
   statusFilter?: SampleStatus | "all";
@@ -74,10 +75,43 @@ export function useSampleRequests(
 
   const channelRef = useRef<ReturnType<NonNullable<typeof supabase>["channel"]> | null>(null);
   const isMountedRef = useRef(true);
+  const isConnectedRef = useRef(false);
+  const fetchSamplesRef = useRef<(() => void) | null>(null);
+  const retryCountRef = useRef(0);
+  const maxRetries = 3;
+  const scheduleRetry = useRetryTimeouts();
 
-  // Fetch status counts
-  const fetchStatusCounts = useCallback(async () => {
+  // Direct API fallback for status counts
+  const fetchStatusCountsWithDirectAPI = useCallback(async () => {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    
+    if (!supabaseUrl || !supabaseKey) return null;
+
+    try {
+      const response = await fetch(`${supabaseUrl}/rest/v1/sample_requests?select=status`, {
+        method: 'GET',
+        headers: {
+          'apikey': supabaseKey,
+          'Authorization': `Bearer ${supabaseKey}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) return null;
+      return await response.json();
+    } catch {
+      return null;
+    }
+  }, []);
+
+  // Fetch status counts with retry logic
+  const fetchStatusCounts = useCallback(async (isRetry = false) => {
     if (!isSupabaseConfigured || !supabase) return;
+
+    if (!isRetry) {
+      retryCountRef.current = 0;
+    }
 
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -88,8 +122,39 @@ export function useSampleRequests(
       if (!isMountedRef.current) return;
 
       if (error) {
-        // Ignore abort errors
-        if (error.message?.includes('AbortError') || error.message?.includes('aborted')) return;
+        const isAbortError = error.message?.includes('AbortError') || error.message?.includes('aborted');
+        
+        if (isAbortError) {
+          if (retryCountRef.current < maxRetries) {
+            retryCountRef.current++;
+            console.log(`[SampleRequests] Status counts retry (attempt ${retryCountRef.current}/${maxRetries})...`);
+            scheduleRetry(() => {
+              if (isMountedRef.current) {
+                fetchStatusCounts(true);
+              }
+            }, 1000);
+          } else {
+            // Try direct API fallback
+            const fallbackData = await fetchStatusCountsWithDirectAPI();
+            if (fallbackData && isMountedRef.current) {
+              const counts: StatusCounts = {
+                pending: 0,
+                approved: 0,
+                shipped: 0,
+                delivered: 0,
+                cancelled: 0,
+              };
+              fallbackData.forEach((item: { status: SampleStatus }) => {
+                if (item.status in counts) {
+                  counts[item.status]++;
+                }
+              });
+              setStatusCounts(counts);
+            }
+          }
+          return;
+        }
+        
         console.error("Error fetching status counts:", error);
         return;
       }
@@ -110,11 +175,22 @@ export function useSampleRequests(
 
       setStatusCounts(counts);
     } catch (err) {
-      if (err instanceof Error && (err.name === 'AbortError' || err.message?.includes('aborted'))) return;
+      const isAbortError = err instanceof Error && (err.name === 'AbortError' || err.message?.includes('aborted'));
+      
+      if (isAbortError && retryCountRef.current < maxRetries && isMountedRef.current) {
+        retryCountRef.current++;
+        scheduleRetry(() => {
+          if (isMountedRef.current) {
+            fetchStatusCounts(true);
+          }
+        }, 1000);
+        return;
+      }
+      
       if (!isMountedRef.current) return;
       console.error("Error fetching status counts:", err);
     }
-  }, []);
+  }, [fetchStatusCountsWithDirectAPI, scheduleRetry]);
 
   // Fetch samples via API (which handles pagination)
   const fetchSamples = useCallback(async () => {
@@ -222,17 +298,30 @@ export function useSampleRequests(
       new: SampleRequest | null;
       old: Partial<SampleRequest> | null;
     }) => {
+      if (!isMountedRef.current) return;
+      
       const { eventType, new: newRecord, old: oldRecord } = payload;
 
       console.log(`📡 Sample requests ${eventType}:`, newRecord?.id || oldRecord?.id);
 
-      // For simplicity, just refresh the list
-      fetchSamples();
+      // For simplicity, just refresh the list via ref
+      if (fetchSamplesRef.current) {
+        fetchSamplesRef.current();
+      }
     },
-    [fetchSamples]
+    []
   );
 
-  // Set up real-time subscription
+  // Keep refs in sync
+  useEffect(() => {
+    fetchSamplesRef.current = fetchSamples;
+  }, [fetchSamples]);
+
+  useEffect(() => {
+    isConnectedRef.current = isConnected;
+  }, [isConnected]);
+
+  // Set up real-time subscription - runs once on mount
   useEffect(() => {
     isMountedRef.current = true;
     
@@ -241,9 +330,6 @@ export function useSampleRequests(
       setLoading(false);
       return;
     }
-
-    // Initial fetch
-    fetchSamples();
 
     // Subscribe to real-time changes
     const channel = supabase
@@ -268,7 +354,19 @@ export function useSampleRequests(
       .subscribe((subStatus) => {
         console.log("[Realtime Samples] Subscription status:", subStatus);
         if (isMountedRef.current) {
+          const wasConnected = isConnectedRef.current;
           setIsConnected(subStatus === "SUBSCRIBED");
+          isConnectedRef.current = subStatus === "SUBSCRIBED";
+          
+          // If we just connected, trigger a refetch
+          if (subStatus === "SUBSCRIBED" && !wasConnected) {
+            console.log("[Realtime Samples] Connection established, triggering refetch");
+            scheduleRetry(() => {
+              if (isMountedRef.current && fetchSamplesRef.current) {
+                fetchSamplesRef.current();
+              }
+            }, 500);
+          }
         }
       });
 
@@ -283,12 +381,12 @@ export function useSampleRequests(
         channelRef.current = null;
       }
     };
-  }, [fetchSamples, handleChange]);
+  }, [handleChange, scheduleRetry]);
 
-  // Re-fetch when filters change
+  // Fetch data when filters change - separate from subscription
   useEffect(() => {
     fetchSamples();
-  }, [statusFilter, search, page, fetchSamples]);
+  }, [fetchSamples]);
 
   return {
     samples,

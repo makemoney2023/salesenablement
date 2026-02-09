@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireApiAuth } from "@/lib/auth";
+import { UpdateSampleSchema, validateBody } from "@/lib/validation";
 import { supabaseAdmin, isSupabaseConfigured } from "@/lib/supabase";
-import type { SampleStatus, SampleRequestUpdate, SampleRequest } from "@/lib/db/types";
+import type { SampleRequest } from "@/lib/db/types";
 
 // GET /api/samples - Fetch sample requests with filtering and pagination
 export async function GET(request: NextRequest) {
+  const auth = await requireApiAuth();
+  if (!auth.authorized) return auth.response;
   if (!isSupabaseConfigured || !supabaseAdmin) {
     return NextResponse.json(
       { error: "Database not configured" },
@@ -90,7 +94,11 @@ export async function GET(request: NextRequest) {
 }
 
 // PATCH /api/samples - Update sample request(s)
+// Auth checked inside handler
 export async function PATCH(request: NextRequest) {
+  const auth = await requireApiAuth();
+  if (!auth.authorized) return auth.response;
+
   if (!isSupabaseConfigured || !supabaseAdmin) {
     return NextResponse.json(
       { error: "Database not configured" },
@@ -100,20 +108,16 @@ export async function PATCH(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { id, ids, updates } = body as {
-      id?: string;
-      ids?: string[];
-      updates: SampleRequestUpdate;
-    };
-
-    // Validate we have at least one ID
-    const targetIds = ids || (id ? [id] : []);
-    if (targetIds.length === 0) {
+    const validation = validateBody(UpdateSampleSchema, body);
+    if (!validation.success) {
       return NextResponse.json(
-        { error: "No sample request ID(s) provided" },
+        { error: validation.error },
         { status: 400 }
       );
     }
+    const { id, ids, ...updates } = validation.data;
+
+    const targetIds = ids || (id ? [id] : []);
 
     // If status is "shipped", set shipped_at timestamp
     if (updates.status === "shipped" && !updates.shipped_at) {
@@ -180,7 +184,7 @@ function generateCSV(samples: SampleRequest[]): string {
   const rows = samples.map((sample) => {
     return columns
       .map((col) => {
-        let value: string | number | string[] | null = sample[col.key];
+        let value: string | number | boolean | string[] | null = sample[col.key];
 
         // Format dates
         if (col.key === "created_at" || col.key === "shipped_at") {

@@ -4,6 +4,12 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 30000): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timeout));
+}
+
 const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY") || "";
 const FIRECRAWL_SCRAPE_URL = "https://api.firecrawl.dev/v1/scrape";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
@@ -61,6 +67,23 @@ interface Practitioner {
   id: string;
   name: string;
   website: string;
+}
+
+/**
+ * Validates a URL is safe for external fetching (prevents SSRF).
+ */
+function isValidExternalUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (!["http:", "https:"].includes(parsed.protocol)) return false;
+    const hostname = parsed.hostname.toLowerCase();
+    if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "0.0.0.0" || hostname === "[::1]") return false;
+    if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.)/.test(hostname)) return false;
+    if (hostname.endsWith(".local") || hostname.endsWith(".internal")) return false;
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 interface ExtractedPractitioner {
@@ -215,7 +238,7 @@ async function attemptScrape(
   strategyName: string
 ): Promise<EnrichmentData | null> {
   try {
-    const response = await fetch(FIRECRAWL_SCRAPE_URL, {
+    const response = await fetchWithTimeout(FIRECRAWL_SCRAPE_URL, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${FIRECRAWL_API_KEY}`,
@@ -310,6 +333,19 @@ async function enrichPractitioner(
   const { id, name, website } = practitioner;
 
   try {
+    // SSRF protection: validate URL before fetching
+    if (!isValidExternalUrl(website)) {
+      console.warn(`[Edge Enrich] Skipping invalid/unsafe URL for ${name}: ${website}`);
+      await supabase
+        .from("practitioners")
+        .update({
+          enrichment_status: "failed",
+          enrichment: { scraped_at: new Date().toISOString(), success: false, error: "Invalid or disallowed URL" },
+        })
+        .eq("id", id);
+      return { practitionerId: id, name, success: false, error: "Invalid URL" };
+    }
+
     // Mark as in-progress
     await supabase
       .from("practitioners")
@@ -362,15 +398,31 @@ async function enrichPractitioner(
 }
 
 // Main handler
-serve(async (req) => {
-  // CORS headers
-  const corsHeaders = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  };
+// CORS and auth helpers
+const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "*";
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+function verifyServiceAuth(req: Request): boolean {
+  const authHeader = req.headers.get("authorization") || "";
+  return authHeader === `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`;
+}
+
+serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
+  }
+
+  // Verify caller is authorized (service role key)
+  if (!verifyServiceAuth(req)) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 
   try {
@@ -471,9 +523,15 @@ serve(async (req) => {
       const batch = practitioners.slice(i, i + BATCH_SIZE);
       console.log(`[Edge Enrich] Processing batch ${Math.floor(i / BATCH_SIZE) + 1}: ${batch.length} practitioners`);
 
-      // Process batch in parallel
-      const batchResults = await Promise.all(
+      // Process batch in parallel - use allSettled to preserve successful results on partial failure
+      const settled = await Promise.allSettled(
         batch.map((p) => enrichPractitioner(supabase, p))
+      );
+
+      const batchResults = settled.map((r, idx) =>
+        r.status === "fulfilled"
+          ? r.value
+          : { practitionerId: batch[idx].id, name: batch[idx].name, success: false, error: r.reason?.message || "Unknown error" }
       );
 
       results.push(...batchResults);

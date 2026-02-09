@@ -1,8 +1,13 @@
 import { NextResponse } from 'next/server'
-import { createClient, createAdminClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/server'
+import { requireApiAdmin } from '@/lib/auth'
 
 export async function POST(request: Request) {
   try {
+    // Use centralized admin auth check
+    const auth = await requireApiAdmin();
+    if (!auth.authorized) return auth.response;
+
     const { email, role } = await request.json()
 
     if (!email) {
@@ -29,31 +34,6 @@ export async function POST(request: Request) {
       )
     }
 
-    // Get the current user to verify they're an admin
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-
-    if (!user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
-    }
-
-    // Check if current user is admin
-    const { data: currentProfile } = await supabase
-      .from('user_profiles')
-      .select('role')
-      .eq('id', user.id)
-      .single() as { data: { role: string } | null }
-
-    if (currentProfile?.role !== 'admin') {
-      return NextResponse.json(
-        { error: 'Only admins can invite users' },
-        { status: 403 }
-      )
-    }
-
     // Use admin client to invite user
     const adminClient = await createAdminClient()
     
@@ -61,7 +41,7 @@ export async function POST(request: Request) {
     const { data, error } = await adminClient.auth.admin.inviteUserByEmail(email, {
       data: {
         role: role || 'user',
-        invited_by: user.id,
+        invited_by: auth.user.id,
       },
       redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/auth/callback`,
     })
@@ -82,7 +62,7 @@ export async function POST(request: Request) {
           id: data.user.id,
           email: email,
           role: role || 'user',
-          invited_by: user.id,
+          invited_by: auth.user.id,
         } as any)
 
       if (profileError) {

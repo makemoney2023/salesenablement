@@ -38,6 +38,7 @@ import {
   PhoneOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 import type { RetryQueueEntry, RetryReason } from "@/lib/db/types";
 
@@ -304,7 +305,7 @@ export function RetryQueuePanel({ className }: RetryQueuePanelProps) {
       await fetchRetries();
     } catch (err) {
       console.error("[RetryQueue] Error initiating retry:", err);
-      alert(`Failed to initiate retry: ${err instanceof Error ? err.message : "Unknown error"}`);
+      toast.error(`Failed to initiate retry: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
       setProcessingId(null);
     }
@@ -336,7 +337,7 @@ export function RetryQueuePanel({ className }: RetryQueuePanelProps) {
       setEntries((prev) => prev.filter((e) => e.id !== cancelDialogEntry.id));
     } catch (err) {
       console.error("[RetryQueue] Error cancelling retry:", err);
-      alert(`Failed to cancel retry: ${err instanceof Error ? err.message : "Unknown error"}`);
+      toast.error(`Failed to cancel retry: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
       setProcessingId(null);
       setCancelDialogEntry(null);

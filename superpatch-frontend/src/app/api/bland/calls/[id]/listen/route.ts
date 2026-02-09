@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireApiAuth } from "@/lib/auth";
+import { getEnvVar } from "@/lib/config/env";
 
-const BLAND_API_KEY = process.env.BLAND_API_KEY || "";
+const BLAND_API_KEY = getEnvVar("BLAND_API_KEY");
 const BLAND_API_URL = "https://api.bland.ai/v1";
 
 interface BlandListenResponse {
@@ -31,6 +33,9 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const auth = await requireApiAuth();
+  if (!auth.authorized) return auth.response;
+
   const { id: callId } = await params;
 
   if (!BLAND_API_KEY) {
@@ -121,6 +126,9 @@ export async function POST(
  * Returns information about the live listen feature.
  */
 export async function GET() {
+  const auth = await requireApiAuth();
+  if (!auth.authorized) return auth.response;
+
   return NextResponse.json({
     endpoint: "Live Listen API",
     method: "POST",

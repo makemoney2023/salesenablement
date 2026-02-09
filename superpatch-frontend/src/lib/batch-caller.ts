@@ -5,7 +5,6 @@
  */
 
 import {
-  CampaignCallRecord,
   createCallRecord,
   getCallRecord,
   updateCallStatus,
@@ -13,27 +12,11 @@ import {
   saveCampaignQueueState,
   removeFromQueue,
 } from './campaign-storage';
-
-// Pathway IDs for different practitioner types
-const PATHWAYS: Record<string, string> = {
-  chiropractor: "9aa760af-6f9a-430f-8d0c-25bf84afd8fb",
-  "massage therapist": "1fee31b1-8179-48c6-b6fa-12fcd434ed2b",
-  massage_therapist: "1fee31b1-8179-48c6-b6fa-12fcd434ed2b",
-  rmt: "1fee31b1-8179-48c6-b6fa-12fcd434ed2b",
-  naturopath: "db955b59-d278-410e-981e-5728dfa2dafd",
-  "naturopathic doctor": "db955b59-d278-410e-981e-5728dfa2dafd",
-  "integrative medicine": "b6240419-3b24-4415-9541-804994cce425",
-  "integrative medicine doctor": "b6240419-3b24-4415-9541-804994cce425",
-  "integrative medicine practitioner": "b6240419-3b24-4415-9541-804994cce425",
-  "functional medicine": "70f3a50a-9055-4f41-bc0d-81964dfae19a",
-  "functional medicine doctor": "70f3a50a-9055-4f41-bc0d-81964dfae19a",
-  "functional medicine practitioner": "70f3a50a-9055-4f41-bc0d-81964dfae19a",
-  acupuncturist: "084673ec-84d6-4c3a-bedb-ba9d72bd7e3b",
-};
-
-const DEFAULT_PATHWAY = "9aa760af-6f9a-430f-8d0c-25bf84afd8fb"; // Chiropractors
-const KB_ID = "b671527d-0c2d-4a21-9586-033dad3b0255";
-const VOICE_ID = "78c8543e-e5fe-448e-8292-20a7b8c45247";
+import {
+  KB_ID,
+  VOICE_ID,
+  getPathwayId as getPathwayIdFromConfig,
+} from './config/pathways';
 // Use Supabase Edge Function for webhook - lower latency, same infrastructure as database
 const WEBHOOK_URL = process.env.NEXT_PUBLIC_BLAND_WEBHOOK_URL || "https://gdwwppwaxyvudsecexuq.supabase.co/functions/v1/webhook-processor";
 // Bland Memory Store ID for cross-call context retention
@@ -96,15 +79,16 @@ export interface BatchCallerEvent {
 type EventListener = (event: BatchCallerEvent) => void;
 
 /**
- * Get pathway ID for a practitioner type
+ * Get pathway ID for a practitioner type.
+ * Delegates to shared config in lib/config/pathways.ts.
  */
 function getPathwayId(practitionerType: string): string {
-  const typeKey = practitionerType.toLowerCase().trim();
-  return PATHWAYS[typeKey] || DEFAULT_PATHWAY;
+  return getPathwayIdFromConfig(practitionerType);
 }
 
 /**
- * Format phone number to E.164 format
+ * Format phone number to E.164 format (+1XXXXXXXXXX for North American numbers).
+ * Rejects numbers that don't match expected format instead of silently truncating.
  */
 function formatPhoneNumber(phone: string): string | null {
   if (!phone) return null;
@@ -112,13 +96,15 @@ function formatPhoneNumber(phone: string): string | null {
   const digits = phone.replace(/\D/g, '');
   
   if (digits.length === 10) {
+    // Standard 10-digit North American number
     return `+1${digits}`;
   } else if (digits.length === 11 && digits.startsWith('1')) {
+    // 11-digit with country code 1
     return `+${digits}`;
-  } else if (digits.length > 11) {
-    return `+${digits.slice(0, 11)}`;
   }
   
+  // Reject numbers that don't match expected North American format
+  // (previously silently truncated, which could call wrong numbers)
   return null;
 }
 
@@ -229,7 +215,7 @@ export class BatchCaller {
       // Don't use first_sentence with pathways - let the pathway handle the intro
       wait_for_greeting: true,
       record: true,
-      max_duration: 15,
+      max_duration: 15, // minutes — Bland.ai max_duration is in minutes (15 min cap per call)
       webhook: WEBHOOK_URL,
       request_data: requestData,
       // Include from number if configured
@@ -424,11 +410,14 @@ export class BatchCaller {
   }
 
   /**
-   * Wait for a call to complete by polling its status
+   * Wait for a call to complete by polling its status.
+   * Uses exponential backoff on errors and stops after max consecutive failures.
    */
   private async waitForCallCompletion(callId: string, maxWaitMs = 900000): Promise<void> {
     const startTime = Date.now();
-    const pollIntervalMs = 5000; // Poll every 5 seconds
+    const basePollIntervalMs = 5000; // Poll every 5 seconds
+    let consecutiveErrors = 0;
+    const maxConsecutiveErrors = 5; // Stop polling after 5 consecutive errors
 
     while (Date.now() - startTime < maxWaitMs) {
       if (!this.isRunning || this.isPaused) {
@@ -437,7 +426,21 @@ export class BatchCaller {
 
       try {
         const response = await fetch(`/api/bland/calls/${callId}`);
+        
+        if (!response.ok) {
+          consecutiveErrors++;
+          console.warn(`Bland.ai poll error (${consecutiveErrors}/${maxConsecutiveErrors}):`, response.status);
+          if (consecutiveErrors >= maxConsecutiveErrors) {
+            console.error(`Max polling errors reached for call ${callId} — stopping poll`);
+            return;
+          }
+          // Exponential backoff on errors
+          await this.delay(basePollIntervalMs * Math.pow(2, consecutiveErrors - 1));
+          continue;
+        }
+        
         const callData = await response.json();
+        consecutiveErrors = 0; // Reset on success
 
         if (callData.status === 'completed' || callData.status === 'failed' || callData.status === 'no-answer') {
           // Update local record with call data
@@ -445,9 +448,14 @@ export class BatchCaller {
           if (record) {
             let status: 'completed' | 'booked' | 'failed' = 'completed';
             
+            // Handle both string and boolean values from Bland variables
             if (callData.status === 'failed' || callData.status === 'no-answer') {
               status = 'failed';
-            } else if (callData.variables?.wants_demo === 'true' || callData.variables?.appointment_time) {
+            } else if (
+              String(callData.variables?.wants_demo).toLowerCase() === 'true' || 
+              callData.variables?.wants_demo === true || 
+              callData.variables?.appointment_time
+            ) {
               status = 'booked';
             }
 
@@ -461,10 +469,15 @@ export class BatchCaller {
           return;
         }
       } catch (error) {
-        console.error('Error polling call status:', error);
+        consecutiveErrors++;
+        console.error(`Error polling call status (${consecutiveErrors}/${maxConsecutiveErrors}):`, error);
+        if (consecutiveErrors >= maxConsecutiveErrors) {
+          console.error(`Max polling errors reached for call ${callId} — stopping poll`);
+          return;
+        }
       }
 
-      await this.delay(pollIntervalMs);
+      await this.delay(basePollIntervalMs);
     }
   }
 

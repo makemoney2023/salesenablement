@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireApiAuth } from "@/lib/auth";
+import { DNCRequestSchema, validateBody } from "@/lib/validation";
 import { supabaseAdmin, isSupabaseConfigured } from "@/lib/supabase";
 
 interface DNCMarkRequest {
@@ -17,6 +19,9 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const auth = await requireApiAuth();
+  if (!auth.authorized) return auth.response;
+
   try {
     const { id } = await params;
     
@@ -34,15 +39,12 @@ export async function PATCH(
       );
     }
 
-    const body: DNCRequest = await request.json();
-
-    // Validate action
-    if (!body.action || !['mark', 'restore'].includes(body.action)) {
-      return NextResponse.json(
-        { error: "Invalid action. Must be 'mark' or 'restore'" },
-        { status: 400 }
-      );
+    const rawBody = await request.json();
+    const validation = validateBody(DNCRequestSchema, rawBody);
+    if (!validation.success) {
+      return NextResponse.json({ error: validation.error }, { status: 400 });
     }
+    const body: DNCRequest = validation.data as DNCRequest;
 
     // Check if practitioner exists
     const { data: practitionerData, error: lookupError } = await supabaseAdmin
@@ -164,6 +166,9 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const auth = await requireApiAuth();
+  if (!auth.authorized) return auth.response;
+
   try {
     const { id } = await params;
     

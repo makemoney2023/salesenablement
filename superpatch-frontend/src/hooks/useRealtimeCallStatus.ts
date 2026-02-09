@@ -69,13 +69,16 @@ export function useRealtimeCallStatus(
   
   const channelRef = useRef<RealtimeChannel | null>(null);
   const callbacksRef = useRef({ onCallChange, onCallStarted, onCallCompleted });
+  const isMountedRef = useRef(true);
+  const isConnectedRef = useRef(false);
+  const fetchActiveCallsRef = useRef<(() => void) | null>(null);
 
   // Keep callbacks ref updated
   useEffect(() => {
     callbacksRef.current = { onCallChange, onCallStarted, onCallCompleted };
   }, [onCallChange, onCallStarted, onCallCompleted]);
 
-  // Fetch active calls from database
+  // Fetch active calls from database with AbortError handling
   const fetchActiveCalls = useCallback(async () => {
     if (!isSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
@@ -89,7 +92,11 @@ export function useRealtimeCallStatus(
         .in("status", statuses)
         .order("call_started_at", { ascending: false });
 
+      if (!isMountedRef.current) return;
+
       if (fetchError) {
+        // Ignore abort errors
+        if (fetchError.message?.includes('AbortError') || fetchError.message?.includes('aborted')) return;
         console.error("[Realtime] Error fetching active calls:", fetchError);
         setError(fetchError.message);
         return;
@@ -98,6 +105,9 @@ export function useRealtimeCallStatus(
       setActiveCalls((data as ActiveCall[]) || []);
       setError(null);
     } catch (err) {
+      // Ignore abort errors
+      if (err instanceof Error && (err.name === 'AbortError' || err.message?.includes('aborted'))) return;
+      if (!isMountedRef.current) return;
       console.error("[Realtime] Error fetching active calls:", err);
       setError(err instanceof Error ? err.message : "Failed to fetch calls");
     }
@@ -219,15 +229,23 @@ export function useRealtimeCallStatus(
     [statuses]
   );
 
-  // Set up realtime subscription
+  // Keep refs in sync
   useEffect(() => {
+    fetchActiveCallsRef.current = fetchActiveCalls;
+  }, [fetchActiveCalls]);
+
+  useEffect(() => {
+    isConnectedRef.current = isConnected;
+  }, [isConnected]);
+
+  // Set up realtime subscription - runs once on mount
+  useEffect(() => {
+    isMountedRef.current = true;
+    
     if (!isSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       return;
     }
-
-    // Initial fetch
-    fetchActiveCalls();
 
     // Subscribe to realtime changes
     const channel = supabase
@@ -239,20 +257,41 @@ export function useRealtimeCallStatus(
           schema: "public",
           table: "call_records",
         },
-        handleChange
+        (payload) => {
+          if (isMountedRef.current) {
+            handleChange(payload);
+          }
+        }
       )
-      .subscribe((status) => {
-        console.log("[Realtime] Subscription status:", status);
+      .subscribe((subStatus) => {
+        console.log("[Realtime] Subscription status:", subStatus);
         
-        if (status === "SUBSCRIBED") {
-          setIsConnected(true);
-          setError(null);
-        } else if (status === "CHANNEL_ERROR") {
-          setIsConnected(false);
-          setError("Failed to connect to realtime channel");
-        } else if (status === "TIMED_OUT") {
-          setIsConnected(false);
-          setError("Realtime connection timed out");
+        if (isMountedRef.current) {
+          const wasConnected = isConnectedRef.current;
+          
+          if (subStatus === "SUBSCRIBED") {
+            setIsConnected(true);
+            isConnectedRef.current = true;
+            setError(null);
+            
+            // If we just connected, trigger a refetch
+            if (!wasConnected) {
+              console.log("[Realtime] Connection established, triggering refetch");
+              setTimeout(() => {
+                if (isMountedRef.current && fetchActiveCallsRef.current) {
+                  fetchActiveCallsRef.current();
+                }
+              }, 500);
+            }
+          } else if (subStatus === "CHANNEL_ERROR") {
+            setIsConnected(false);
+            isConnectedRef.current = false;
+            setError("Failed to connect to realtime channel");
+          } else if (subStatus === "TIMED_OUT") {
+            setIsConnected(false);
+            isConnectedRef.current = false;
+            setError("Realtime connection timed out");
+          }
         }
       });
 
@@ -261,13 +300,18 @@ export function useRealtimeCallStatus(
     // Cleanup
     return () => {
       console.log("[Realtime] Unsubscribing from channel");
+      isMountedRef.current = false;
       if (channelRef.current && supabase) {
         supabase.removeChannel(channelRef.current);
         channelRef.current = null;
       }
-      setIsConnected(false);
     };
-  }, [fetchActiveCalls, handleChange]);
+  }, [handleChange]);
+
+  // Fetch data when filters change - separate from subscription
+  useEffect(() => {
+    fetchActiveCalls();
+  }, [fetchActiveCalls]);
 
   return {
     activeCalls,

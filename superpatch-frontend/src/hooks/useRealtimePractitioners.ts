@@ -11,6 +11,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import { useRetryTimeouts } from "@/hooks/useRetryTimeout";
 
 interface Practitioner {
   id: string;
@@ -83,6 +84,11 @@ export function useRealtimePractitioners(
   const channelRef = useRef<ReturnType<NonNullable<typeof supabase>["channel"]> | null>(null);
   const callbacksRef = useRef({ onEnrichmentComplete, onEnrichmentFailed });
   const isMountedRef = useRef(true);
+  const isConnectedRef = useRef(false);
+  const fetchPractitionersRef = useRef<(() => void) | null>(null);
+  const retryCountRef = useRef(0);
+  const maxRetries = 3;
+  const scheduleRetry = useRetryTimeouts();
   
   // Store filter values in ref for realtime handler
   const filtersRef = useRef({ enrichmentStatusFilter, limit });
@@ -93,12 +99,89 @@ export function useRealtimePractitioners(
     callbacksRef.current = { onEnrichmentComplete, onEnrichmentFailed };
   }, [onEnrichmentComplete, onEnrichmentFailed]);
 
-  // Fetch practitioners from database
-  const fetchPractitioners = useCallback(async () => {
+  // Direct API fallback for practitioners
+  const fetchWithDirectAPI = useCallback(async () => {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    
+    if (!supabaseUrl || !supabaseKey) {
+      throw new Error('Supabase not configured');
+    }
+
+    const params = new URLSearchParams();
+    params.append('select', 'id,name,enrichment_status,website,address,phone,practitioner_type,city,province');
+    params.append('order', 'updated_at.desc');
+    params.append('limit', limit.toString());
+    
+    if (enrichmentStatusFilter && enrichmentStatusFilter.length > 0) {
+      params.append('enrichment_status', `in.(${enrichmentStatusFilter.join(',')})`);
+    }
+
+    const response = await fetch(`${supabaseUrl}/rest/v1/practitioners?${params.toString()}`, {
+      method: 'GET',
+      headers: {
+        'apikey': supabaseKey,
+        'Authorization': `Bearer ${supabaseKey}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    return await response.json();
+  }, [enrichmentStatusFilter, limit]);
+
+  // Fallback stats fetcher: count each status separately
+  const fetchStatsFallback = useCallback(async () => {
+    if (!supabase) return;
+    
+    const { count: totalCount } = await supabase
+      .from("practitioners")
+      .select("*", { count: "exact", head: true });
+
+    const { count: pendingCount } = await supabase
+      .from("practitioners")
+      .select("*", { count: "exact", head: true })
+      .eq("enrichment_status", "pending");
+
+    const { count: inProgressCount } = await supabase
+      .from("practitioners")
+      .select("*", { count: "exact", head: true })
+      .eq("enrichment_status", "in_progress");
+
+    const { count: completedCount } = await supabase
+      .from("practitioners")
+      .select("*", { count: "exact", head: true })
+      .eq("enrichment_status", "completed");
+
+    const { count: failedCount } = await supabase
+      .from("practitioners")
+      .select("*", { count: "exact", head: true })
+      .eq("enrichment_status", "failed");
+
+    if (isMountedRef.current) {
+      setStats({
+        total: totalCount || 0,
+        pending: pendingCount || 0,
+        inProgress: inProgressCount || 0,
+        completed: completedCount || 0,
+        failed: failedCount || 0,
+      });
+    }
+  }, []);
+
+  // Fetch practitioners from database with retry logic
+  const fetchPractitioners = useCallback(async (isRetry = false) => {
     if (!isSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       setLoading(false);
       return;
+    }
+
+    if (!isRetry) {
+      retryCountRef.current = 0;
     }
 
     try {
@@ -113,13 +196,44 @@ export function useRealtimePractitioners(
       }
 
       const { data, error: fetchError } = await query;
+      const practitionerData = data as Practitioner[] | null;
+
+      if (!isMountedRef.current) return;
 
       if (fetchError) {
-        // Ignore abort errors - they happen during normal cleanup
-        if (fetchError.message?.includes('AbortError') || fetchError.message?.includes('aborted')) return;
+        const isAbortError = fetchError.message?.includes('AbortError') || fetchError.message?.includes('aborted');
+        
+        if (isAbortError) {
+          if (practitionerData && practitionerData.length > 0) {
+            setPractitioners(practitionerData);
+            setError(null);
+          } else if (retryCountRef.current < maxRetries) {
+            retryCountRef.current++;
+            console.log(`[Realtime Practitioners] Retry (attempt ${retryCountRef.current}/${maxRetries})...`);
+            scheduleRetry(() => {
+              if (isMountedRef.current) {
+                fetchPractitioners(true);
+              }
+            }, 1000);
+          } else {
+            // Fall back to direct API
+            console.log('[Realtime Practitioners] Using direct API fallback...');
+            try {
+              const fallbackData = await fetchWithDirectAPI();
+              if (isMountedRef.current && fallbackData) {
+                setPractitioners(fallbackData as Practitioner[]);
+                setError(null);
+              }
+            } catch (fallbackErr) {
+              console.error('[Realtime Practitioners] Direct fetch failed:', fallbackErr);
+            }
+          }
+          return;
+        }
+        
         setError(fetchError.message);
       } else {
-        setPractitioners((data as Practitioner[]) || []);
+        setPractitioners(practitionerData || []);
         setError(null);
       }
 
@@ -132,61 +246,65 @@ export function useRealtimePractitioners(
         failed: number;
       }
       
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: statsData, error: statsError } = await (supabase.rpc as any)("get_enrichment_stats");
-      
-      if (!statsError && statsData && statsData.length > 0) {
-        const rpcStats = statsData[0] as EnrichmentStats;
-        setStats({
-          total: rpcStats.total || 0,
-          pending: rpcStats.pending || 0,
-          inProgress: rpcStats.in_progress || 0,
-          completed: rpcStats.completed || 0,
-          failed: rpcStats.failed || 0,
-        });
-      } else {
-        // Fallback: count each status separately (if RPC not available)
-        const { count: totalCount } = await supabase
-          .from("practitioners")
-          .select("*", { count: "exact", head: true });
-
-        const { count: pendingCount } = await supabase
-          .from("practitioners")
-          .select("*", { count: "exact", head: true })
-          .eq("enrichment_status", "pending");
-
-        const { count: inProgressCount } = await supabase
-          .from("practitioners")
-          .select("*", { count: "exact", head: true })
-          .eq("enrichment_status", "in_progress");
-
-        const { count: completedCount } = await supabase
-          .from("practitioners")
-          .select("*", { count: "exact", head: true })
-          .eq("enrichment_status", "completed");
-
-        const { count: failedCount } = await supabase
-          .from("practitioners")
-          .select("*", { count: "exact", head: true })
-          .eq("enrichment_status", "failed");
-
-        setStats({
-          total: totalCount || 0,
-          pending: pendingCount || 0,
-          inProgress: inProgressCount || 0,
-          completed: completedCount || 0,
-          failed: failedCount || 0,
-        });
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: statsData, error: statsError } = await (supabase.rpc as any)("get_enrichment_stats");
+        
+        if (!statsError && statsData && statsData.length > 0) {
+          const rpcStats = statsData[0] as EnrichmentStats;
+          if (isMountedRef.current) {
+            setStats({
+              total: rpcStats.total || 0,
+              pending: rpcStats.pending || 0,
+              inProgress: rpcStats.in_progress || 0,
+              completed: rpcStats.completed || 0,
+              failed: rpcStats.failed || 0,
+            });
+          }
+        } else {
+          // Fallback: count each status separately (if RPC returned error but didn't throw)
+          await fetchStatsFallback();
+        }
+      } catch (rpcErr) {
+        // RPC function may not exist — fall back to individual count queries
+        console.warn("get_enrichment_stats RPC not available, using defaults:", rpcErr);
+        try {
+          await fetchStatsFallback();
+        } catch {
+          // If fallback also fails, use defaults based on practitioners we already have
+          if (isMountedRef.current) {
+            const pData = practitionerData || [];
+            setStats({
+              total: pData.length,
+              pending: pData.filter(p => p.enrichment_status === "pending").length,
+              inProgress: pData.filter(p => p.enrichment_status === "in_progress").length,
+              completed: pData.filter(p => p.enrichment_status === "completed").length,
+              failed: pData.filter(p => p.enrichment_status === "failed").length,
+            });
+          }
+        }
       }
     } catch (err) {
-      // Ignore abort errors
-      if (err instanceof Error && (err.name === 'AbortError' || err.message?.includes('aborted'))) return;
+      const isAbortError = err instanceof Error && (err.name === 'AbortError' || err.message?.includes('aborted'));
+      
+      if (isAbortError) {
+        if (retryCountRef.current < maxRetries && isMountedRef.current) {
+          retryCountRef.current++;
+          scheduleRetry(() => {
+            if (isMountedRef.current) {
+              fetchPractitioners(true);
+            }
+          }, 1000);
+        }
+        return;
+      }
+      
       if (!isMountedRef.current) return;
       setError(err instanceof Error ? err.message : "Failed to fetch");
     } finally {
       if (isMountedRef.current) setLoading(false);
     }
-  }, [enrichmentStatusFilter, limit]);
+  }, [enrichmentStatusFilter, limit, fetchWithDirectAPI, scheduleRetry, fetchStatsFallback]);
 
   // Handle real-time changes - uses refs to avoid recreating callback
   const handleChange = useCallback(
@@ -271,6 +389,15 @@ export function useRealtimePractitioners(
     []
   );
 
+  // Keep refs in sync
+  useEffect(() => {
+    fetchPractitionersRef.current = fetchPractitioners;
+  }, [fetchPractitioners]);
+
+  useEffect(() => {
+    isConnectedRef.current = isConnected;
+  }, [isConnected]);
+
   // Set up real-time subscription - runs once on mount
   useEffect(() => {
     isMountedRef.current = true;
@@ -292,17 +419,31 @@ export function useRealtimePractitioners(
           table: "practitioners",
         },
         (payload) => {
-          handleChange({
-            eventType: payload.eventType as "INSERT" | "UPDATE" | "DELETE",
-            new: payload.new as Practitioner | null,
-            old: payload.old as Partial<Practitioner> | null,
-          });
+          if (isMountedRef.current) {
+            handleChange({
+              eventType: payload.eventType as "INSERT" | "UPDATE" | "DELETE",
+              new: payload.new as Practitioner | null,
+              old: payload.old as Partial<Practitioner> | null,
+            });
+          }
         }
       )
-      .subscribe((status) => {
-        console.log("[Realtime Practitioners] Subscription status:", status);
+      .subscribe((subStatus) => {
+        console.log("[Realtime Practitioners] Subscription status:", subStatus);
         if (isMountedRef.current) {
-          setIsConnected(status === "SUBSCRIBED");
+          const wasConnected = isConnectedRef.current;
+          setIsConnected(subStatus === "SUBSCRIBED");
+          isConnectedRef.current = subStatus === "SUBSCRIBED";
+          
+          // If we just connected, trigger a refetch
+          if (subStatus === "SUBSCRIBED" && !wasConnected) {
+            console.log("[Realtime Practitioners] Connection established, triggering refetch");
+            scheduleRetry(() => {
+              if (isMountedRef.current && fetchPractitionersRef.current) {
+                fetchPractitionersRef.current();
+              }
+            }, 500);
+          }
         }
       });
 
@@ -317,7 +458,7 @@ export function useRealtimePractitioners(
         channelRef.current = null;
       }
     };
-  }, [handleChange]);
+  }, [handleChange, scheduleRetry]);
 
   // Fetch data when filters change - separate from subscription
   useEffect(() => {

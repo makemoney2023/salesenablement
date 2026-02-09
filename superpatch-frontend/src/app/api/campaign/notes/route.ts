@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireApiAuth } from "@/lib/auth";
+import { CreateNoteSchema, UpdateNoteSchema, validateBody } from "@/lib/validation";
 import {
   getNotesForCall,
   addNote,
@@ -9,6 +11,9 @@ import {
 
 // GET - Retrieve notes
 export async function GET(request: NextRequest) {
+  const auth = await requireApiAuth();
+  if (!auth.authorized) return auth.response;
+
   try {
     const searchParams = request.nextUrl.searchParams;
     const callRecordId = searchParams.get("call_record_id");
@@ -48,20 +53,23 @@ export async function GET(request: NextRequest) {
 
 // POST - Create a new note
 export async function POST(request: NextRequest) {
+  const auth = await requireApiAuth();
+  if (!auth.authorized) return auth.response;
+
   try {
     const body = await request.json();
-
-    if (!body.call_record_id || !body.content) {
+    const validation = validateBody(CreateNoteSchema, body);
+    if (!validation.success) {
       return NextResponse.json(
-        { status: "error", message: "call_record_id and content are required" },
+        { status: "error", message: validation.error },
         { status: 400 }
       );
     }
 
     const note = await addNote({
-      call_record_id: body.call_record_id,
-      content: body.content,
-      created_by: body.created_by,
+      call_record_id: validation.data.call_record_id,
+      content: validation.data.content,
+      created_by: validation.data.created_by,
     });
 
     if (!note) {
@@ -86,17 +94,20 @@ export async function POST(request: NextRequest) {
 
 // PATCH - Update a note
 export async function PATCH(request: NextRequest) {
+  const auth = await requireApiAuth();
+  if (!auth.authorized) return auth.response;
+
   try {
     const body = await request.json();
-
-    if (!body.id || !body.content) {
+    const validation = validateBody(UpdateNoteSchema, body);
+    if (!validation.success) {
       return NextResponse.json(
-        { status: "error", message: "id and content are required" },
+        { status: "error", message: validation.error },
         { status: 400 }
       );
     }
 
-    const note = await updateNote(body.id, body.content);
+    const note = await updateNote(validation.data.id, validation.data.content);
 
     if (!note) {
       return NextResponse.json(
@@ -120,6 +131,9 @@ export async function PATCH(request: NextRequest) {
 
 // DELETE - Delete a note
 export async function DELETE(request: NextRequest) {
+  const auth = await requireApiAuth();
+  if (!auth.authorized) return auth.response;
+
   try {
     const searchParams = request.nextUrl.searchParams;
     const noteId = searchParams.get("id");

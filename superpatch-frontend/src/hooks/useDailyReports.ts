@@ -12,6 +12,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 import type { CampaignAnalytics } from "@/lib/db/types";
+import { useRetryTimeouts } from "@/hooks/useRetryTimeout";
 
 interface UseDailyReportsOptions {
   startDate?: Date;
@@ -65,8 +66,14 @@ export function useDailyReports(
   const [isConnected, setIsConnected] = useState(false);
 
   const channelRef = useRef<ReturnType<NonNullable<typeof supabase>["channel"]> | null>(null);
+  const isMountedRef = useRef(true);
+  const isConnectedRef = useRef(false);
+  const fetchReportsRef = useRef<(() => void) | null>(null);
+  const scheduleRetry = useRetryTimeouts();
+  const startDateRef = useRef(startDate);
+  const endDateRef = useRef(endDate);
 
-  // Fetch reports
+  // Fetch reports with AbortError handling
   const fetchReports = useCallback(async () => {
     if (!isSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
@@ -84,16 +91,23 @@ export function useDailyReports(
         .order("date", { ascending: false })
         .limit(limit);
 
+      if (!isMountedRef.current) return;
+
       if (fetchError) {
+        // Ignore abort errors
+        if (fetchError.message?.includes('AbortError') || fetchError.message?.includes('aborted')) return;
         setError(fetchError.message);
       } else {
         setReports(data || []);
         setError(null);
       }
     } catch (err) {
+      // Ignore abort errors
+      if (err instanceof Error && (err.name === 'AbortError' || err.message?.includes('aborted'))) return;
+      if (!isMountedRef.current) return;
       setError(err instanceof Error ? err.message : "Failed to fetch");
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) setLoading(false);
     }
   }, [startDate, endDate, limit]);
 
@@ -197,16 +211,43 @@ export function useDailyReports(
 
       console.log(`📡 Campaign analytics ${eventType}:`, newRecord?.id || oldRecord?.id);
 
+      // Helper to check if a record's date is within the filter range
+      const isInDateRange = (recordDate: string): boolean => {
+        const recordDateObj = new Date(recordDate);
+        const start = startDateRef.current;
+        const end = endDateRef.current;
+        return recordDateObj >= start && recordDateObj <= end;
+      };
+
       if (eventType === "INSERT" && newRecord) {
-        setReports((prev) => [newRecord, ...prev]);
+        // Only add if within date range
+        if (isInDateRange(newRecord.date)) {
+          setReports((prev) => [newRecord, ...prev]);
+        }
       }
 
       if (eventType === "UPDATE" && newRecord) {
-        setReports((prev) =>
-          prev.map((report) =>
-            report.id === newRecord.id ? newRecord : report
-          )
-        );
+        setReports((prev) => {
+          const index = prev.findIndex((report) => report.id === newRecord.id);
+          const matchesDateRange = isInDateRange(newRecord.date);
+
+          if (index >= 0) {
+            if (matchesDateRange) {
+              // Update existing record
+              const updated = [...prev];
+              updated[index] = newRecord;
+              return updated;
+            } else {
+              // No longer in date range, remove it
+              return prev.filter((report) => report.id !== newRecord.id);
+            }
+          } else if (matchesDateRange) {
+            // Newly matches date range, add it
+            return [newRecord, ...prev];
+          }
+
+          return prev;
+        });
       }
 
       if (eventType === "DELETE" && oldRecord?.id) {
@@ -216,16 +257,32 @@ export function useDailyReports(
     []
   );
 
-  // Set up real-time subscription
+  // Keep refs in sync
   useEffect(() => {
+    fetchReportsRef.current = fetchReports;
+  }, [fetchReports]);
+
+  useEffect(() => {
+    isConnectedRef.current = isConnected;
+  }, [isConnected]);
+
+  useEffect(() => {
+    startDateRef.current = startDate;
+  }, [startDate]);
+
+  useEffect(() => {
+    endDateRef.current = endDate;
+  }, [endDate]);
+
+  // Set up real-time subscription - runs once on mount
+  useEffect(() => {
+    isMountedRef.current = true;
+    
     if (!isSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       setLoading(false);
       return;
     }
-
-    // Initial fetch
-    fetchReports();
 
     // Subscribe to real-time changes
     const channel = supabase
@@ -238,16 +295,32 @@ export function useDailyReports(
           table: "campaign_analytics",
         },
         (payload) => {
-          handleChange({
-            eventType: payload.eventType as "INSERT" | "UPDATE" | "DELETE",
-            new: payload.new as CampaignAnalytics | null,
-            old: payload.old as Partial<CampaignAnalytics> | null,
-          });
+          if (isMountedRef.current) {
+            handleChange({
+              eventType: payload.eventType as "INSERT" | "UPDATE" | "DELETE",
+              new: payload.new as CampaignAnalytics | null,
+              old: payload.old as Partial<CampaignAnalytics> | null,
+            });
+          }
         }
       )
       .subscribe((subStatus) => {
         console.log("[Realtime Analytics] Subscription status:", subStatus);
-        setIsConnected(subStatus === "SUBSCRIBED");
+        if (isMountedRef.current) {
+          const wasConnected = isConnectedRef.current;
+          setIsConnected(subStatus === "SUBSCRIBED");
+          isConnectedRef.current = subStatus === "SUBSCRIBED";
+          
+          // If we just connected, trigger a refetch
+          if (subStatus === "SUBSCRIBED" && !wasConnected) {
+            console.log("[Realtime Analytics] Connection established, triggering refetch");
+            scheduleRetry(() => {
+              if (isMountedRef.current && fetchReportsRef.current) {
+                fetchReportsRef.current();
+              }
+            }, 500);
+          }
+        }
       });
 
     channelRef.current = channel;
@@ -255,13 +328,18 @@ export function useDailyReports(
     // Cleanup
     return () => {
       console.log("[Realtime Analytics] Unsubscribing from channel");
+      isMountedRef.current = false;
       if (channelRef.current && supabase) {
         supabase.removeChannel(channelRef.current);
         channelRef.current = null;
       }
-      setIsConnected(false);
     };
-  }, [fetchReports, handleChange]);
+  }, [handleChange, scheduleRetry]);
+
+  // Fetch data when filters change - separate from subscription
+  useEffect(() => {
+    fetchReports();
+  }, [fetchReports]);
 
   return {
     reports,

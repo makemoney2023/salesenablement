@@ -100,7 +100,7 @@ function ActiveCallCard({
   isListening,
 }: {
   call: ActiveCall;
-  onListen: () => void;
+  onListen?: () => void;
   isListening: boolean;
 }) {
   const statusColors: Record<string, string> = {
@@ -137,7 +137,7 @@ function ActiveCallCard({
             <LiveDuration startTime={call.call_started_at} />
           </div>
           
-          {call.status === "in_progress" && (
+          {call.status === "in_progress" && onListen && (
             <Button
               size="sm"
               variant={isListening ? "destructive" : "outline"}
@@ -211,6 +211,7 @@ function AudioStreamModal({
 
       // Connect to WebSocket
       const ws = new WebSocket(websocketUrl);
+      wsRef.current = ws;
       ws.binaryType = "arraybuffer";
 
       ws.onopen = () => {
@@ -262,7 +263,6 @@ function AudioStreamModal({
         setIsConnected(false);
       };
 
-      wsRef.current = ws;
     } catch (err) {
       console.error("[AudioStream] Error:", err);
       setError(err instanceof Error ? err.message : "Failed to connect");
@@ -542,7 +542,6 @@ export function ActiveCallsMonitor({ className, collapsed = false }: ActiveCalls
                       <ActiveCallCard
                         key={call.id}
                         call={call}
-                        onListen={() => {}}
                         isListening={false}
                       />
                     ))}

@@ -5,6 +5,12 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 30000): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timeout));
+}
+
 const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY") || "";
 const FROM_EMAIL = Deno.env.get("FROM_EMAIL") || "samples@superpatch.com";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
@@ -172,7 +178,7 @@ async function sendEmail(
     throw new Error("RESEND_API_KEY not configured");
   }
 
-  const response = await fetch("https://api.resend.com/emails", {
+  const response = await fetchWithTimeout("https://api.resend.com/emails", {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${RESEND_API_KEY}`,
@@ -216,15 +222,33 @@ async function updateSampleRequest(
   }
 }
 
+// CORS and auth helpers
+const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "*";
+
+function corsHeaders() {
+  return {
+    "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  };
+}
+
+function verifyServiceAuth(req: Request): boolean {
+  const authHeader = req.headers.get("authorization") || "";
+  return authHeader === `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`;
+}
+
 serve(async (req) => {
   // Handle CORS preflight
   if (req.method === "OPTIONS") {
-    return new Response("ok", {
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "POST, OPTIONS",
-        "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-      },
+    return new Response("ok", { headers: corsHeaders() });
+  }
+
+  // Verify caller is authorized (service role key)
+  if (!verifyServiceAuth(req)) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
+      headers: { ...corsHeaders(), "Content-Type": "application/json" },
     });
   }
 

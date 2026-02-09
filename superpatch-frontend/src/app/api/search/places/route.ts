@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireApiAuth } from "@/lib/auth";
+import { PlacesSearchSchema, validateBody } from "@/lib/validation";
 
-const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || "";
+import { getEnvVar } from "@/lib/config/env";
+
+const GOOGLE_MAPS_API_KEY = getEnvVar("GOOGLE_MAPS_API_KEY");
 const PLACES_API_URL = "https://places.googleapis.com/v1/places:searchText";
 
 // Fields to request from the API
@@ -135,7 +139,7 @@ async function fetchPlacesPage(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-Goog-Api-Key": GOOGLE_MAPS_API_KEY,
+      "X-Goog-Api-Key": GOOGLE_MAPS_API_KEY!,
       "X-Goog-FieldMask": FIELD_MASK,
     },
     body: JSON.stringify(payload),
@@ -156,6 +160,9 @@ async function fetchPlacesPage(
 
 // POST /api/search/places - Search Google Maps Places API
 export async function POST(request: NextRequest) {
+  const auth = await requireApiAuth();
+  if (!auth.authorized) return auth.response;
+
   try {
     // Check for API key
     if (!GOOGLE_MAPS_API_KEY) {
@@ -168,19 +175,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body: PlacesSearchRequest = await request.json();
-    const { query, location, country, pageToken, limit = 20 } = body;
-
-    // Validate required fields
-    if (!query || !location) {
+    const body = await request.json();
+    const validation = validateBody(PlacesSearchSchema, body);
+    if (!validation.success) {
       return NextResponse.json(
         {
           places: [],
-          error: "Query and location are required",
+          error: validation.error,
         },
         { status: 400 }
       );
     }
+    const { query, location, country, limit = 20 } = validation.data;
+    const pageToken = body.pageToken;
 
     // Clamp limit between 1 and 100
     const maxResults = Math.min(Math.max(limit, 1), 100);
@@ -273,6 +280,9 @@ export async function POST(request: NextRequest) {
 
 // GET endpoint for testing/info
 export async function GET() {
+  const auth = await requireApiAuth();
+  if (!auth.authorized) return auth.response;
+
   return NextResponse.json({
     status: "ok",
     message: "Google Maps Places Search API",

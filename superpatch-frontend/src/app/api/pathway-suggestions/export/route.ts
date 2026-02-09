@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireApiAuth } from "@/lib/auth";
+import { PathwayExportSchema, validateBody } from "@/lib/validation";
 import { createClient } from "@supabase/supabase-js";
 import path from "path";
 import fs from "fs/promises";
@@ -109,16 +111,19 @@ function normalizePractitionerType(type: string): string {
 }
 
 export async function POST(request: NextRequest) {
+  const auth = await requireApiAuth();
+  if (!auth.authorized) return auth.response;
+
   try {
     const body = await request.json();
-    const { practitioner_type } = body;
-
-    if (!practitioner_type) {
+    const validation = validateBody(PathwayExportSchema, body);
+    if (!validation.success) {
       return NextResponse.json(
-        { error: "practitioner_type is required" },
+        { error: validation.error },
         { status: 400 }
       );
     }
+    const { practitioner_type } = validation.data;
 
     // Initialize Supabase client
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -312,6 +317,9 @@ export async function POST(request: NextRequest) {
 
 // GET endpoint to check available practitioner types
 export async function GET() {
+  const auth = await requireApiAuth();
+  if (!auth.authorized) return auth.response;
+
   return NextResponse.json({
     available_types: Object.keys(practitionerTypeToFile),
     description: "POST with { practitioner_type: 'Chiropractors' } to export updated pathway JSON",

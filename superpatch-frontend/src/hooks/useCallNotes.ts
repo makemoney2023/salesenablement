@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type { CallNote } from "@/lib/db/types";
 
 interface UseCallNotesOptions {
@@ -24,6 +24,8 @@ export function useCallNotes(options: UseCallNotesOptions = {}): UseCallNotesRet
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const abortControllerRef = useRef<AbortController | null>(null);
+
   // Fetch notes
   const fetchNotes = useCallback(async () => {
     if (!callRecordId) {
@@ -31,9 +33,16 @@ export function useCallNotes(options: UseCallNotesOptions = {}): UseCallNotesRet
       return;
     }
     
+    // Abort any in-flight request
+    abortControllerRef.current?.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    
     setLoading(true);
     try {
-      const response = await fetch(`/api/campaign/notes?call_record_id=${callRecordId}`);
+      const response = await fetch(`/api/campaign/notes?call_record_id=${callRecordId}`, {
+        signal: controller.signal,
+      });
       if (!response.ok) {
         throw new Error("Failed to fetch notes");
       }
@@ -41,6 +50,7 @@ export function useCallNotes(options: UseCallNotesOptions = {}): UseCallNotesRet
       setNotes(data.notes || []);
       setError(null);
     } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
       console.error("Error fetching notes:", err);
       setError(String(err));
       setNotes([]);
@@ -78,6 +88,7 @@ export function useCallNotes(options: UseCallNotesOptions = {}): UseCallNotesRet
       return data.note;
     } catch (err) {
       console.error("Error adding note:", err);
+      setError(err instanceof Error ? err.message : "Failed to add note");
       return null;
     }
   }, [callRecordId]);
@@ -106,6 +117,7 @@ export function useCallNotes(options: UseCallNotesOptions = {}): UseCallNotesRet
       return data.note;
     } catch (err) {
       console.error("Error updating note:", err);
+      setError(err instanceof Error ? err.message : "Failed to update note");
       return null;
     }
   }, []);
@@ -127,6 +139,7 @@ export function useCallNotes(options: UseCallNotesOptions = {}): UseCallNotesRet
       return true;
     } catch (err) {
       console.error("Error deleting note:", err);
+      setError(err instanceof Error ? err.message : "Failed to delete note");
       return false;
     }
   }, []);
@@ -134,6 +147,9 @@ export function useCallNotes(options: UseCallNotesOptions = {}): UseCallNotesRet
   // Fetch on mount or when callRecordId changes
   useEffect(() => {
     fetchNotes();
+    return () => {
+      abortControllerRef.current?.abort();
+    };
   }, [fetchNotes]);
 
   return {

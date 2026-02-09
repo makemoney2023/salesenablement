@@ -6,6 +6,12 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
+function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 30000): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timeout));
+}
+
 // Environment variables
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
@@ -111,7 +117,7 @@ const RETRY_POLICY: RetryPolicy = {
   voicemailAction: "retry",
   failedAction: "retry_next_business_day",
   businessHoursOnly: true,
-  businessHours: { start: 9, end: 17, timezone: "America/Toronto" },
+  businessHours: { start: 9, end: 17, timezone: Deno.env.get("BUSINESS_TIMEZONE") || "America/Toronto" },
 };
 
 // DNC phrases to detect
@@ -123,7 +129,13 @@ const DNC_PHRASES = [
 
 // Helper functions
 function normalizePhone(phone: string): string {
-  return phone.replace(/\D/g, "").slice(-10);
+  const digits = phone.replace(/\D/g, "");
+  // Handle North American numbers with country code
+  if (digits.length === 11 && digits.startsWith("1")) return digits.slice(1);
+  // Standard 10-digit number
+  if (digits.length === 10) return digits;
+  // Fallback for other formats
+  return digits.slice(-10);
 }
 
 function getPractitionerEmail(
@@ -288,27 +300,34 @@ function calculateNextRetryTime(
   
   if (!businessHoursOnly) return nextRetry;
   
-  const getBusinessHour = (date: Date): number => {
-    const utcHour = date.getUTCHours();
-    return (utcHour - 5 + 24) % 24;
+  // Use Intl.DateTimeFormat for timezone-aware calculations (handles DST correctly)
+  const getLocalHour = (date: Date, timezone: string): number => {
+    const formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      hour: "numeric",
+      hour12: false,
+    });
+    return parseInt(formatter.format(date), 10);
+  };
+
+  const getLocalDay = (date: Date, timezone: string): number => {
+    const formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      weekday: "short",
+    });
+    const dayMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+    return dayMap[formatter.format(date)] ?? date.getDay();
   };
   
-  const getBusinessDay = (date: Date): number => {
-    const utcDay = date.getUTCDay();
-    const utcHour = date.getUTCHours();
-    if (utcHour < 5) return (utcDay - 1 + 7) % 7;
-    return utcDay;
-  };
-  
-  const isBusinessHours = (date: Date): boolean => {
-    const hour = getBusinessHour(date);
-    const day = getBusinessDay(date);
-    if (day === 0 || day === 6) return false;
+  const isBusinessHoursCheck = (date: Date): boolean => {
+    const hour = getLocalHour(date, businessHours.timezone);
+    const day = getLocalDay(date, businessHours.timezone);
+    if (day === 0 || day === 6) return false; // Weekend
     return hour >= businessHours.start && hour < businessHours.end;
   };
   
   let maxIterations = 7 * 24;
-  while (!isBusinessHours(nextRetry) && maxIterations > 0) {
+  while (!isBusinessHoursCheck(nextRetry) && maxIterations > 0) {
     nextRetry = new Date(nextRetry.getTime() + 60 * 60 * 1000);
     maxIterations--;
   }
@@ -576,7 +595,7 @@ async function parseNaturalLanguageDate(
     const now = referenceDate || new Date();
     const currentDate = now.toISOString().split('T')[0];
     const currentDay = now.toLocaleDateString('en-US', { weekday: 'long' });
-    const timezone = "America/Toronto"; // EST/EDT
+    const timezone = Deno.env.get("BUSINESS_TIMEZONE") || "America/Toronto"; // EST/EDT
 
     const prompt = `Convert this natural language date/time to an ISO 8601 timestamp.
 
@@ -766,17 +785,25 @@ async function verifyWebhookSignature(
   }
 }
 
+// CORS helper
+const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "*";
+if (ALLOWED_ORIGIN === "*") {
+  console.warn("⚠️ ALLOWED_ORIGIN not set - using wildcard CORS. Set ALLOWED_ORIGIN in production!");
+}
+
+function corsHeaders() {
+  return {
+    "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
+    "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-webhook-signature",
+  };
+}
+
 // Main webhook handler
 serve(async (req) => {
   // Handle CORS
   if (req.method === "OPTIONS") {
-    return new Response("ok", {
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
-        "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-      },
-    });
+    return new Response("ok", { headers: corsHeaders() });
   }
 
   // GET endpoint for testing
@@ -818,10 +845,7 @@ serve(async (req) => {
       body_length: rawBody.length,
     });
 
-    // Signature verification disabled - Bland webhooks don't include signatures by default
-    // If you want to enable this later, configure BLAND_WEBHOOK_SECRET in both Bland and Supabase
-    // and uncomment the verification block below:
-    /*
+    // Webhook signature verification
     if (BLAND_WEBHOOK_SECRET) {
       const isValid = await verifyWebhookSignature(BLAND_WEBHOOK_SECRET, rawBody, signature);
       if (!isValid) {
@@ -839,10 +863,8 @@ serve(async (req) => {
       }
       console.log("✅ Webhook signature verified successfully");
     } else {
-      console.warn("⚠️ BLAND_WEBHOOK_SECRET not configured - skipping signature verification");
+      console.warn("⚠️ BLAND_WEBHOOK_SECRET not configured - skipping signature verification. Set this secret in production!");
     }
-    */
-    console.log("ℹ️ Signature verification disabled - processing webhook directly");
 
     // Parse the body after verification
     const payload: BlandWebhookPayload = JSON.parse(rawBody);
@@ -893,8 +915,10 @@ serve(async (req) => {
       }
     }
 
-    // Extract variables
-    const wantsDemo = vars.wants_demo === "true" || vars.schedule_demo === "true";
+    // Extract variables — handle both string "true" and boolean true from Bland pathways
+    const wantsDemo = String(vars.wants_demo).toLowerCase() === "true" || 
+                      String(vars.schedule_demo).toLowerCase() === "true" ||
+                      vars.wants_demo === true || vars.schedule_demo === true;
     const appointmentTime = vars.appointment_time || vars.preferred_time || vars.start_time;
     const practitionerName = vars.practitioner_name || vars.name || vars.contact_name || meta.practice_name || meta.contact_name;
     const practitionerEmail = vars.email || vars.practitioner_email;
@@ -1087,7 +1111,9 @@ serve(async (req) => {
     // Trigger LLM analysis (fire and forget - don't await to avoid webhook timeout)
     if (savedRecord?.id && payload.concatenated_transcript && payload.concatenated_transcript.length > 50) {
       console.log("🔬 Triggering LLM analysis...");
-      fetch(`${SUPABASE_URL}/functions/v1/analyze-call`, {
+      // Mark analysis as processing before triggering
+      await supabase.from("call_records").update({ analysis_status: "processing" }).eq("id", savedRecord.id);
+      fetchWithTimeout(`${SUPABASE_URL}/functions/v1/analyze-call`, {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
@@ -1100,8 +1126,10 @@ serve(async (req) => {
           practitioner_type: resolvedPractitionerType,
           current_lead_score: leadScore,
         }),
-      }).catch((err) => {
+      }).catch(async (err) => {
         console.error("Failed to trigger LLM analysis:", err);
+        // Mark analysis as failed so the UI can show the error
+        await supabase.from("call_records").update({ analysis_status: "failed" }).eq("id", savedRecord!.id);
       });
     }
 
@@ -1153,7 +1181,7 @@ serve(async (req) => {
         // Trigger sample confirmation email
         if (resolvedEmail) {
           try {
-            await fetch(`${SUPABASE_URL}/functions/v1/send-sample-confirmation`, {
+            await fetchWithTimeout(`${SUPABASE_URL}/functions/v1/send-sample-confirmation`, {
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
@@ -1174,6 +1202,12 @@ serve(async (req) => {
             console.log("📧 Sample confirmation email triggered");
           } catch (emailError) {
             console.error("Failed to trigger sample confirmation:", emailError);
+            // Mark confirmation as failed so it can be retried manually
+            if (sampleData?.id) {
+              await supabase.from("sample_requests").update({
+                notes: `Email confirmation failed: ${emailError instanceof Error ? emailError.message : "Unknown error"}`,
+              }).eq("id", sampleData.id);
+            }
           }
         }
       }
@@ -1197,7 +1231,16 @@ serve(async (req) => {
 
     if (resolvedPractitionerId && !dncResult.detected) {
       if (callStatus === "voicemail" || callStatus === "failed") {
-        const currentRetryCount = await getPractitionerRetryCount(supabase, resolvedPractitionerId);
+        // Use atomic increment to avoid race conditions with concurrent webhooks
+        let currentRetryCount: number;
+        try {
+          const { data: rpcResult } = await supabase.rpc("increment_retry_count", { p_id: resolvedPractitionerId });
+          // rpcResult is the NEW count after increment, so subtract 1 for the "current" value
+          currentRetryCount = (rpcResult as number ?? 1) - 1;
+        } catch {
+          // Fallback to non-atomic read if RPC not available
+          currentRetryCount = await getPractitionerRetryCount(supabase, resolvedPractitionerId);
+        }
         retryInfo = await scheduleRetry(supabase, resolvedPractitionerId, callStatus, currentRetryCount);
         retryScheduled = retryInfo.scheduled;
         console.log("🔄 Retry scheduling result:", retryInfo);
@@ -1209,32 +1252,47 @@ serve(async (req) => {
     // Trigger appointment booking if needed (decoupled via edge function)
     // This will create both Cal.com booking AND appointment record in our table
     if (wantsDemo && parsedAppointmentTime && resolvedPractitionerName && resolvedEmail && payload.completed && savedRecord?.id) {
-      console.log("🗓️ Triggering appointment booking with parsed time:", parsedAppointmentTime);
-      try {
-        await fetch(`${SUPABASE_URL}/functions/v1/book-appointment`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-          },
-          body: JSON.stringify({
-            call_record_id: savedRecord.id,
-            practitioner_id: resolvedPractitionerId,  // Pass practitioner ID for appointments table
-            practitioner_name: resolvedPractitionerName,
-            practitioner_email: resolvedEmail,
-            appointment_time: parsedAppointmentTime,  // Use LLM-parsed ISO date
-            phone: practitionerPhone,
-            address: resolvedAddress,
-            practitioner_type: resolvedPractitionerType,
-            summary: payload.analysis?.summary,
-            practice_name: practiceName,
-            products: productsInterested,
-            appointment_type: "demo",  // Default type for demo bookings from calls
-          }),
-        });
-        console.log("📅 Appointment booking triggered (will create Cal.com booking + appointment record)");
-      } catch (bookingError) {
-        console.error("Failed to trigger booking:", bookingError);
+      // Check for existing appointment to prevent duplicates
+      const { data: existingAppt } = await supabase
+        .from("appointments")
+        .select("id")
+        .eq("call_record_id", savedRecord.id)
+        .limit(1);
+      
+      if (existingAppt && existingAppt.length > 0) {
+        console.log("⚠️ Appointment already exists for this call record, skipping duplicate booking");
+      } else {
+        console.log("🗓️ Triggering appointment booking with parsed time:", parsedAppointmentTime);
+        try {
+          await fetchWithTimeout(`${SUPABASE_URL}/functions/v1/book-appointment`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            },
+            body: JSON.stringify({
+              call_record_id: savedRecord.id,
+              practitioner_id: resolvedPractitionerId,
+              practitioner_name: resolvedPractitionerName,
+              practitioner_email: resolvedEmail,
+              appointment_time: parsedAppointmentTime,
+              phone: practitionerPhone,
+              address: resolvedAddress,
+              practitioner_type: resolvedPractitionerType,
+              summary: payload.analysis?.summary,
+              practice_name: practiceName,
+              products: productsInterested,
+              appointment_type: "demo",
+            }),
+          });
+          console.log("📅 Appointment booking triggered (will create Cal.com booking + appointment record)");
+        } catch (bookingError) {
+          console.error("Failed to trigger booking:", bookingError);
+          // Update call record so the failure is visible in the UI
+          await supabase.from("call_records").update({
+            notes: `Auto-booking failed: ${bookingError instanceof Error ? bookingError.message : "Unknown error"}. Manual booking needed.`,
+          }).eq("id", savedRecord.id);
+        }
       }
     } else if (wantsDemo && appointmentTime && !parsedAppointmentTime) {
       console.warn(`⚠️ Could not parse appointment time "${appointmentTime}" - booking skipped. Manual follow-up needed.`);

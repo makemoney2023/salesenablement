@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireApiAuth } from "@/lib/auth";
+import { MemoryActionSchema, validateBody } from "@/lib/validation";
 import { supabaseAdmin, isSupabaseConfigured } from "@/lib/supabase";
 
-const API_KEY = process.env.BLAND_API_KEY || "";
+import { getEnvVar } from "@/lib/config/env";
+
+const API_KEY = getEnvVar("BLAND_API_KEY");
 const BASE_URL = "https://api.bland.ai/v1";
 const MEMORY_STORE_NAME = "SuperPatch Sales Campaign";
 
@@ -27,6 +31,13 @@ interface BlandMemoryStore {
 
 // GET /api/memory - List memories or get memory details
 export async function GET(request: NextRequest) {
+  const auth = await requireApiAuth();
+  if (!auth.authorized) return auth.response;
+
+  if (!API_KEY) {
+    return NextResponse.json({ status: "error", message: "BLAND_API_KEY not configured" }, { status: 503 });
+  }
+
   const searchParams = request.nextUrl.searchParams;
   const action = searchParams.get("action");
   const memoryId = searchParams.get("memory_id") || cachedMemoryId;
@@ -90,9 +101,23 @@ export async function GET(request: NextRequest) {
 
 // POST /api/memory - Create memory store or sync to Supabase
 export async function POST(request: NextRequest) {
+  const auth = await requireApiAuth();
+  if (!auth.authorized) return auth.response;
+
+  if (!API_KEY) {
+    return NextResponse.json({ status: "error", message: "BLAND_API_KEY not configured" }, { status: 503 });
+  }
+
   try {
     const body = await request.json();
-    const { action } = body;
+    const validation = validateBody(MemoryActionSchema, body);
+    if (!validation.success) {
+      return NextResponse.json(
+        { status: "error", message: validation.error },
+        { status: 400 }
+      );
+    }
+    const { action } = validation.data;
 
     // Create a new Memory Store
     if (action === "create") {

@@ -226,15 +226,33 @@ async function saveReport(
   }
 }
 
+// CORS and auth helpers
+const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "*";
+
+function corsHeaders() {
+  return {
+    "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
+    "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  };
+}
+
+function verifyServiceAuth(req: Request): boolean {
+  const authHeader = req.headers.get("authorization") || "";
+  return authHeader === `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`;
+}
+
 serve(async (req) => {
   // Handle CORS preflight
   if (req.method === "OPTIONS") {
-    return new Response("ok", {
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
-        "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-      },
+    return new Response("ok", { headers: corsHeaders() });
+  }
+
+  // Verify caller is authorized (service role key)
+  if (!verifyServiceAuth(req)) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
+      headers: { ...corsHeaders(), "Content-Type": "application/json" },
     });
   }
 

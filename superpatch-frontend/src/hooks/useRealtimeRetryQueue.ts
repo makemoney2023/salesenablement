@@ -11,6 +11,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import { useRetryTimeouts } from "@/hooks/useRetryTimeout";
 
 interface RetryQueueItem {
   id: string;
@@ -82,6 +83,11 @@ export function useRealtimeRetryQueue(
   const channelRef = useRef<ReturnType<NonNullable<typeof supabase>["channel"]> | null>(null);
   const callbacksRef = useRef({ onRetryScheduled, onRetryProcessed });
   const isMountedRef = useRef(true);
+  const isConnectedRef = useRef(false);
+  const fetchQueueRef = useRef<(() => void) | null>(null);
+  const retryCountRef = useRef(0);
+  const maxRetries = 3;
+  const scheduleRetry = useRetryTimeouts();
   
   // Store options in ref for realtime handler
   const optionsRef = useRef({ hoursAhead, limit });
@@ -92,12 +98,79 @@ export function useRealtimeRetryQueue(
     callbacksRef.current = { onRetryScheduled, onRetryProcessed };
   }, [onRetryScheduled, onRetryProcessed]);
 
-  // Fetch retry queue from database
-  const fetchQueue = useCallback(async () => {
+  // Direct API fallback
+  const fetchWithDirectAPI = useCallback(async () => {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    
+    if (!supabaseUrl || !supabaseKey) {
+      throw new Error('Supabase not configured');
+    }
+
+    const now = new Date();
+    const futureLimit = new Date(now.getTime() + hoursAhead * 60 * 60 * 1000);
+
+    const params = new URLSearchParams();
+    params.append('select', 'id,name,phone,practitioner_type,next_retry_at,retry_count,retry_reason,last_call_status,city,province');
+    params.append('next_retry_at', `not.is.null`);
+    params.append('next_retry_at', `lte.${futureLimit.toISOString()}`);
+    params.append('do_not_call', 'eq.false');
+    params.append('order', 'next_retry_at.asc');
+    params.append('limit', limit.toString());
+
+    const response = await fetch(`${supabaseUrl}/rest/v1/practitioners?${params.toString()}`, {
+      method: 'GET',
+      headers: {
+        'apikey': supabaseKey,
+        'Authorization': `Bearer ${supabaseKey}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    return await response.json();
+  }, [hoursAhead, limit]);
+
+  // Calculate stats helper
+  const calculateStats = useCallback((data: RetryQueueItem[]) => {
+    const now = new Date();
+    const nowTime = now.getTime();
+    const oneHourLater = nowTime + 60 * 60 * 1000;
+    const twentyFourHoursLater = nowTime + 24 * 60 * 60 * 1000;
+
+    let dueNow = 0;
+    let nextHour = 0;
+    let next24Hours = 0;
+
+    data.forEach((item: RetryQueueItem) => {
+      if (item.next_retry_at) {
+        const retryTime = new Date(item.next_retry_at).getTime();
+        if (retryTime <= nowTime) {
+          dueNow++;
+        } else if (retryTime <= oneHourLater) {
+          nextHour++;
+        } else if (retryTime <= twentyFourHoursLater) {
+          next24Hours++;
+        }
+      }
+    });
+
+    return { dueNow, nextHour, next24Hours, total: data.length };
+  }, []);
+
+  // Fetch retry queue from database with retry logic
+  const fetchQueue = useCallback(async (isRetry = false) => {
     if (!isSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       setLoading(false);
       return;
+    }
+
+    if (!isRetry) {
+      retryCountRef.current = 0;
     }
 
     try {
@@ -113,55 +186,71 @@ export function useRealtimeRetryQueue(
         .order("next_retry_at", { ascending: true })
         .limit(limit);
 
+      const queueData = data as RetryQueueItem[] | null;
+
       // Check if still mounted before updating state
       if (!isMountedRef.current) return;
       
       if (fetchError) {
-        // Ignore abort errors - they happen during normal cleanup
-        if (fetchError.message?.includes('AbortError') || fetchError.message?.includes('aborted')) return;
-        setError(fetchError.message);
-      } else {
-        setQueue((data as RetryQueueItem[]) || []);
-        setError(null);
-
-        // Calculate stats
-        const nowTime = now.getTime();
-        const oneHourLater = nowTime + 60 * 60 * 1000;
-        const twentyFourHoursLater = nowTime + 24 * 60 * 60 * 1000;
-
-        let dueNow = 0;
-        let nextHour = 0;
-        let next24Hours = 0;
-
-        (data || []).forEach((item: RetryQueueItem) => {
-          if (item.next_retry_at) {
-            const retryTime = new Date(item.next_retry_at).getTime();
-            if (retryTime <= nowTime) {
-              dueNow++;
-            } else if (retryTime <= oneHourLater) {
-              nextHour++;
-            } else if (retryTime <= twentyFourHoursLater) {
-              next24Hours++;
+        const isAbortError = fetchError.message?.includes('AbortError') || fetchError.message?.includes('aborted');
+        
+        if (isAbortError) {
+          if (queueData && queueData.length > 0) {
+            setQueue(queueData);
+            setStats(calculateStats(queueData));
+            setError(null);
+          } else if (retryCountRef.current < maxRetries) {
+            retryCountRef.current++;
+            console.log(`[Realtime RetryQueue] Retry (attempt ${retryCountRef.current}/${maxRetries})...`);
+            scheduleRetry(() => {
+              if (isMountedRef.current) {
+                fetchQueue(true);
+              }
+            }, 1000);
+          } else {
+            // Fall back to direct API
+            console.log('[Realtime RetryQueue] Using direct API fallback...');
+            try {
+              const fallbackData = await fetchWithDirectAPI();
+              if (isMountedRef.current && fallbackData) {
+                setQueue(fallbackData as RetryQueueItem[]);
+                setStats(calculateStats(fallbackData as RetryQueueItem[]));
+                setError(null);
+              }
+            } catch (fallbackErr) {
+              console.error('[Realtime RetryQueue] Direct fetch failed:', fallbackErr);
             }
           }
-        });
-
-        setStats({
-          dueNow,
-          nextHour,
-          next24Hours,
-          total: (data || []).length,
-        });
+          return;
+        }
+        
+        setError(fetchError.message);
+      } else {
+        setQueue(queueData || []);
+        setStats(calculateStats(queueData || []));
+        setError(null);
       }
     } catch (err) {
-      // Ignore abort errors
-      if (err instanceof Error && (err.name === 'AbortError' || err.message?.includes('aborted'))) return;
+      const isAbortError = err instanceof Error && (err.name === 'AbortError' || err.message?.includes('aborted'));
+      
+      if (isAbortError) {
+        if (retryCountRef.current < maxRetries && isMountedRef.current) {
+          retryCountRef.current++;
+          scheduleRetry(() => {
+            if (isMountedRef.current) {
+              fetchQueue(true);
+            }
+          }, 1000);
+        }
+        return;
+      }
+      
       if (!isMountedRef.current) return;
       setError(err instanceof Error ? err.message : "Failed to fetch");
     } finally {
       if (isMountedRef.current) setLoading(false);
     }
-  }, [hoursAhead, limit]);
+  }, [hoursAhead, limit, fetchWithDirectAPI, calculateStats, scheduleRetry]);
 
   // Handle real-time changes - uses refs to avoid recreating callback
   const handleChange = useCallback(
@@ -245,6 +334,15 @@ export function useRealtimeRetryQueue(
     []
   );
 
+  // Keep refs in sync
+  useEffect(() => {
+    fetchQueueRef.current = fetchQueue;
+  }, [fetchQueue]);
+
+  useEffect(() => {
+    isConnectedRef.current = isConnected;
+  }, [isConnected]);
+
   // Set up real-time subscription - runs once on mount
   useEffect(() => {
     isMountedRef.current = true;
@@ -266,17 +364,31 @@ export function useRealtimeRetryQueue(
           table: "practitioners",
         },
         (payload) => {
-          handleChange({
-            eventType: "UPDATE",
-            new: payload.new as RetryQueueItem | null,
-            old: payload.old as Partial<RetryQueueItem> | null,
-          });
+          if (isMountedRef.current) {
+            handleChange({
+              eventType: "UPDATE",
+              new: payload.new as RetryQueueItem | null,
+              old: payload.old as Partial<RetryQueueItem> | null,
+            });
+          }
         }
       )
-      .subscribe((status) => {
-        console.log("[Realtime RetryQueue] Subscription status:", status);
+      .subscribe((subStatus) => {
+        console.log("[Realtime RetryQueue] Subscription status:", subStatus);
         if (isMountedRef.current) {
-          setIsConnected(status === "SUBSCRIBED");
+          const wasConnected = isConnectedRef.current;
+          setIsConnected(subStatus === "SUBSCRIBED");
+          isConnectedRef.current = subStatus === "SUBSCRIBED";
+          
+          // If we just connected, trigger a refetch
+          if (subStatus === "SUBSCRIBED" && !wasConnected) {
+            console.log("[Realtime RetryQueue] Connection established, triggering refetch");
+            scheduleRetry(() => {
+              if (isMountedRef.current && fetchQueueRef.current) {
+                fetchQueueRef.current();
+              }
+            }, 500);
+          }
         }
       });
 
@@ -284,8 +396,8 @@ export function useRealtimeRetryQueue(
 
     // Also set up an interval to refresh stats (for time-based calculations)
     const refreshInterval = setInterval(() => {
-      if (isMountedRef.current) {
-        fetchQueue();
+      if (isMountedRef.current && fetchQueueRef.current) {
+        fetchQueueRef.current();
       }
     }, 60000); // Refresh every minute to update time-based stats
 
@@ -299,7 +411,7 @@ export function useRealtimeRetryQueue(
       }
       clearInterval(refreshInterval);
     };
-  }, [handleChange, fetchQueue]);
+  }, [handleChange, scheduleRetry]);
 
   // Fetch data when options change - separate from subscription
   useEffect(() => {

@@ -13,6 +13,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { usePathname } from "next/navigation";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import { useRetryTimeouts } from "@/hooks/useRetryTimeout";
 
 interface BadgeCounts {
   samples: number;
@@ -50,40 +51,110 @@ export function useSidebarBadges(): UseSidebarBadgesResult {
   const [loading, setLoading] = useState(true);
   const channelRef = useRef<ReturnType<NonNullable<typeof supabase>["channel"]> | null>(null);
   const isMountedRef = useRef(true);
+  const isConnectedRef = useRef(false);
+  const fetchCountsRef = useRef<(() => void) | null>(null);
+  const retryCountRef = useRef(0);
+  const maxRetries = 3;
+  const scheduleRetry = useRetryTimeouts();
 
   // Update last visit time when user navigates to a badge page
   useEffect(() => {
     const now = new Date().toISOString();
     
-    if (pathname === BADGE_ROUTES.samples) {
-      localStorage.setItem(LAST_VISIT_KEYS.samples, now);
-      setCounts((prev) => ({ ...prev, samples: 0 }));
-    } else if (pathname === BADGE_ROUTES.appointments) {
-      localStorage.setItem(LAST_VISIT_KEYS.appointments, now);
-      setCounts((prev) => ({ ...prev, appointments: 0 }));
-    } else if (pathname === BADGE_ROUTES.pathwayInsights) {
-      localStorage.setItem(LAST_VISIT_KEYS.pathwayInsights, now);
-      setCounts((prev) => ({ ...prev, pathwayInsights: 0 }));
+    try {
+      if (pathname === BADGE_ROUTES.samples) {
+        localStorage.setItem(LAST_VISIT_KEYS.samples, now);
+        setCounts((prev) => ({ ...prev, samples: 0 }));
+      } else if (pathname === BADGE_ROUTES.appointments) {
+        localStorage.setItem(LAST_VISIT_KEYS.appointments, now);
+        setCounts((prev) => ({ ...prev, appointments: 0 }));
+      } else if (pathname === BADGE_ROUTES.pathwayInsights) {
+        localStorage.setItem(LAST_VISIT_KEYS.pathwayInsights, now);
+        setCounts((prev) => ({ ...prev, pathwayInsights: 0 }));
+      }
+    } catch {
+      // localStorage may be unavailable in SSR or private browsing
     }
   }, [pathname]);
 
-  // Fetch badge counts
-  const fetchCounts = useCallback(async () => {
+  // Direct API fallback for counts
+  const fetchCountsWithDirectAPI = useCallback(async () => {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    
+    if (!supabaseUrl || !supabaseKey) return null;
+
+    try {
+      const [samplesResp, appointmentsResp, pathwayResp] = await Promise.all([
+        fetch(`${supabaseUrl}/rest/v1/sample_requests?select=id&status=eq.pending`, {
+          method: 'HEAD',
+          headers: {
+            'apikey': supabaseKey,
+            'Authorization': `Bearer ${supabaseKey}`,
+            'Prefer': 'count=exact',
+          },
+        }),
+        fetch(`${supabaseUrl}/rest/v1/appointments?select=id&status=in.(scheduled,confirmed)&scheduled_at=gte.${new Date().toISOString()}`, {
+          method: 'HEAD',
+          headers: {
+            'apikey': supabaseKey,
+            'Authorization': `Bearer ${supabaseKey}`,
+            'Prefer': 'count=exact',
+          },
+        }),
+        fetch(`${supabaseUrl}/rest/v1/pathway_suggestions?select=id&status=eq.new`, {
+          method: 'HEAD',
+          headers: {
+            'apikey': supabaseKey,
+            'Authorization': `Bearer ${supabaseKey}`,
+            'Prefer': 'count=exact',
+          },
+        }),
+      ]);
+
+      // Extract counts from content-range header
+      const parseCount = (resp: Response): number => {
+        const range = resp.headers.get('content-range');
+        if (range) {
+          const match = range.match(/\/(\d+)/);
+          return match ? parseInt(match[1], 10) : 0;
+        }
+        return 0;
+      };
+
+      return {
+        samples: parseCount(samplesResp),
+        appointments: parseCount(appointmentsResp),
+        pathwayInsights: parseCount(pathwayResp),
+      };
+    } catch {
+      return null;
+    }
+  }, []);
+
+  // Fetch badge counts with retry logic
+  const fetchCounts = useCallback(async (isRetry = false) => {
     if (!isSupabaseConfigured || !supabase) {
       if (isMountedRef.current) setLoading(false);
       return;
+    }
+
+    if (!isRetry) {
+      retryCountRef.current = 0;
     }
 
     try {
       // Fetch counts in parallel
       const [samplesResult, appointmentsResult, pathwayResult] = await Promise.all([
         // Pending sample requests
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (supabase as any)
           .from("sample_requests")
           .select("id", { count: "exact", head: true })
           .eq("status", "pending"),
 
         // Upcoming appointments (scheduled or confirmed, in the future)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (supabase as any)
           .from("appointments")
           .select("id", { count: "exact", head: true })
@@ -91,6 +162,7 @@ export function useSidebarBadges(): UseSidebarBadgesResult {
           .gte("scheduled_at", new Date().toISOString()),
 
         // New pathway suggestions
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (supabase as any)
           .from("pathway_suggestions")
           .select("id", { count: "exact", head: true })
@@ -104,7 +176,26 @@ export function useSidebarBadges(): UseSidebarBadgesResult {
       const hasAbortError = [samplesResult, appointmentsResult, pathwayResult].some(
         (result) => result.error?.message?.includes('AbortError') || result.error?.message?.includes('aborted')
       );
-      if (hasAbortError) return;
+      
+      if (hasAbortError) {
+        if (retryCountRef.current < maxRetries) {
+          retryCountRef.current++;
+          console.log(`[Sidebar Badges] Retry (attempt ${retryCountRef.current}/${maxRetries})...`);
+          scheduleRetry(() => {
+            if (isMountedRef.current) {
+              fetchCounts(true);
+            }
+          }, 1000);
+        } else {
+          // Fall back to direct API
+          console.log('[Sidebar Badges] Using direct API fallback...');
+          const fallbackCounts = await fetchCountsWithDirectAPI();
+          if (isMountedRef.current && fallbackCounts) {
+            setCounts(fallbackCounts);
+          }
+        }
+        return;
+      }
 
       // Log any non-abort errors but still update with available counts
       if (samplesResult.error) console.error("Error fetching samples count:", samplesResult.error);
@@ -117,14 +208,31 @@ export function useSidebarBadges(): UseSidebarBadgesResult {
         pathwayInsights: pathwayResult.count || 0,
       });
     } catch (err) {
-      // Ignore abort errors
-      if (err instanceof Error && (err.name === 'AbortError' || err.message?.includes('aborted'))) return;
+      const isAbortError = err instanceof Error && (err.name === 'AbortError' || err.message?.includes('aborted'));
+      
+      if (isAbortError) {
+        if (retryCountRef.current < maxRetries && isMountedRef.current) {
+          retryCountRef.current++;
+          scheduleRetry(() => {
+            if (isMountedRef.current) {
+              fetchCounts(true);
+            }
+          }, 1000);
+        }
+        return;
+      }
+      
       if (!isMountedRef.current) return;
       console.error("Error fetching sidebar badge counts:", err);
     } finally {
       if (isMountedRef.current) setLoading(false);
     }
-  }, []);
+  }, [fetchCountsWithDirectAPI, scheduleRetry]);
+
+  // Keep refs in sync
+  useEffect(() => {
+    fetchCountsRef.current = fetchCounts;
+  }, [fetchCounts]);
 
   // Set up real-time subscriptions - runs once on mount
   useEffect(() => {
@@ -142,9 +250,9 @@ export function useSidebarBadges(): UseSidebarBadgesResult {
         "postgres_changes",
         { event: "*", schema: "public", table: "sample_requests" },
         () => {
-          if (isMountedRef.current) {
+          if (isMountedRef.current && fetchCountsRef.current) {
             console.log("📡 Sample requests changed, refreshing badge");
-            fetchCounts();
+            fetchCountsRef.current();
           }
         }
       )
@@ -152,9 +260,9 @@ export function useSidebarBadges(): UseSidebarBadgesResult {
         "postgres_changes",
         { event: "*", schema: "public", table: "appointments" },
         () => {
-          if (isMountedRef.current) {
+          if (isMountedRef.current && fetchCountsRef.current) {
             console.log("📡 Appointments changed, refreshing badge");
-            fetchCounts();
+            fetchCountsRef.current();
           }
         }
       )
@@ -162,14 +270,28 @@ export function useSidebarBadges(): UseSidebarBadgesResult {
         "postgres_changes",
         { event: "*", schema: "public", table: "pathway_suggestions" },
         () => {
-          if (isMountedRef.current) {
+          if (isMountedRef.current && fetchCountsRef.current) {
             console.log("📡 Pathway suggestions changed, refreshing badge");
-            fetchCounts();
+            fetchCountsRef.current();
           }
         }
       )
-      .subscribe((status) => {
-        console.log("[Sidebar Badges] Subscription status:", status);
+      .subscribe((subStatus) => {
+        console.log("[Sidebar Badges] Subscription status:", subStatus);
+        if (isMountedRef.current) {
+          const wasConnected = isConnectedRef.current;
+          isConnectedRef.current = subStatus === "SUBSCRIBED";
+          
+          // If we just connected, trigger a refetch
+          if (subStatus === "SUBSCRIBED" && !wasConnected) {
+            console.log("[Sidebar Badges] Connection established, triggering refetch");
+            scheduleRetry(() => {
+              if (isMountedRef.current && fetchCountsRef.current) {
+                fetchCountsRef.current();
+              }
+            }, 500);
+          }
+        }
       });
 
     channelRef.current = channel;
@@ -181,7 +303,7 @@ export function useSidebarBadges(): UseSidebarBadgesResult {
         channelRef.current = null;
       }
     };
-  }, [fetchCounts]);
+  }, [scheduleRetry]);
 
   // Fetch data on mount and when fetchCounts changes
   useEffect(() => {

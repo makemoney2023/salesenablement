@@ -189,7 +189,11 @@ export function updateCallStatus(
   status: CallStatus, 
   updates?: Partial<CampaignCallRecord>
 ): CampaignCallRecord | null {
-  const record = getCallRecord(practitionerId);
+  if (!isBrowser) return null;
+
+  // Read all records once to avoid stale data between separate read/write calls
+  const records = getCallRecords();
+  const record = records[practitionerId];
   if (!record) return null;
   
   const updated: CampaignCallRecord = {
@@ -208,7 +212,14 @@ export function updateCallStatus(
     updated.call_ended_at = new Date().toISOString();
   }
   
-  saveCallRecord(updated);
+  // Write back atomically using the same records object
+  records[practitionerId] = updated;
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+  } catch (error) {
+    console.error('Failed to save updated call status:', error);
+  }
+  
   return updated;
 }
 

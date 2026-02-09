@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireApiAuth } from "@/lib/auth";
+import { CreatePractitionerSchema, validateBody } from "@/lib/validation";
+import { sanitizeSearchInput } from "@/lib/security";
 import fs from "fs";
 import path from "path";
 import { supabaseAdmin, isSupabaseConfigured } from "@/lib/supabase";
@@ -259,16 +262,19 @@ async function getMetadata(forceRefresh: boolean = false): Promise<{
 
 // POST - Create a new user-added practitioner
 export async function POST(request: NextRequest) {
+  const auth = await requireApiAuth();
+  if (!auth.authorized) return auth.response;
+
   try {
     const body = await request.json();
-    
-    // Validate required fields
-    if (!body.name || !body.phone) {
+    const validation = validateBody(CreatePractitionerSchema, body);
+    if (!validation.success) {
       return NextResponse.json(
-        { error: "Name and phone are required" },
+        { error: validation.error },
         { status: 400 }
       );
     }
+    const validated = validation.data;
 
     // Check Supabase availability
     const useSupabase = await checkSupabaseTable();
@@ -281,7 +287,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Normalize phone number for duplicate check
-    const normalizedPhone = body.phone.replace(/\D/g, "");
+    const normalizedPhone = validated.phone.replace(/\D/g, "");
     
     // Check if practitioner with this phone already exists
     const { data: existing } = await supabaseAdmin
@@ -305,14 +311,14 @@ export async function POST(request: NextRequest) {
     // Create the practitioner record
     const newPractitioner = {
       id,
-      name: body.name,
-      practitioner_type: body.practitioner_type || 'Unknown',
-      address: body.address || null,
-      city: body.city || null,
-      province: body.province || null,
-      country: body.country || null,
-      phone: body.phone,
-      website: body.website || null,
+      name: validated.name,
+      practitioner_type: validated.practitioner_type || 'Unknown',
+      address: validated.address || null,
+      city: validated.city || null,
+      province: validated.province || null,
+      country: validated.country || null,
+      phone: validated.phone,
+      website: validated.website || null,
       rating: null,
       review_count: null,
       business_status: 'OPERATIONAL',
@@ -320,7 +326,7 @@ export async function POST(request: NextRequest) {
       latitude: null,
       longitude: null,
       scraped_at: new Date().toISOString(),
-      notes: body.notes || null,
+      notes: validated.notes || null,
       is_user_added: true,
     };
 
@@ -358,6 +364,9 @@ export async function POST(request: NextRequest) {
 }
 
 export async function GET(request: NextRequest) {
+  const auth = await requireApiAuth();
+  if (!auth.authorized) return auth.response;
+
   const searchParams = request.nextUrl.searchParams;
   
   // Allow cache busting for metadata
@@ -407,8 +416,8 @@ export async function GET(request: NextRequest) {
   const minRating = searchParams.get("minRating") ? parseFloat(searchParams.get("minRating")!) : null;
   const hasPhone = searchParams.get("hasPhone") === "true";
   const phoneSearch = searchParams.get("phone");
-  const page = parseInt(searchParams.get("page") || "1");
-  const limit = parseInt(searchParams.get("limit") || "100");
+  const page = parseInt(searchParams.get("page") || "1", 10) || 1;
+  const limit = Math.min(parseInt(searchParams.get("limit") || "100", 10) || 100, 500);
   const offset = (page - 1) * limit;
 
   // Handle single practitioner lookup by ID
@@ -460,8 +469,10 @@ export async function GET(request: NextRequest) {
         query = query.or(typeFilters);
       }
       if (search) {
+        // Sanitize search input to prevent PostgREST query manipulation
+        const sanitized = sanitizeSearchInput(search);
         // Use ilike for case-insensitive search
-        query = query.or(`name.ilike.%${search}%,address.ilike.%${search}%,city.ilike.%${search}%`);
+        query = query.or(`name.ilike.%${sanitized}%,address.ilike.%${sanitized}%,city.ilike.%${sanitized}%`);
       }
       if (minRating !== null) {
         query = query.gte('rating', minRating);

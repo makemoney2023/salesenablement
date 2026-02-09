@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireApiAuth } from "@/lib/auth";
+import { ImportPractitionersSchema, validateBody } from "@/lib/validation";
 import { supabaseAdmin, isSupabaseConfigured } from "@/lib/supabase";
 
 const FIRECRAWL_API_KEY = process.env.FIRECRAWL_API_KEY || "";
@@ -97,10 +99,6 @@ async function checkExisting(
 
 // Async enrichment helper - calls enrich API for each practitioner
 async function enrichPractitionersAsync(practitioners: SearchResultPractitioner[]): Promise<void> {
-  const ENRICH_URL = process.env.NEXT_PUBLIC_VERCEL_URL 
-    ? `https://${process.env.NEXT_PUBLIC_VERCEL_URL}/api/search/enrich`
-    : "/api/search/enrich";
-
   for (const practitioner of practitioners) {
     if (!practitioner.website) continue;
 
@@ -137,6 +135,9 @@ async function enrichPractitionersAsync(practitioners: SearchResultPractitioner[
 
 // POST /api/search/import - Bulk import practitioners from search results
 export async function POST(request: NextRequest) {
+  const auth = await requireApiAuth();
+  if (!auth.authorized) return auth.response;
+
   try {
     // Check Supabase availability
     if (!isSupabaseConfigured || !supabaseAdmin) {
@@ -151,20 +152,22 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body: ImportRequest = await request.json();
-    const { practitioners, enrichAfterImport, skipAutoEnrich } = body;
-
-    if (!practitioners || practitioners.length === 0) {
+    const body = await request.json();
+    const validation = validateBody(ImportPractitionersSchema, body);
+    if (!validation.success) {
       return NextResponse.json(
         {
           imported: 0,
           duplicates: 0,
-          errors: ["No practitioners provided"],
+          errors: [validation.error],
           importedIds: [],
         },
         { status: 400 }
       );
     }
+    const practitioners = validation.data.places as unknown as SearchResultPractitioner[];
+    const enrichAfterImport = body.enrichAfterImport;
+    const skipAutoEnrich = body.skipAutoEnrich;
 
     console.log(`[Import API] Processing ${practitioners.length} practitioners`);
 
@@ -294,6 +297,9 @@ export async function POST(request: NextRequest) {
 
 // GET endpoint for testing/info
 export async function GET() {
+  const auth = await requireApiAuth();
+  if (!auth.authorized) return auth.response;
+
   return NextResponse.json({
     status: "ok",
     message: "Practitioner Import API",
