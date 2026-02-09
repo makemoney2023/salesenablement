@@ -32,7 +32,6 @@ import {
   LogOut,
   Shield,
   ChevronsUpDown,
-  FileText,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useSidebarBadges } from "@/hooks/useSidebarBadges";
@@ -313,11 +312,6 @@ export function AppSidebar({
       title: "Sample Requests",
       url: "/campaign/samples",
       icon: Package,
-    },
-    {
-      title: "Evidence",
-      url: "/evidence",
-      icon: FileText,
     },
   ];
 
