@@ -19,6 +19,7 @@ interface BadgeCounts {
   samples: number;
   appointments: number;
   pathwayInsights: number;
+  followUpQueue: number;
 }
 
 interface UseSidebarBadgesResult {
@@ -32,6 +33,7 @@ const LAST_VISIT_KEYS = {
   samples: "sidebar_lastVisit_samples",
   appointments: "sidebar_lastVisit_appointments",
   pathwayInsights: "sidebar_lastVisit_pathwayInsights",
+  followUpQueue: "sidebar_lastVisit_followUpQueue",
 };
 
 // Route paths for each badge
@@ -39,6 +41,7 @@ const BADGE_ROUTES = {
   samples: "/campaign/samples",
   appointments: "/campaign/appointments",
   pathwayInsights: "/campaign/pathway-suggestions",
+  followUpQueue: "/campaign/follow-up-queue",
 };
 
 export function useSidebarBadges(): UseSidebarBadgesResult {
@@ -47,6 +50,7 @@ export function useSidebarBadges(): UseSidebarBadgesResult {
     samples: 0,
     appointments: 0,
     pathwayInsights: 0,
+    followUpQueue: 0,
   });
   const [loading, setLoading] = useState(true);
   const channelRef = useRef<ReturnType<NonNullable<typeof supabase>["channel"]> | null>(null);
@@ -71,6 +75,9 @@ export function useSidebarBadges(): UseSidebarBadgesResult {
       } else if (pathname === BADGE_ROUTES.pathwayInsights) {
         localStorage.setItem(LAST_VISIT_KEYS.pathwayInsights, now);
         setCounts((prev) => ({ ...prev, pathwayInsights: 0 }));
+      } else if (pathname === BADGE_ROUTES.followUpQueue) {
+        localStorage.setItem(LAST_VISIT_KEYS.followUpQueue, now);
+        setCounts((prev) => ({ ...prev, followUpQueue: 0 }));
       }
     } catch {
       // localStorage may be unavailable in SSR or private browsing
@@ -85,7 +92,7 @@ export function useSidebarBadges(): UseSidebarBadgesResult {
     if (!supabaseUrl || !supabaseKey) return null;
 
     try {
-      const [samplesResp, appointmentsResp, pathwayResp] = await Promise.all([
+      const [samplesResp, appointmentsResp, pathwayResp, followUpResp] = await Promise.all([
         fetch(`${supabaseUrl}/rest/v1/sample_requests?select=id&status=eq.pending`, {
           method: 'HEAD',
           headers: {
@@ -110,6 +117,14 @@ export function useSidebarBadges(): UseSidebarBadgesResult {
             'Prefer': 'count=exact',
           },
         }),
+        fetch(`${supabaseUrl}/rest/v1/follow_up_queue?select=id&status=eq.draft`, {
+          method: 'HEAD',
+          headers: {
+            'apikey': supabaseKey,
+            'Authorization': `Bearer ${supabaseKey}`,
+            'Prefer': 'count=exact',
+          },
+        }),
       ]);
 
       // Extract counts from content-range header
@@ -126,6 +141,7 @@ export function useSidebarBadges(): UseSidebarBadgesResult {
         samples: parseCount(samplesResp),
         appointments: parseCount(appointmentsResp),
         pathwayInsights: parseCount(pathwayResp),
+        followUpQueue: parseCount(followUpResp),
       };
     } catch {
       return null;
@@ -145,7 +161,7 @@ export function useSidebarBadges(): UseSidebarBadgesResult {
 
     try {
       // Fetch counts in parallel
-      const [samplesResult, appointmentsResult, pathwayResult] = await Promise.all([
+      const [samplesResult, appointmentsResult, pathwayResult, followUpResult] = await Promise.all([
         // Pending sample requests
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (supabase as any)
@@ -167,13 +183,20 @@ export function useSidebarBadges(): UseSidebarBadgesResult {
           .from("pathway_suggestions")
           .select("id", { count: "exact", head: true })
           .eq("status", "new"),
+
+        // Draft follow-up items waiting for review
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (supabase as any)
+          .from("follow_up_queue")
+          .select("id", { count: "exact", head: true })
+          .eq("status", "draft"),
       ]);
 
       // Check if still mounted before updating state
       if (!isMountedRef.current) return;
 
       // Check for AbortErrors in any of the results
-      const hasAbortError = [samplesResult, appointmentsResult, pathwayResult].some(
+      const hasAbortError = [samplesResult, appointmentsResult, pathwayResult, followUpResult].some(
         (result) => result.error?.message?.includes('AbortError') || result.error?.message?.includes('aborted')
       );
       
@@ -201,11 +224,13 @@ export function useSidebarBadges(): UseSidebarBadgesResult {
       if (samplesResult.error) console.error("Error fetching samples count:", samplesResult.error);
       if (appointmentsResult.error) console.error("Error fetching appointments count:", appointmentsResult.error);
       if (pathwayResult.error) console.error("Error fetching pathway count:", pathwayResult.error);
+      if (followUpResult.error) console.error("Error fetching follow-up queue count:", followUpResult.error);
 
       setCounts({
         samples: samplesResult.count || 0,
         appointments: appointmentsResult.count || 0,
         pathwayInsights: pathwayResult.count || 0,
+        followUpQueue: followUpResult.count || 0,
       });
     } catch (err) {
       const isAbortError = err instanceof Error && (err.name === 'AbortError' || err.message?.includes('aborted'));
@@ -272,6 +297,16 @@ export function useSidebarBadges(): UseSidebarBadgesResult {
         () => {
           if (isMountedRef.current && fetchCountsRef.current) {
             console.log("📡 Pathway suggestions changed, refreshing badge");
+            fetchCountsRef.current();
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "follow_up_queue" },
+        () => {
+          if (isMountedRef.current && fetchCountsRef.current) {
+            console.log("📡 Follow-up queue changed, refreshing badge");
             fetchCountsRef.current();
           }
         }

@@ -498,6 +498,7 @@ export function AppSidebar({
                   if (item.title === "Sample Requests") return badgeCounts.samples;
                   if (item.title === "Appointments") return badgeCounts.appointments;
                   if (item.title === "Pathway Insights") return badgeCounts.pathwayInsights;
+                  if (item.title === "Follow-Up Queue") return badgeCounts.followUpQueue;
                   return 0;
                 };
 
