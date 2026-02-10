@@ -444,6 +444,97 @@ export function importRecords(json: string): number {
   }
 }
 
+/**
+ * Reconcile stale in_progress records that were never updated by the webhook.
+ *
+ * This can happen when:
+ *   - The webhook fails or times out
+ *   - The browser is closed before the webhook fires
+ *   - The Bland.ai call fails silently
+ *
+ * Records stuck as "in_progress" for longer than `maxAgeMinutes` are either
+ * refreshed from Supabase (if available) or marked as "failed" locally.
+ *
+ * Call this on page load / tab focus to keep the UI accurate.
+ */
+export async function reconcileStaleInProgressRecords(
+  maxAgeMinutes = 20
+): Promise<{ reconciled: number; ids: string[] }> {
+  if (!isBrowser) return { reconciled: 0, ids: [] };
+
+  const records = getCallRecords();
+  const now = Date.now();
+  const maxAgeMs = maxAgeMinutes * 60 * 1000;
+  const staleIds: string[] = [];
+
+  for (const record of Object.values(records)) {
+    if (record.status !== 'in_progress') continue;
+
+    const startedAt = record.call_started_at
+      ? new Date(record.call_started_at).getTime()
+      : new Date(record.created_at).getTime();
+
+    if (now - startedAt > maxAgeMs) {
+      staleIds.push(record.practitioner_id);
+    }
+  }
+
+  if (staleIds.length === 0) return { reconciled: 0, ids: [] };
+
+  console.warn(`[campaign-storage] Found ${staleIds.length} stale in_progress records, reconciling...`);
+
+  let reconciled = 0;
+  for (const id of staleIds) {
+    const record = records[id];
+    if (!record?.call_id) {
+      // No call_id — can't check Supabase, mark as failed
+      updateCallStatus(id, 'failed', {
+        notes: 'Auto-marked as failed: stuck in_progress with no call_id',
+      });
+      reconciled++;
+      continue;
+    }
+
+    // Try to fetch the real status from Supabase
+    try {
+      const response = await fetch(`/api/campaign/calls?call_id=${encodeURIComponent(record.call_id)}`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.record && data.found) {
+          // Supabase has the real status — update localStorage to match
+          const serverRecord = data.record;
+          updateCallStatus(id, serverRecord.status, {
+            call_ended_at: serverRecord.call_ended_at,
+            duration_seconds: serverRecord.duration_seconds,
+            transcript: serverRecord.transcript,
+            summary: serverRecord.summary,
+            appointment_booked: serverRecord.appointment_booked,
+            appointment_time: serverRecord.appointment_time,
+            practitioner_email: serverRecord.practitioner_email,
+            sentiment_label: serverRecord.sentiment_label,
+            sentiment_score: serverRecord.sentiment_score,
+            lead_score: serverRecord.lead_score,
+            recording_url: serverRecord.recording_url,
+          });
+          reconciled++;
+          continue;
+        }
+      }
+    } catch (err) {
+      console.warn(`[campaign-storage] Failed to check Supabase for call ${record.call_id}:`, err);
+    }
+
+    // Supabase check failed or record not found — mark as failed
+    updateCallStatus(id, 'failed', {
+      notes: 'Auto-marked as failed: stuck in_progress for over 20 minutes',
+    });
+    reconciled++;
+  }
+
+  console.log(`[campaign-storage] Reconciled ${reconciled} stale records: [${staleIds.join(', ')}]`);
+  return { reconciled, ids: staleIds };
+}
+
 // Campaign queue state management
 export interface CampaignQueueState {
   is_running: boolean;

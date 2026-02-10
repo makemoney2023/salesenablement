@@ -35,6 +35,7 @@ import { toast } from "sonner";
 import {
   createCallRecord,
   syncCallRecordToSupabase,
+  reconcileStaleInProgressRecords,
   exportRecords,
 } from "@/lib/campaign-storage";
 import { CallStatus } from "@/lib/db/types";
@@ -356,8 +357,23 @@ function CampaignPageContent() {
   }, [country, province, city, practitionerType, debouncedSearch, minRating, hasPhoneOnly]);
 
   // Load metadata on mount (call records are loaded by useSupabaseCallRecords hook)
+  // Also reconcile any stale in_progress records left over from a previous session
   useEffect(() => {
     loadMetadata();
+    reconcileStaleInProgressRecords().then(({ reconciled }) => {
+      if (reconciled > 0) loadCallRecords();
+    });
+
+    // Re-reconcile when user returns to the tab (catches calls that completed while away)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        reconcileStaleInProgressRecords().then(({ reconciled }) => {
+          if (reconciled > 0) loadCallRecords();
+        });
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
   }, []);
 
   // Handle tab query parameter from URL

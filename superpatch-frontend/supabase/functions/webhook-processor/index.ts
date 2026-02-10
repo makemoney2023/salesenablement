@@ -984,13 +984,26 @@ serve(async (req) => {
     let vars = payload.variables || {};
     const meta = payload.metadata || {};
 
-    // LLM Fallback: Extract variables from transcript when pathway extraction is sparse
+    // LLM Fallback: Extract variables from transcript when pathway missed key decision vars.
+    // We check for QUALITY not just QUANTITY — the pathway might extract many vars
+    // (practice_name, phone, city, etc.) but miss the critical ones that drive next steps.
     const hasTranscript = payload.concatenated_transcript?.length > 100;
     const callSucceeded = payload.completed && payload.call_length > 30;
-    const pathwayExtractedLittle = Object.keys(vars).length < 5;
 
-    if (hasTranscript && callSucceeded && GEMINI_API_KEY && pathwayExtractedLittle) {
-      console.log(`🔍 Pathway extracted only ${Object.keys(vars).length} variables, running LLM fallback extraction...`);
+    // Key decision variables the pathway should have extracted for a successful call
+    const KEY_DECISION_VARS = [
+      "wants_demo", "wants_sample", "appointment_time", "interest_level",
+      "follow_up_action", "contact_email", "decision_maker",
+    ];
+    const missingKeyVars = KEY_DECISION_VARS.filter(
+      (k) => vars[k] === undefined || vars[k] === null || vars[k] === ""
+    );
+    const pathwayMissedKeyVars = missingKeyVars.length >= 4; // Missing 4+ of 7 key vars
+    const pathwayExtractedLittle = Object.keys(vars).length < 5;
+    const shouldRunLLM = pathwayExtractedLittle || pathwayMissedKeyVars;
+
+    if (hasTranscript && callSucceeded && GEMINI_API_KEY && shouldRunLLM) {
+      console.log(`🔍 LLM fallback triggered: ${Object.keys(vars).length} total vars, ${missingKeyVars.length} key vars missing [${missingKeyVars.join(", ")}]`);
       try {
         const extracted = await extractVariablesFromTranscript(payload.concatenated_transcript);
         
