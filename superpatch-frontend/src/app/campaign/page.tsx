@@ -33,8 +33,8 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import {
-  CampaignCallRecord,
   createCallRecord,
+  syncCallRecordToSupabase,
   exportRecords,
 } from "@/lib/campaign-storage";
 import { CallStatus } from "@/lib/db/types";
@@ -79,7 +79,6 @@ import { ActiveCallsMonitor } from "@/components/campaign/active-calls-monitor";
 import { RetryQueuePanel } from "@/components/campaign/retry-queue-panel";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { QuickCallTab } from "@/components/campaign/quick-call-tab";
-import { PATHWAY_IDS_SHORT, KB_ID, VOICE_ID } from "@/lib/config/pathways";
 import dynamic from "next/dynamic";
 
 // Dynamically import map to avoid SSR issues with Leaflet
@@ -251,22 +250,8 @@ function CampaignPageContent() {
   const [detailDrawerOpen, setDetailDrawerOpen] = useState(false);
   const [selectedPractitioner, setSelectedPractitioner] = useState<PractitionerData | null>(null);
 
-  // Quick call state
+  // Tab state
   const [activeTab, setActiveTab] = useState("practitioners");
-  const [quickCallPhone, setQuickCallPhone] = useState("");
-  const [quickCallType, setQuickCallType] = useState("chiropractor");
-  const [quickCallSearching, setQuickCallSearching] = useState(false);
-  const [quickCallResult, setQuickCallResult] = useState<PractitionerData | null>(null);
-  const [quickCallNotFound, setQuickCallNotFound] = useState(false);
-  const [quickCallMaking, setQuickCallMaking] = useState(false);
-  // Manual quick call info (for calls to unknown numbers)
-  const [quickCallPracticeName, setQuickCallPracticeName] = useState("");
-  const [quickCallContactName, setQuickCallContactName] = useState("");
-  const [quickCallEmail, setQuickCallEmail] = useState("");
-  const [quickCallAddress, setQuickCallAddress] = useState("");
-  const [quickCallCity, setQuickCallCity] = useState("");
-  const [quickCallProvince, setQuickCallProvince] = useState("");
-  const [quickCallPostalCode, setQuickCallPostalCode] = useState("");
 
   // Real-time practitioners hook for enrichment status
   const {
@@ -931,352 +916,6 @@ function CampaignPageContent() {
     a.download = `campaign-export-${new Date().toISOString().split('T')[0]}.json`;
     a.click();
     URL.revokeObjectURL(url);
-  };
-
-  // Quick call: search for practitioner by phone
-  const handleQuickCallSearch = async () => {
-    if (!quickCallPhone.trim()) return;
-    
-    setQuickCallSearching(true);
-    setQuickCallResult(null);
-    setQuickCallNotFound(false);
-    
-    try {
-      const response = await fetch(`/api/practitioners?phone=${encodeURIComponent(quickCallPhone.trim())}`);
-      const data = await response.json();
-      
-      if (data.practitioners && data.practitioners.length > 0) {
-        const practitioner = data.practitioners[0];
-        setQuickCallResult(practitioner);
-        setQuickCallNotFound(false);
-        
-        // Auto-select pathway based on practitioner type
-        const typeMapping: Record<string, string> = {
-          'Chiropractor': 'chiropractor',
-          'Chiropractors': 'chiropractor',
-          'Massage Therapist': 'massage',
-          'Massage Therapists': 'massage',
-          'Registered Massage Therapist': 'massage',
-          'Naturopath': 'naturopath',
-          'Naturopaths': 'naturopath',
-          'Naturopathic Doctor': 'naturopath',
-          'Integrative Medicine': 'integrative',
-          'Integrative Medicine Practitioner': 'integrative',
-          'Functional Medicine': 'functional',
-          'Functional Medicine Practitioner': 'functional',
-          'Acupuncturist': 'acupuncturist',
-          'Acupuncturists': 'acupuncturist',
-        };
-        
-        const matchedType = Object.entries(typeMapping).find(
-          ([key]) => practitioner.practitioner_type?.toLowerCase().includes(key.toLowerCase())
-        );
-        
-        if (matchedType) {
-          setQuickCallType(matchedType[1]);
-        }
-      } else {
-        setQuickCallResult(null);
-        setQuickCallNotFound(true);
-      }
-    } catch (error) {
-      console.error('Quick call search failed:', error);
-      setQuickCallNotFound(true);
-    }
-    
-    setQuickCallSearching(false);
-  };
-
-  // Quick call: open practitioner detail from search result
-  const handleQuickCallViewPractitioner = () => {
-    if (quickCallResult) {
-      setSelectedPractitioner(quickCallResult);
-      setDetailDrawerOpen(true);
-    }
-  };
-
-  // Quick call: call found practitioner with selected pathway
-  const handleQuickCallWithPathway = async () => {
-    if (!quickCallResult || !quickCallResult.phone) return;
-    
-    setQuickCallMaking(true);
-    
-    try {
-      // Format phone number
-      const phoneDigits = quickCallResult.phone.replace(/\D/g, '');
-      const formattedPhone = phoneDigits.length === 10 
-        ? `+1${phoneDigits}` 
-        : phoneDigits.length === 11 && phoneDigits.startsWith('1')
-          ? `+${phoneDigits}`
-          : `+${phoneDigits}`;
-      
-      // Get pathway ID based on selected type (from shared config)
-      const pathways = PATHWAY_IDS_SHORT;
-      
-      // Build request_data for pathway variable substitution
-      const requestData = {
-        practice_name: quickCallResult.name || 'your practice',
-        practice_address: quickCallResult.address || '',
-        practice_city: quickCallResult.city || '',
-        practice_province: quickCallResult.province || '',
-        google_rating: quickCallResult.rating?.toString() || '',
-        review_count: quickCallResult.review_count?.toString() || '',
-        website: quickCallResult.website || '',
-        practitioner_type: quickCallResult.practitioner_type || '',
-        // For greeting personalization in pathway
-        greeting_name: quickCallResult.name || 'there',
-      };
-
-      // Build call payload with memory_id for context retention
-      const memoryId = process.env.NEXT_PUBLIC_BLAND_MEMORY_ID;
-      const callPayload: Record<string, unknown> = {
-        phone_number: formattedPhone,
-        pathway_id: pathways[quickCallType] || pathways.chiropractor,
-        // Don't specify pathway_version - uses production version by default
-        knowledge_base: KB_ID,
-        voice: VOICE_ID,
-        wait_for_greeting: true,
-        record: true,
-        max_duration: 15,
-        webhook: process.env.NEXT_PUBLIC_BLAND_WEBHOOK_URL || "https://gdwwppwaxyvudsecexuq.supabase.co/functions/v1/webhook-processor",
-        request_data: requestData,
-        metadata: {
-          campaign: 'quick_call',
-          source: 'quick_call_with_context',
-          practitioner_id: quickCallResult.id,
-          practice_name: quickCallResult.name,
-          practitioner_type: quickCallResult.practitioner_type,
-          selected_pathway: quickCallType,
-          address: quickCallResult.address || '',
-          city: quickCallResult.city || '',
-          province: quickCallResult.province || '',
-        },
-      };
-
-      // Add memory_id for cross-call context (if configured)
-      if (memoryId) {
-        callPayload.memory_id = memoryId.trim();
-      }
-      
-      const response = await fetch('/api/bland/calls', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(callPayload),
-      });
-      
-      const result = await response.json();
-      
-      if (result.status === 'success') {
-        // Create call record with call_id for webhook matching
-        createCallRecord({
-          id: quickCallResult.id,
-          name: quickCallResult.name,
-          practitioner_type: quickCallResult.practitioner_type,
-          phone: quickCallResult.phone,
-          address: quickCallResult.address,
-          city: quickCallResult.city,
-          province: quickCallResult.province,
-          call_id: result.call_id,  // Critical: Save call_id so webhook can update this record
-        });
-        loadCallRecords();
-        
-        scheduleCallRecordRefreshes();
-        
-        callNotifications.started(quickCallResult.name);
-        setQuickCallPhone('');
-        setQuickCallResult(null);
-      } else {
-        callNotifications.failed(quickCallResult.name);
-      }
-    } catch (error) {
-      console.error('Quick call failed:', error);
-      callNotifications.failed('Unknown', 'Failed to initiate call');
-    }
-    
-    setQuickCallMaking(false);
-  };
-
-  // Quick call: make manual call (no practitioner context)
-  const handleQuickCallManual = async () => {
-    if (!quickCallPhone.trim()) return;
-
-    setQuickCallMaking(true);
-
-    try {
-      // Format phone number
-      const phoneDigits = quickCallPhone.replace(/\D/g, '');
-      const formattedPhone = phoneDigits.length === 10
-        ? `+1${phoneDigits}`
-        : phoneDigits.length === 11 && phoneDigits.startsWith('1')
-          ? `+${phoneDigits}`
-          : `+${phoneDigits}`;
-
-      // Get pathway ID (from shared config)
-      const pathways = PATHWAY_IDS_SHORT;
-
-      // Get practitioner type label for display
-      const pathwayLabels: Record<string, string> = {
-        chiropractor: "Chiropractor",
-        massage: "Massage Therapist",
-        naturopath: "Naturopath",
-        integrative: "Integrative Medicine",
-        functional: "Functional Medicine",
-        acupuncturist: "Acupuncturist",
-      };
-
-      // Build full address string
-      const fullAddress = [
-        quickCallAddress,
-        quickCallCity,
-        quickCallProvince,
-        quickCallPostalCode
-      ].filter(Boolean).join(', ');
-
-      // Build request_data for pathway variable substitution
-      // These variables will be available in the conversational pathway
-      const requestData = {
-        // Practice identification
-        practice_name: quickCallPracticeName || 'your practice',
-        contact_name: quickCallContactName || '',
-        practitioner_type: pathwayLabels[quickCallType] || quickCallType,
-        
-        // Contact info
-        practice_email: quickCallEmail || '',
-        practice_phone: formattedPhone,
-        
-        // Location details
-        practice_address: quickCallAddress || '',
-        practice_city: quickCallCity || '',
-        practice_province: quickCallProvince || '',
-        practice_postal_code: quickCallPostalCode || '',
-        full_address: fullAddress || '',
-        
-        // For greeting personalization
-        greeting_name: quickCallContactName || quickCallPracticeName || 'there',
-      };
-
-      // Build call payload with memory_id for context retention
-      const memoryId = process.env.NEXT_PUBLIC_BLAND_MEMORY_ID;
-      const callPayload: Record<string, unknown> = {
-        phone_number: formattedPhone,
-        pathway_id: pathways[quickCallType] || pathways.chiropractor,
-        // Don't specify pathway_version - uses production version by default
-        knowledge_base: KB_ID,
-        voice: VOICE_ID,
-        wait_for_greeting: true,
-        record: true,
-        max_duration: 15,
-        webhook: process.env.NEXT_PUBLIC_BLAND_WEBHOOK_URL || "https://gdwwppwaxyvudsecexuq.supabase.co/functions/v1/webhook-processor",
-        request_data: requestData,
-        metadata: {
-          campaign: 'quick_call',
-          source: 'manual_dial',
-          selected_pathway: quickCallType,
-          // Include all practice info for call record creation
-          practice_name: quickCallPracticeName || undefined,
-          contact_name: quickCallContactName || undefined,
-          practitioner_type: pathwayLabels[quickCallType] || quickCallType,
-          clinic_email: quickCallEmail || undefined,
-          address: quickCallAddress || undefined,
-          city: quickCallCity || undefined,
-          province: quickCallProvince || undefined,
-          postal_code: quickCallPostalCode || undefined,
-        },
-      };
-
-      // Add memory_id for cross-call context (if configured)
-      if (memoryId) {
-        callPayload.memory_id = memoryId.trim();
-      }
-      
-      const response = await fetch('/api/bland/calls', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(callPayload),
-      });
-      
-      const result = await response.json();
-      
-      if (result.status === 'success') {
-        const callTarget = quickCallPracticeName || formattedPhone;
-        
-        // Save the practitioner to database FIRST to get proper ID
-        let practitionerId: string | null = null;
-        try {
-          const practitionerData = {
-            name: quickCallPracticeName || `Unknown (${formattedPhone})`,
-            phone: formattedPhone,
-            practitioner_type: pathwayLabels[quickCallType] || 'Unknown',
-            address: quickCallAddress || null,
-            city: quickCallCity || null,
-            province: quickCallProvince || null,
-            country: quickCallProvince ? (
-              ['ON', 'BC', 'AB', 'QC', 'MB', 'SK', 'NS', 'NB', 'NL', 'PE', 'NT', 'YT', 'NU',
-               'Ontario', 'British Columbia', 'Alberta', 'Quebec', 'Manitoba', 'Saskatchewan',
-               'Nova Scotia', 'New Brunswick', 'Newfoundland', 'Prince Edward Island'].some(
-                p => quickCallProvince?.toLowerCase().includes(p.toLowerCase())
-              ) ? 'Canada' : 'United States'
-            ) : null,
-            notes: quickCallContactName ? `Contact: ${quickCallContactName}` : null,
-          };
-          
-          const saveResponse = await fetch('/api/practitioners', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(practitionerData),
-          });
-          
-          const saveResult = await saveResponse.json();
-          
-          if (saveResult.practitioner) {
-            practitionerId = saveResult.practitioner.id;
-            console.log(saveResult.created ? 'User-added practitioner saved:' : 'Practitioner already exists:', practitionerId);
-          }
-        } catch (saveError) {
-          console.error('Failed to save practitioner (call still succeeded):', saveError);
-        }
-        
-        // Create call record with proper practitioner ID and call_id
-        // The call_id is critical - it allows the Bland.ai webhook to find and update this record
-        const callRecordId = practitionerId || result.call_id || `manual-${Date.now()}`;
-        createCallRecord({
-          id: callRecordId,
-          name: quickCallPracticeName || `Unknown (${formattedPhone})`,
-          practitioner_type: pathwayLabels[quickCallType] || 'Unknown',
-          phone: formattedPhone,
-          address: quickCallAddress || '',
-          city: quickCallCity || '',
-          province: quickCallProvince || '',
-          call_id: result.call_id,  // Critical: Save call_id so webhook can update this record
-        });
-        
-        callNotifications.started(callTarget);
-        
-        // Clear all fields on success
-        setQuickCallPhone('');
-        setQuickCallPracticeName('');
-        setQuickCallContactName('');
-        setQuickCallEmail('');
-        setQuickCallAddress('');
-        setQuickCallCity('');
-        setQuickCallProvince('');
-        setQuickCallPostalCode('');
-        setQuickCallNotFound(false);
-        
-        // Refresh call records and practitioners to show the new data
-        loadCallRecords();
-        loadPractitioners(1);
-        
-        scheduleCallRecordRefreshes();
-      } else {
-        callNotifications.failed(quickCallPracticeName || 'Unknown', result.message);
-      }
-    } catch (error) {
-      console.error('Quick call failed:', error);
-      toast.error('Failed to initiate call');
-    }
-    
-    setQuickCallMaking(false);
   };
 
   // Handle call started from detail drawer
@@ -2445,8 +2084,8 @@ function CampaignPageContent() {
         {/* Quick Call Tab */}
         <TabsContent value="quick-call" className="flex-1 m-0 p-6 overflow-auto">
           <QuickCallTab
-            onCallStarted={(practitioner, callId) => {
-              createCallRecord({
+            onCallStarted={async (practitioner, callId) => {
+              const record = createCallRecord({
                 id: practitioner.id,
                 name: practitioner.name,
                 practitioner_type: practitioner.practitioner_type,
@@ -2456,11 +2095,13 @@ function CampaignPageContent() {
                 province: practitioner.province,
                 call_id: callId,
               });
+              // Await Supabase sync so the record is visible in live queue & analytics
+              await syncCallRecordToSupabase(record);
               loadCallRecords();
               scheduleCallRecordRefreshes();
             }}
-            onManualCallStarted={(practitioner, callId) => {
-              createCallRecord({
+            onManualCallStarted={async (practitioner, callId) => {
+              const record = createCallRecord({
                 id: practitioner.id,
                 name: practitioner.name,
                 practitioner_type: practitioner.practitioner_type,
@@ -2470,7 +2111,10 @@ function CampaignPageContent() {
                 province: practitioner.province,
                 call_id: callId,
               });
+              // Await Supabase sync so the record is visible in live queue & analytics
+              await syncCallRecordToSupabase(record);
               loadCallRecords();
+              loadPractitioners(1);
               scheduleCallRecordRefreshes();
             }}
             onViewPractitioner={(p) => {
@@ -2480,8 +2124,6 @@ function CampaignPageContent() {
             }}
             onCallSuccess={(name) => callNotifications.started(name)}
             onCallFailed={(name, msg) => callNotifications.failed(name, msg)}
-            loadCallRecords={loadCallRecords}
-            loadPractitioners={loadPractitioners}
           />
         </TabsContent>
 

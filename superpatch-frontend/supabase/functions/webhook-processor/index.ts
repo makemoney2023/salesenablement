@@ -128,6 +128,49 @@ const DNC_PHRASES = [
 ];
 
 // Helper functions
+
+/**
+ * Sanitize an email address that may have been mis-transcribed by AI.
+ *
+ * Common transcript errors:
+ *   "Chris B at superpatch.com"      → "chrisb@superpatch.com"
+ *   "chris b at superpatch dot com"  → "chrisb@superpatch.com"
+ *   "john dot smith at gmail dot com"→ "john.smith@gmail.com"
+ *   "info at clinic dot ca"          → "info@clinic.ca"
+ *   "Chris B at Superpatch dot com"  → "chrisb@superpatch.com"
+ *
+ * Returns the cleaned email if it looks valid, otherwise undefined.
+ */
+function sanitizeTranscribedEmail(raw: string | undefined | null): string | undefined {
+  if (!raw || typeof raw !== "string") return undefined;
+
+  let email = raw.trim();
+
+  // Already a valid-looking email — quick accept
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return email.toLowerCase();
+  }
+
+  // Normalize to lowercase for pattern matching
+  email = email.toLowerCase();
+
+  // Replace " dot " with "."  (before handling " at ")
+  email = email.replace(/\s+dot\s+/gi, ".");
+
+  // Replace " at " with "@"
+  email = email.replace(/\s+at\s+/gi, "@");
+
+  // Remove remaining spaces (e.g. "chris b" → "chrisb")
+  email = email.replace(/\s+/g, "");
+
+  // Final validation: must look like a plausible email
+  if (/^[a-z0-9._+%-]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(email)) {
+    return email;
+  }
+
+  return undefined;
+}
+
 function normalizePhone(phone: string): string {
   const digits = phone.replace(/\D/g, "");
   // Handle North American numbers with country code
@@ -138,17 +181,62 @@ function normalizePhone(phone: string): string {
   return digits.slice(-10);
 }
 
+/**
+ * Resolve the best email for a practitioner.
+ * Priority order:
+ *   1. metaEmail (from the call form — typed by the user, known-correct)
+ *   2. practitioner.contact_email (previously saved to DB)
+ *   3. enrichment emails (scraped from website)
+ *   4. varsEmail (AI-extracted from transcript — sanitized to fix transcription errors)
+ *
+ * AI transcript extraction is last because spoken emails are frequently
+ * mis-transcribed (e.g. "chrisb@superpatch.com" → "Chris B at superpatch.com").
+ * All sources are run through sanitizeTranscribedEmail as a safety net.
+ */
 function getPractitionerEmail(
   practitioner: PractitionerLookup | null,
   varsEmail?: string,
   metaEmail?: string
 ): string | undefined {
-  if (varsEmail) return varsEmail;
-  if (metaEmail) return metaEmail;
-  if (practitioner?.contact_email) return practitioner.contact_email;
+  // Form-provided email is the most reliable source
+  const cleanMeta = sanitizeTranscribedEmail(metaEmail);
+  if (cleanMeta) return cleanMeta;
+  // Existing DB email (previously verified or saved from a form)
+  const cleanDb = sanitizeTranscribedEmail(practitioner?.contact_email);
+  if (cleanDb) return cleanDb;
+  // Enrichment emails scraped from the practice website
   const enrichmentEmails = practitioner?.enrichment?.data?.emails;
-  if (enrichmentEmails && enrichmentEmails.length > 0) return enrichmentEmails[0];
+  if (enrichmentEmails && enrichmentEmails.length > 0) {
+    const cleanEnrichment = sanitizeTranscribedEmail(enrichmentEmails[0]);
+    if (cleanEnrichment) return cleanEnrichment;
+  }
+  // AI-extracted email from transcript — most likely to need sanitization
+  const cleanVars = sanitizeTranscribedEmail(varsEmail);
+  if (cleanVars) return cleanVars;
   return undefined;
+}
+
+async function findPractitionerById(
+  supabase: ReturnType<typeof createClient>,
+  practitionerId: string
+): Promise<PractitionerLookup | null> {
+  try {
+    const { data, error } = await supabase
+      .from("practitioners")
+      .select("id, name, practitioner_type, address, city, province, phone, contact_email, enrichment")
+      .eq("id", practitionerId)
+      .single();
+
+    if (error || !data) {
+      console.log(`📍 No practitioner found for ID: ${practitionerId}`);
+      return null;
+    }
+    console.log(`📍 Found practitioner by ID: ${data.name}`);
+    return data as PractitionerLookup;
+  } catch (error) {
+    console.error("Error looking up practitioner by ID:", error);
+    return null;
+  }
 }
 
 async function findPractitionerByPhone(
@@ -440,8 +528,11 @@ function extractQualificationData(
     qualification.contact_role = validRoles.includes(contactRole as ContactRole) ? (contactRole as ContactRole) : "other";
   }
   
-  const contactEmail = vars.email || vars.contact_email || vars.practitioner_email || meta.clinic_email;
-  if (contactEmail) qualification.contact_email = contactEmail;
+  // Form-provided email (meta.clinic_email) takes priority over AI-extracted vars
+  // Sanitize to fix AI transcription errors (e.g. "Chris B at superpatch.com" → "chrisb@superpatch.com")
+  const rawContactEmail = meta.clinic_email || vars.email || vars.contact_email || vars.practitioner_email;
+  const cleanContactEmail = sanitizeTranscribedEmail(rawContactEmail);
+  if (cleanContactEmail) qualification.contact_email = cleanContactEmail;
   
   const decisionMaker = vars.decision_maker || vars.is_decision_maker;
   if (decisionMaker !== undefined && decisionMaker !== null) {
@@ -710,6 +801,15 @@ Return ONLY valid JSON (no markdown code blocks). Use null for anything not ment
 
 Be precise. Only include information explicitly stated in the transcript.
 
+IMPORTANT: For "contact_email", the transcript is a speech-to-text transcription so email addresses
+are often spoken/transcribed incorrectly. Common patterns to fix:
+  - "chris b at superpatch dot com" → "chrisb@superpatch.com"
+  - "Chris B at superpatch.com" → "chrisb@superpatch.com"
+  - "info at clinic dot ca" → "info@clinic.ca"
+  - "john dot smith at gmail dot com" → "john.smith@gmail.com"
+Always convert spoken email addresses to proper format (lowercase, no spaces in local part,
+replace " at " with "@", replace " dot " with ".").
+
 TRANSCRIPT:
 ${transcript}`;
 
@@ -921,7 +1021,11 @@ serve(async (req) => {
                       vars.wants_demo === true || vars.schedule_demo === true;
     const appointmentTime = vars.appointment_time || vars.preferred_time || vars.start_time;
     const practitionerName = vars.practitioner_name || vars.name || vars.contact_name || meta.practice_name || meta.contact_name;
-    const practitionerEmail = vars.email || vars.practitioner_email;
+    // Form email (meta.clinic_email) takes priority over AI-extracted vars
+    // Sanitize to fix AI transcription errors
+    const practitionerEmail = sanitizeTranscribedEmail(meta.clinic_email)
+      || sanitizeTranscribedEmail(vars.email)
+      || sanitizeTranscribedEmail(vars.practitioner_email);
     const practitionerPhone = vars.best_phone || vars.phone || payload.to;
     const practiceAddress = vars.address || vars.practice_address || meta.address;
     const practiceName = vars.practice_name || meta.practice_name;
@@ -955,7 +1059,10 @@ serve(async (req) => {
       }
     }
 
-    // Resolve practitioner
+    // Resolve practitioner — three paths:
+    //   A. We have practitioner_id from metadata (known practitioner) — look up by ID for email & details
+    //   B. No ID — try phone lookup to link call to an existing practitioner
+    //   C. No ID and phone lookup fails — unknown/manual caller
     let resolvedPractitionerId: string | undefined | null = practitionerId;
     let resolvedPractitionerName = practitionerName || practiceName;
     let resolvedPractitionerType = practitionerType;
@@ -964,7 +1071,22 @@ serve(async (req) => {
     let resolvedProvince = meta.province;
     let resolvedEmail: string | undefined = undefined;
 
-    if (!resolvedPractitionerId) {
+    if (resolvedPractitionerId) {
+      // Path A: Known practitioner — look up their record to get email, name, etc.
+      const knownPractitioner = await findPractitionerById(supabase, resolvedPractitionerId);
+      if (knownPractitioner) {
+        resolvedEmail = getPractitionerEmail(knownPractitioner, vars.email || vars.practitioner_email, meta.clinic_email);
+        resolvedPractitionerName = resolvedPractitionerName || knownPractitioner.name;
+        resolvedPractitionerType = resolvedPractitionerType || knownPractitioner.practitioner_type;
+        resolvedAddress = resolvedAddress || knownPractitioner.address || undefined;
+        resolvedCity = resolvedCity || knownPractitioner.city || undefined;
+        resolvedProvince = resolvedProvince || knownPractitioner.province || undefined;
+        console.log(`✅ Resolved known practitioner: ${knownPractitioner.name} (email: ${resolvedEmail || "none"})`);
+      } else {
+        console.warn(`⚠️ Practitioner ID ${resolvedPractitionerId} from metadata not found in DB`);
+      }
+    } else {
+      // Path B: No practitioner ID — try phone lookup
       const foundPractitioner = await findPractitionerByPhone(supabase, payload.to);
       if (foundPractitioner) {
         resolvedPractitionerId = foundPractitioner.id;
@@ -976,6 +1098,7 @@ serve(async (req) => {
         resolvedEmail = getPractitionerEmail(foundPractitioner, vars.email || vars.practitioner_email, meta.clinic_email);
         console.log(`✅ Linked call to practitioner: ${foundPractitioner.name}`);
       } else {
+        // Path C: Unknown caller — use metadata and AI-extracted vars
         resolvedPractitionerId = undefined;
         const manualPracticeName = meta.practice_name || vars.practice_name;
         const manualContactName = meta.contact_name || vars.contact_name;
@@ -992,13 +1115,21 @@ serve(async (req) => {
         }
         resolvedCity = resolvedCity || meta.city || undefined;
         resolvedProvince = resolvedProvince || meta.province || undefined;
-        resolvedEmail = vars.email || vars.practitioner_email || meta.clinic_email || undefined;
+        // Form email takes priority over AI-extracted vars for unknown callers
+        resolvedEmail = sanitizeTranscribedEmail(meta.clinic_email)
+          || sanitizeTranscribedEmail(vars.email)
+          || sanitizeTranscribedEmail(vars.practitioner_email)
+          || undefined;
         console.log(`📝 Recording call from unknown number: ${payload.to}`);
       }
     }
 
+    // Final email fallback — form email > AI-extracted
     if (!resolvedEmail) {
-      resolvedEmail = vars.email || vars.practitioner_email || meta.clinic_email || undefined;
+      resolvedEmail = sanitizeTranscribedEmail(meta.clinic_email)
+        || sanitizeTranscribedEmail(vars.email)
+        || sanitizeTranscribedEmail(vars.practitioner_email)
+        || undefined;
     }
 
     // Determine call status
@@ -1246,6 +1377,57 @@ serve(async (req) => {
         console.log("🔄 Retry scheduling result:", retryInfo);
       } else if (callStatus === "completed" || callStatus === "booked" || callStatus === "calendar_sent") {
         await clearRetryScheduling(supabase, resolvedPractitionerId);
+      }
+
+      // Schedule callback if the recipient requested one
+      // This handles "call me back later" / "call back at 2pm" scenarios
+      if (qualificationData.follow_up_action === "callback" && !retryScheduled) {
+        const callbackTime = qualificationData.follow_up_date || qualificationData.best_callback_time;
+        let nextRetryAt: string | null = null;
+
+        if (callbackTime) {
+          // Try to parse the callback time
+          try {
+            const parsed = new Date(callbackTime);
+            if (!isNaN(parsed.getTime()) && parsed > new Date()) {
+              nextRetryAt = parsed.toISOString();
+            }
+          } catch {
+            // If parsing fails, try LLM parsing
+            nextRetryAt = await parseNaturalLanguageDate(callbackTime);
+          }
+        }
+
+        // If no specific time, default to next business day at 10 AM
+        if (!nextRetryAt) {
+          const tomorrow = new Date();
+          tomorrow.setDate(tomorrow.getDate() + 1);
+          // Skip weekends
+          while (tomorrow.getDay() === 0 || tomorrow.getDay() === 6) {
+            tomorrow.setDate(tomorrow.getDate() + 1);
+          }
+          tomorrow.setHours(10, 0, 0, 0);
+          nextRetryAt = tomorrow.toISOString();
+        }
+
+        console.log(`📞 Callback requested — scheduling retry for ${nextRetryAt}`);
+        try {
+          await supabase.from("practitioners").update({
+            next_retry_at: nextRetryAt,
+            retry_reason: "follow_up_requested" as RetryReason,
+            updated_at: new Date().toISOString(),
+          }).eq("id", resolvedPractitionerId);
+
+          retryScheduled = true;
+          retryInfo = {
+            scheduled: true,
+            nextRetryAt,
+            reason: `Callback requested${callbackTime ? ` at "${callbackTime}"` : " — scheduled for next business day"}`,
+          };
+          console.log("✅ Callback retry scheduled:", retryInfo);
+        } catch (callbackError) {
+          console.error("❌ Failed to schedule callback retry:", callbackError);
+        }
       }
     }
 

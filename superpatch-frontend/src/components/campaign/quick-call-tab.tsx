@@ -15,7 +15,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
-import { PATHWAY_IDS_SHORT, KB_ID, VOICE_ID } from "@/lib/config/pathways";
+import { PATHWAY_IDS_SHORT, KB_ID, VOICE_ID, WEBHOOK_URL } from "@/lib/config/pathways";
 import { ErrorBoundary } from "@/components/error-boundary";
 
 // Types
@@ -30,6 +30,11 @@ interface PractitionerData {
   website?: string | null;
   rating?: number | null;
   review_count?: number | null;
+  contact_email?: string | null;
+  enrichment?: {
+    success?: boolean;
+    data?: { emails?: string[] };
+  } | null;
   is_user_added?: boolean;
   do_not_call?: boolean;
   [key: string]: unknown;
@@ -124,8 +129,6 @@ interface QuickCallTabProps {
   onViewPractitioner: (practitioner: PractitionerData) => void;
   onCallSuccess: (name: string) => void;
   onCallFailed: (name: string, message?: string) => void;
-  loadCallRecords: () => void;
-  loadPractitioners: (page: number) => void;
 }
 
 const pathwayLabels: Record<string, string> = {
@@ -167,8 +170,6 @@ export function QuickCallTab({
   onViewPractitioner,
   onCallSuccess,
   onCallFailed,
-  loadCallRecords,
-  loadPractitioners,
 }: QuickCallTabProps) {
   const [state, dispatch] = useReducer(quickCallReducer, initialState);
 
@@ -215,16 +216,23 @@ export function QuickCallTab({
       const formattedPhone = formatPhone(state.result.phone);
       const pathways = PATHWAY_IDS_SHORT;
 
+      // Resolve best available email: contact_email > enrichment emails
+      const practitionerEmail = state.result.contact_email
+        || state.result.enrichment?.data?.emails?.[0]
+        || "";
+
       const requestData = {
         practice_name: state.result.name || "your practice",
         practice_address: state.result.address || "",
         practice_city: state.result.city || "",
         practice_province: state.result.province || "",
+        practice_email: practitionerEmail,
         google_rating: state.result.rating?.toString() || "",
         review_count: state.result.review_count?.toString() || "",
         website: state.result.website || "",
         practitioner_type: state.result.practitioner_type || "",
         greeting_name: state.result.name || "there",
+        has_email: practitionerEmail ? "true" : "false",
       };
 
       const memoryId = process.env.NEXT_PUBLIC_BLAND_MEMORY_ID;
@@ -236,9 +244,7 @@ export function QuickCallTab({
         wait_for_greeting: true,
         record: true,
         max_duration: 15,
-        webhook:
-          process.env.NEXT_PUBLIC_BLAND_WEBHOOK_URL ||
-          "https://gdwwppwaxyvudsecexuq.supabase.co/functions/v1/webhook-processor",
+        webhook: WEBHOOK_URL,
         request_data: requestData,
         metadata: {
           campaign: "quick_call",
@@ -250,6 +256,8 @@ export function QuickCallTab({
           address: state.result.address || "",
           city: state.result.city || "",
           province: state.result.province || "",
+          // Include email so webhook has it even before DB lookup completes
+          clinic_email: practitionerEmail || undefined,
         },
       };
       if (memoryId) callPayload.memory_id = memoryId.trim();
@@ -289,6 +297,8 @@ export function QuickCallTab({
   }, [state.result, state.type, onCallStarted, onCallSuccess, onCallFailed]);
 
   // Make manual call
+  // Order: save practitioner FIRST, then initiate call with practitioner_id in metadata
+  // so the webhook can reliably link the call to the DB record.
   const handleManualCall = useCallback(async () => {
     if (!state.phone.trim()) return;
 
@@ -297,11 +307,51 @@ export function QuickCallTab({
     try {
       const formattedPhone = formatPhone(state.phone);
       const pathways = PATHWAY_IDS_SHORT;
+      const callTarget = state.practiceName || formattedPhone;
 
       const fullAddress = [state.address, state.city, state.province, state.postalCode]
         .filter(Boolean)
         .join(", ");
 
+      // Step 1: Save practitioner to DB BEFORE making the call
+      // This ensures the webhook can find the practitioner and we have the ID for metadata
+      let practitionerId: string | null = null;
+      try {
+        const practitionerData = {
+          name: state.practiceName || `Unknown (${formattedPhone})`,
+          phone: formattedPhone,
+          practitioner_type: pathwayLabels[state.type] || "Unknown",
+          address: state.address || null,
+          city: state.city || null,
+          province: state.province || null,
+          country: state.province
+            ? [
+                "ON", "BC", "AB", "QC", "MB", "SK", "NS", "NB", "NL", "PE", "NT", "YT", "NU",
+                "Ontario", "British Columbia", "Alberta", "Quebec", "Manitoba", "Saskatchewan",
+                "Nova Scotia", "New Brunswick", "Newfoundland", "Prince Edward Island",
+              ].some((p) => state.province?.toLowerCase().includes(p.toLowerCase()))
+              ? "Canada"
+              : "United States"
+            : null,
+          contact_email: state.email || null,
+          notes: state.contactName ? `Contact: ${state.contactName}` : null,
+        };
+
+        const saveResponse = await fetch("/api/practitioners", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(practitionerData),
+        });
+        const saveResult = await saveResponse.json();
+        if (saveResult.practitioner) {
+          practitionerId = saveResult.practitioner.id;
+        }
+      } catch (saveError) {
+        console.error("Failed to save practitioner:", saveError);
+        // Continue — the call can still proceed; webhook will use phone lookup
+      }
+
+      // Step 2: Build call payload WITH practitioner_id (if save succeeded)
       const requestData = {
         practice_name: state.practiceName || "your practice",
         contact_name: state.contactName || "",
@@ -325,13 +375,13 @@ export function QuickCallTab({
         wait_for_greeting: true,
         record: true,
         max_duration: 15,
-        webhook:
-          process.env.NEXT_PUBLIC_BLAND_WEBHOOK_URL ||
-          "https://gdwwppwaxyvudsecexuq.supabase.co/functions/v1/webhook-processor",
+        webhook: WEBHOOK_URL,
         request_data: requestData,
         metadata: {
           campaign: "quick_call",
           source: "manual_dial",
+          // Include practitioner_id so webhook can link directly
+          ...(practitionerId && { practitioner_id: practitionerId }),
           selected_pathway: state.type,
           practice_name: state.practiceName || undefined,
           contact_name: state.contactName || undefined,
@@ -345,6 +395,7 @@ export function QuickCallTab({
       };
       if (memoryId) callPayload.memory_id = memoryId.trim();
 
+      // Step 3: Initiate the call
       const response = await fetch("/api/bland/calls", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -354,43 +405,6 @@ export function QuickCallTab({
       const result = await response.json();
 
       if (result.status === "success") {
-        const callTarget = state.practiceName || formattedPhone;
-
-        // Save practitioner to DB
-        let practitionerId: string | null = null;
-        try {
-          const practitionerData = {
-            name: state.practiceName || `Unknown (${formattedPhone})`,
-            phone: formattedPhone,
-            practitioner_type: pathwayLabels[state.type] || "Unknown",
-            address: state.address || null,
-            city: state.city || null,
-            province: state.province || null,
-            country: state.province
-              ? [
-                  "ON", "BC", "AB", "QC", "MB", "SK", "NS", "NB", "NL", "PE", "NT", "YT", "NU",
-                  "Ontario", "British Columbia", "Alberta", "Quebec", "Manitoba", "Saskatchewan",
-                  "Nova Scotia", "New Brunswick", "Newfoundland", "Prince Edward Island",
-                ].some((p) => state.province?.toLowerCase().includes(p.toLowerCase()))
-                ? "Canada"
-                : "United States"
-              : null,
-            notes: state.contactName ? `Contact: ${state.contactName}` : null,
-          };
-
-          const saveResponse = await fetch("/api/practitioners", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(practitionerData),
-          });
-          const saveResult = await saveResponse.json();
-          if (saveResult.practitioner) {
-            practitionerId = saveResult.practitioner.id;
-          }
-        } catch (saveError) {
-          console.error("Failed to save practitioner:", saveError);
-        }
-
         const callRecordId = practitionerId || result.call_id || `manual-${Date.now()}`;
         onManualCallStarted(
           {
@@ -407,8 +421,6 @@ export function QuickCallTab({
 
         onCallSuccess(callTarget);
         dispatch({ type: "RESET" });
-        loadCallRecords();
-        loadPractitioners(1);
       } else {
         onCallFailed(state.practiceName || "Unknown", result.message);
       }
@@ -418,7 +430,7 @@ export function QuickCallTab({
     }
 
     dispatch({ type: "SET_MAKING", value: false });
-  }, [state, onManualCallStarted, onCallSuccess, onCallFailed, loadCallRecords, loadPractitioners]);
+  }, [state, onManualCallStarted, onCallSuccess, onCallFailed]);
 
   return (
     <ErrorBoundary section="Quick Call">

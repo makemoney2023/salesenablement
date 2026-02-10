@@ -116,8 +116,8 @@ export function saveCallRecord(record: CampaignCallRecord): void {
 }
 
 /**
- * Create a new call record for a practitioner
- * Now syncs to Supabase via API
+ * Create a new call record for a practitioner.
+ * Saves to localStorage immediately and syncs to Supabase via API.
  * 
  * @param practitioner - Practitioner data including optional call_id from Bland.ai
  * @returns The created call record
@@ -158,27 +158,46 @@ export function createCallRecord(practitioner: {
   // Save to localStorage for immediate UI update
   saveCallRecord(record);
   
-  // Also sync to Supabase via API (fire and forget)
+  // Also sync to Supabase via API (fire and forget for batch campaigns)
   if (isBrowser) {
-    fetch('/api/campaign/calls', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        practitioner_id: practitioner.id,
-        practitioner_name: practitioner.name,
-        practitioner_type: practitioner.practitioner_type,
-        phone: practitioner.phone,
-        address: practitioner.address,
-        city: practitioner.city,
-        province: practitioner.province,
-        call_id: practitioner.call_id,  // Include call_id in Supabase sync
-        status: initialStatus,
-        call_started_at: practitioner.call_id ? now : undefined,
-      }),
-    }).catch(err => console.warn('Failed to sync call record to Supabase:', err));
+    syncCallRecordToSupabase(record).catch(err =>
+      console.warn('Failed to sync call record to Supabase:', err)
+    );
   }
   
   return record;
+}
+
+/**
+ * Sync a call record to Supabase. Exported so callers can await it
+ * when they need the record to exist before refreshing the UI
+ * (e.g. quick calls need the record in Supabase for the live queue).
+ */
+export async function syncCallRecordToSupabase(
+  record: CampaignCallRecord
+): Promise<boolean> {
+  try {
+    const response = await fetch('/api/campaign/calls', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        practitioner_id: record.practitioner_id,
+        practitioner_name: record.practitioner_name,
+        practitioner_type: record.practitioner_type,
+        phone: record.phone,
+        address: record.address,
+        city: record.city,
+        province: record.province,
+        call_id: record.call_id,
+        status: record.status,
+        call_started_at: record.call_started_at,
+      }),
+    });
+    return response.ok;
+  } catch (err) {
+    console.warn('Failed to sync call record to Supabase:', err);
+    return false;
+  }
 }
 
 /**

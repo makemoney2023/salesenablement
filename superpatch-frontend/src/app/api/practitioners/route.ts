@@ -318,6 +318,7 @@ export async function POST(request: NextRequest) {
       province: validated.province || null,
       country: validated.country || null,
       phone: validated.phone,
+      contact_email: validated.contact_email || null,
       website: validated.website || null,
       rating: null,
       review_count: null,

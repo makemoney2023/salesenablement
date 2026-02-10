@@ -77,7 +77,8 @@ export const CreatePractitionerSchema = z.object({
   address: z.string().max(500).optional(),
   city: z.string().max(200).optional(),
   province: z.string().max(200).optional(),
-  country: z.string().max(5).optional(),
+  country: z.string().max(20).optional(),
+  contact_email: z.string().email().optional().or(z.literal("")).or(z.literal(null)),
   website: z.string().url().optional().or(z.literal("")).or(z.literal(null)),
   notes: z.string().max(5000).optional(),
 });

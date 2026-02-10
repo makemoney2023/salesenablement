@@ -15,10 +15,9 @@ import {
 import {
   KB_ID,
   VOICE_ID,
+  WEBHOOK_URL,
   getPathwayId as getPathwayIdFromConfig,
 } from './config/pathways';
-// Use Supabase Edge Function for webhook - lower latency, same infrastructure as database
-const WEBHOOK_URL = process.env.NEXT_PUBLIC_BLAND_WEBHOOK_URL || "https://gdwwppwaxyvudsecexuq.supabase.co/functions/v1/webhook-processor";
 // Bland Memory Store ID for cross-call context retention
 const MEMORY_ID = process.env.NEXT_PUBLIC_BLAND_MEMORY_ID || "";
 

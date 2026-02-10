@@ -28,6 +28,7 @@ vi.mock('@/lib/campaign-storage', () => ({
 vi.mock('@/lib/config/pathways', () => ({
   KB_ID: 'test-kb-id',
   VOICE_ID: 'test-voice-id',
+  WEBHOOK_URL: 'https://test.supabase.co/functions/v1/webhook-processor',
   getPathwayId: vi.fn((type: string) => `pathway-for-${type.toLowerCase()}`),
 }));
 

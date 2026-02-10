@@ -39,6 +39,15 @@ export const KB_ID = "b671527d-0c2d-4a21-9586-033dad3b0255";
 export const VOICE_ID = "78c8543e-e5fe-448e-8292-20a7b8c45247";
 
 /**
+ * Bland.ai webhook URL for call completion callbacks.
+ * Uses Supabase Edge Function for lower latency, same infrastructure as database.
+ * Falls back to hardcoded URL if env var is not set.
+ */
+export const WEBHOOK_URL =
+  (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_BLAND_WEBHOOK_URL) ||
+  "https://gdwwppwaxyvudsecexuq.supabase.co/functions/v1/webhook-processor";
+
+/**
  * Resolve a practitioner type string to its pathway ID.
  * Falls back to the default (chiropractor) pathway.
  */
