@@ -40,3 +40,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Supabase Edge Functions: deno.lock files are generated locally by
+# `supabase functions deploy` and re-pinned by the Supabase Edge runtime;
+# checking them in causes spurious diffs after every deploy. Deno itself
+# resolves transitive deps from import maps + deno.json which ARE tracked.
+deno.lock
+supabase/functions/**/deno.lock
