@@ -1,11 +1,20 @@
 # System Integration Review Findings
 
-**Date**: January 15, 2026  
+**Original date**: January 15, 2026  
+**Last updated**: 2026-05-12 (production-fix plan landed — see `docs/superpowers/plans/2026-04-21-ai-call-center-production-fixes.md`)  
 **Scope**: Bland.ai + UI + Supabase Integration
 
 ## Summary
 
 The integration between Bland.ai, the Next.js UI, and Supabase is **well-connected and functional**. All pathway IDs, webhook URLs, and configuration values are consistent across the codebase.
+
+> **2026-05-12 update — all 25 bugs found in the end-to-end review are resolved on branch `fix/ai-call-center-production-2026-04`.** Phase-by-phase entries with file/commit citations live in `superpatch-frontend/docs/CHANGELOG.md` (2026-05-11 and 2026-05-12). Key structural changes since this document was first written:
+> - `/api/webhooks/bland` retired (now HTTP 410). Canonical webhook is the Edge Function `webhook-processor`.
+> - `book-appointment` and `sync-cal-bookings` migrated to Cal.com v2 via the shared `_shared/cal.ts` client.
+> - `practitioners.enrichment_status` normalized to `'enriched'` with a CHECK constraint.
+> - Four pg_cron HTTP jobs repointed and their Bearer tokens sourced from `vault.decrypted_secrets`.
+> - Sample-request notification trigger repaired (was referencing non-existent columns).
+> - Bland.ai webhook variable coercion, practitioner-type canonicalization, and PostgREST `.or()` sanitization centralized.
 
 ---
 
@@ -23,7 +32,8 @@ The integration between Bland.ai, the Next.js UI, and Supabase is **well-connect
 [Bland.ai]
      │
      ▼ (webhook callback)
-[Webhook: /api/webhooks/bland]
+[Edge Function: /functions/v1/webhook-processor]
+     │  (legacy /api/webhooks/bland retired 2026-05-12 → HTTP 410)
      │
      ├──▶ [call_records table] ──▶ [Real-time subscription] ──▶ [UI Update]
      ├──▶ [practitioners table] (qualification data)
@@ -154,9 +164,8 @@ CAL_EVENT_TYPE_ID=...
 - [ ] Verify status updates in real-time when call completes
 
 ### Test 5: Webhook Endpoint Health
-- [ ] GET /api/webhooks/bland - verify "ready" response
-- [ ] GET /api/webhooks/bland?test=supabase - verify connection
-- [ ] POST with test payload - verify processing
+- [ ] `curl -X POST $SUPABASE_URL/functions/v1/webhook-processor` (with valid Bearer + sample payload) returns 200 and writes a `call_records` row.
+- [ ] `curl -X POST $PROD/api/webhooks/bland` returns HTTP 410 with `{"deprecated": true}` (retired path — must not be live).
 
 ### Test 6: Lead Scoring
 - [ ] Complete a call with positive sentiment
@@ -206,7 +215,8 @@ CAL_EVENT_TYPE_ID=...
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `/api/webhooks/bland/route.ts` | ~1300 | Main webhook handler |
+| `/api/webhooks/bland/route.ts` | ~20 | Retired stub — returns HTTP 410. Canonical handler is `/supabase/functions/webhook-processor`. |
+| `/supabase/functions/webhook-processor/index.ts` | ~1300 | Canonical Bland.ai webhook handler (Edge Function). |
 | `/lib/batch-caller.ts` | 528 | Batch call queue management |
 | `/lib/db/call-records.ts` | 500 | Database operations |
 | `/lib/db/types.ts` | 363 | TypeScript types |

@@ -135,7 +135,7 @@ All endpoints return `{ status: "success", data: ... }` or `{ status: "error", m
 | GET / POST | `/api/campaign/notes` | Operator notes on call records |
 | POST | `/api/bland/calls` | Initiate a single Bland.ai call (resolves pathway from practitioner_type) |
 | GET | `/api/bland/calls/[id]` | Fetch call status / transcript / recording URL |
-| POST | `/api/webhooks/bland` | Legacy frontend Bland webhook receiver (primary production path is the `webhook-processor` Edge Function) |
+| POST/GET | `/api/webhooks/bland` | Retired 2026-05-12 — responds with HTTP 410 and `{ deprecated: true, replacement: "/functions/v1/webhook-processor" }`. Canonical handler is the Supabase Edge Function `webhook-processor`. |
 
 ### Practitioner Search
 | Method | Endpoint | Description |

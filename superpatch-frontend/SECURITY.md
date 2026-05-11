@@ -34,7 +34,7 @@ All API routes (except webhooks and auth endpoints) now require authentication v
 
 ### Webhook Security
 
-The Bland.ai webhook endpoint (`/api/webhooks/bland` and the Supabase Edge Function `webhook-processor`) now verifies webhook signatures when `BLAND_WEBHOOK_SECRET` is configured.
+The Bland.ai webhook endpoint is the Supabase Edge Function `webhook-processor`, which verifies webhook signatures when `BLAND_WEBHOOK_SECRET` is configured. The legacy Next.js route `/api/webhooks/bland` was retired on 2026-05-12 and now returns HTTP 410 — repoint any pathway still wired to that URL.
 
 ### CORS
 

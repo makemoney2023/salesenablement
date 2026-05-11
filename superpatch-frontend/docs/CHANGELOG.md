@@ -24,6 +24,20 @@ Frontend app deltas (Next.js app, API routes, client components, frontend deps).
 
 ### Added
 - `superpatch-frontend/supabase/tests/sample_requests_insert.test.sql` pgTAP smoke test asserting a minimal `sample_requests` insert succeeds. Runs once a local Supabase test harness is wired (see the plan's Task 4.3).
+- `superpatch-frontend/supabase/functions/_shared/pathways.test.ts` — Deno companion to the existing Vitest `canonical-ids-sync` test. Asserts the Edge module's `KB_ID`, `VOICE_ID`, `DEFAULT_PATHWAY_ID`, `DEFAULT_WEBHOOK_URL`, every canonical pathway slug + alias (via both direct `PATHWAY_IDS` lookup and `getPathwayId`), and the unknown-input default behaviour all match `b2b_sales_enablement/bland_ai_pathways/canonical_ids.json`. Runs inside the Edge runtime so a deploy carrying stale UUIDs fails before it leaves CI. 7 tests, all green.
+
+### Changed
+- Dead code removed:
+  - `process-retry-queue/index.ts` — drop the unused `callId` param on `updatePractitionerAfterCall`; the Bland `call_id` was passed but never written. Both call sites updated.
+  - `analyze-call/index.ts` — dedupe four duplicated `response.replace(/```json\n?|\n?```/g, "")` regex guards into a `stripJsonFences` helper. Behaviour preserved because Gemini 2.0 Flash still occasionally wraps JSON in markdown fences despite the "Return ONLY valid JSON" prompt instruction.
+- Drift in `PATHWAY_IDS` maps fixed in **both** runtimes after the new Deno canonical-ID test surfaced missing aliases:
+  - `supabase/functions/_shared/pathways.ts`: added `naturopaths`, `acupuncturists`, `integrative_medicine`, `functional_medicine` keys.
+  - `src/lib/config/pathways.ts`: added `chiropractors`, `naturopaths`, `acupuncturists`, `integrative_medicine`, `functional_medicine` keys.
+  - Every canonical pathway slug + alias listed in `canonical_ids.json` now resolves to the correct UUID in both Node (Vitest, Next.js) and Deno (Edge Functions).
+- Docs scrubbed of stale `/api/webhooks/bland` references that implied the Next.js route was still live:
+  - `docs/CALL_CENTER.md` — Bland Integration section now flags the legacy route as HTTP 410 and adds an "API versions" table covering Cal.com v2, Bland.ai v1, Supabase JS, and Gemini.
+  - `docs/SYSTEM_REVIEW_FINDINGS.md` — masthead note that all 25 bugs are resolved on `fix/ai-call-center-production-2026-04`; data-flow diagram, Test 5 webhook checklist, and file inventory updated.
+  - `docs/FEATURE_SCOPE.md`, `superpatch-frontend/README.md`, root `README.md`, `superpatch-frontend/SECURITY.md` — `/api/webhooks/bland` consistently labelled as retired with a 2026-05-12 cutoff date.
 
 ### Operational (run BEFORE applying 20260512_repoint_cron_jobs.sql)
 - Insert the `service_role_key` into Supabase Vault:

@@ -136,7 +136,13 @@ def make_personalized_call(
         "wait_for_greeting": kwargs.get("wait_for_greeting", True),
         "record": kwargs.get("record", True),
         "max_duration": kwargs.get("max_duration", 15),
-        "webhook": kwargs.get("webhook", "https://sales-enablement-six.vercel.app/api/webhooks/bland"),
+        "webhook": kwargs.get(
+            "webhook",
+            # Canonical webhook: Supabase Edge Function `webhook-processor`.
+            # The legacy Next.js route /api/webhooks/bland was retired on 2026-05-12
+            # and now returns HTTP 410. See canonical_ids.json -> webhooks.primary.
+            "https://gdwwppwaxyvudsecexuq.supabase.co/functions/v1/webhook-processor",
+        ),
         "request_data": request_data,
         "metadata": {
             "campaign": "canadian_practitioners",

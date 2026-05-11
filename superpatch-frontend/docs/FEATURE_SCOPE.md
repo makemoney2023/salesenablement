@@ -536,7 +536,7 @@ AI-powered voice agent call center for outbound B2B practitioner outreach, integ
 | `/api/campaign/calls` | GET/PATCH | Call record management |
 | `/api/bland/calls` | POST | Initiate call via Bland.ai |
 | `/api/bland/calls/[id]` | GET | Get call status |
-| `/api/webhooks/bland` | POST | Bland.ai webhook handler |
+| `/api/webhooks/bland` | POST/GET | Retired 2026-05-12 — returns HTTP 410. Canonical webhook is `/functions/v1/webhook-processor`. |
 | `/api/samples` | GET/PATCH | Sample request management |
 | `/api/memory` | GET/POST | Bland.ai memory management |
 
