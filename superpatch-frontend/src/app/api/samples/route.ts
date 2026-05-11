@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireApiAuth } from "@/lib/auth";
 import { UpdateSampleSchema, validateBody } from "@/lib/validation";
 import { supabaseAdmin, isSupabaseConfigured } from "@/lib/supabase";
+import { sanitizeSearchInput } from "@/lib/security";
 import type { SampleRequest } from "@/lib/db/types";
 
 // GET /api/samples - Fetch sample requests with filtering and pagination
@@ -35,9 +36,17 @@ export async function GET(request: NextRequest) {
     }
 
     if (search) {
-      query = query.or(
-        `requester_name.ilike.%${search}%,practice_name.ilike.%${search}%,phone.ilike.%${search}%,shipping_city.ilike.%${search}%`
-      );
+      // PostgREST treats `,` `(` `)` `%` as filter-syntax control chars;
+      // raw user input was being interpolated directly into a .or()
+      // clause and could inject additional predicates (or break the
+      // query). sanitizeSearchInput escapes %/_ and strips ,/(/) before
+      // we splice the value back into the wildcard.
+      const sanitized = sanitizeSearchInput(search, 120);
+      if (sanitized) {
+        query = query.or(
+          `requester_name.ilike.%${sanitized}%,practice_name.ilike.%${sanitized}%,phone.ilike.%${sanitized}%,shipping_city.ilike.%${sanitized}%`
+        );
+      }
     }
 
     // Order by created_at descending (newest first)
