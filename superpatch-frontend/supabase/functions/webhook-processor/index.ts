@@ -7,6 +7,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { canonicalPractitionerType } from "../_shared/practitioner-type.ts";
 import { toBool } from "../_shared/coerce.ts";
+import { pickSampleEmail } from "./email.ts";
+import { buildProductsRequested, classifySampleType } from "./sample-type.ts";
 
 function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 30000): Promise<Response> {
   const controller = new AbortController();
@@ -1300,24 +1302,37 @@ serve(async (req) => {
     const wantsSample = toBool(vars.wants_sample) || toBool(vars.sample_requested);
     if (wantsSample) {
       console.log("📦 Sample request detected...");
-      const productsRaw = vars.products_interested || vars.sample_products || vars.products_requested || vars.products || "";
-      let productsRequested: string[] | null = null;
-      if (productsRaw && productsRaw !== "all" && productsRaw !== "standard_kit") {
-        productsRequested = productsRaw.split(",").map(p => p.trim().toLowerCase()).filter(Boolean);
-      }
+      const productsRaw =
+        vars.products_interested ||
+        vars.sample_products ||
+        vars.products_requested ||
+        vars.products ||
+        "";
+      const sampleType = classifySampleType(productsRaw);
+      const productsRequested = buildProductsRequested(productsRaw, sampleType);
+
+      // Final email validation gate. resolvedEmail already passed through
+      // sanitizeTranscribedEmail, but pickSampleEmail enforces the
+      // form > db > AI priority + a strict regex, so a half-cleaned AI
+      // value can't leak into sample_requests.email.
+      const sampleEmail = pickSampleEmail({
+        formEmail: meta.clinic_email,
+        dbEmail: resolvedEmail,
+        aiEmail: vars.email ?? vars.practitioner_email,
+      });
 
       const sampleRequest = {
         call_record_id: savedRecord?.id || null,
         practitioner_id: resolvedPractitionerId || null,
         requester_name: contactName || resolvedPractitionerName || "Unknown",
         practice_name: practiceName || resolvedPractitionerName,
-        email: resolvedEmail || null,
+        email: sampleEmail,
         phone: payload.to,
         shipping_address: vars.sample_shipping_address || vars.shipping_address || resolvedAddress || null,
         shipping_city: vars.sample_shipping_city || vars.shipping_city || resolvedCity || null,
         shipping_province: vars.sample_shipping_province || vars.shipping_province || resolvedProvince || null,
         shipping_postal_code: vars.sample_postal_code || vars.shipping_postal_code || meta.postal_code || null,
-        sample_type: productsRaw === "all" || !productsRaw ? "standard_kit" : "custom",
+        sample_type: sampleType,
         products_requested: productsRequested,
         quantity: parseInt(vars.sample_quantity || "1", 10) || 1,
         notes: vars.sample_notes || null,
