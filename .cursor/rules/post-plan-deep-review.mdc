@@ -1,0 +1,116 @@
+---
+description: Mandatory end-to-end deep-dive code review after executing any multi-step plan
+alwaysApply: true
+---
+
+# Post-Plan Deep-Dive Review
+
+After executing any multi-step plan, perform a comprehensive end-to-end code review before claiming the work is complete. Per-task reviews catch local issues; this review catches cross-cutting gaps that only emerge when the full scope is visible.
+
+## When This Rule Triggers
+
+This review is **mandatory** after:
+
+- Completing all tasks in a written implementation plan
+- Finishing a multi-step feature that spans frontend and backend
+- Executing a plan created by the `writing-plans` or `executing-plans` skill
+
+This review is **not** a substitute for per-task verification. It runs **in addition to** task-level checks.
+
+## The Review Process
+
+### 1. Reload the Original Plan
+
+Re-read the plan document or requirements that initiated the work. Do not rely on memory of what was requested.
+
+### 2. Plan-vs-Implementation Audit
+
+Walk through every item in the plan and verify it was implemented:
+
+| Check | How to verify |
+|-------|---------------|
+| Every plan task has corresponding code changes | `git diff` against the base branch/commit |
+| No plan items were silently dropped or deferred | Compare plan checklist against completed todos |
+| Scope was not accidentally expanded beyond the plan | Review all changed files -- flag anything not in plan |
+| Edge cases mentioned in the plan are handled | Search for error/empty/loading states in changed code |
+
+### 3. Cross-Cutting Integration Review
+
+These issues are invisible at the task level but surface when reviewing the full scope:
+
+- **Data flow continuity**: Trace at least one critical path from DB through API through frontend render. Confirm no breaks.
+- **Shared state consistency**: If multiple tasks touched the same state/store/context, verify no conflicts or stale reads.
+- **API contract alignment**: For every new or modified endpoint, confirm frontend and backend agree on request/response shapes.
+- **Auth and permissions**: Verify new routes are protected. Verify new UI elements respect auth state.
+- **Error propagation**: Confirm errors raised in backend reach the frontend as meaningful messages, not swallowed silently.
+- **Migration consistency**: If schema changed, verify queries, ORM models, and API responses all reflect the new schema.
+
+### 4. Quality Sweep
+
+Run these checks across ALL files changed during the plan:
+
+- **Dead code**: Grep for unused imports, unreachable functions, orphaned components.
+- **Banned patterns**: Scan for `TODO`, `FIXME`, `pass`, empty catch blocks, hardcoded mock data (per `no-scaffold-code` rule).
+- **Test coverage**: Verify every new public function/endpoint has at least one test. Run the full test suite.
+- **Linter**: Run linter on all changed files. Zero new errors.
+- **Documentation**: Confirm READMEs were updated per `readme-first-session` rule.
+
+### 5. Dispatch the Code-Reviewer Subagent
+
+After completing your own review, dispatch a `code-reviewer` subagent with:
+
+- The full git diff (base commit to HEAD)
+- The original plan/requirements
+- A summary of what was built
+
+Act on its feedback before claiming completion.
+
+### 6. Gap Report
+
+Produce a brief gap report. If gaps exist, fix them before moving on.
+
+```
+## Post-Plan Review Summary
+
+**Plan**: [plan name or description]
+**Scope**: [N files changed, M endpoints, K components]
+
+### Gaps Found
+- [ ] [Description of gap and fix applied]
+- [ ] [Description of gap and fix applied]
+
+### Verified Clean
+- [x] All plan items implemented
+- [x] Cross-boundary contracts match
+- [x] Tests pass (N/N)
+- [x] Linter clean
+- [x] Docs updated
+- [x] Code-reviewer subagent feedback addressed
+```
+
+## Rationalization Prevention
+
+| Excuse | Reality |
+|--------|---------|
+| "I reviewed each task as I went" | Task-level reviews miss cross-task integration gaps. Do the full review. |
+| "The tests all pass" | Tests prove individual behavior. They do not prove the plan was fully implemented. |
+| "It's a small plan, only 3 tasks" | Small plans have small reviews. Still do it. |
+| "The code-reviewer subagent already ran per-task" | Per-task reviews have no visibility into the full scope. Run the plan-level review. |
+| "I'll review it in the PR" | PRs catch formatting. This review catches architectural gaps. Do it now. |
+| "I'm confident everything is wired" | Confidence is not evidence. Trace the paths. |
+| "The plan was simple and I followed it exactly" | Plans have implicit requirements. The review surfaces what the plan assumed but did not state. |
+
+## Workflow Position
+
+This rule activates at the boundary between plan execution and completion:
+
+```
+1. Write plan (writing-plans skill)
+2. Execute tasks with per-task verification (executing-plans / TDD / no-scaffold-code)
+3. >>> POST-PLAN DEEP-DIVE REVIEW (this rule) <<<
+4. Fix any gaps found
+5. Finish branch (finishing-a-development-branch skill)
+6. Commit / PR
+```
+
+Do not proceed to step 5 until this review is complete and all gaps are resolved.

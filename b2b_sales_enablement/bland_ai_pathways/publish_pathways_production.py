@@ -27,33 +27,27 @@ if not API_KEY:
     raise ValueError("BLAND_API_KEY environment variable is required")
 BASE_URL = "https://api.bland.ai/v1"
 
-# Pathway IDs and their contextual JSON files
+# Pathway IDs and their contextual JSON files are loaded from the single
+# source of truth: canonical_ids.json in this folder.
 SCRIPT_DIR = Path(__file__).parent
+CANONICAL_PATH = SCRIPT_DIR / "canonical_ids.json"
+if not CANONICAL_PATH.exists():
+    raise FileNotFoundError(
+        f"canonical_ids.json not found at {CANONICAL_PATH}. "
+        "This file is the source of truth for Bland.ai IDs."
+    )
+
+with CANONICAL_PATH.open("r") as _f:
+    _CANONICAL = json.load(_f)
+
+# PATHWAYS keys are the display names used in log output. We derive them from
+# the contextual_file base name so they stay aligned with the JSON source.
 PATHWAYS = {
-    "Chiropractors": {
-        "id": "31361385-06e1-4d84-9d0c-93b0b3f041ae",
-        "file": "Chiropractors_contextual.json"
-    },
-    "Massage_Therapists": {
-        "id": "d975dd09-dca7-4329-acb0-b5841ed6a2ac",
-        "file": "Massage_Therapists_contextual.json"
-    },
-    "Naturopaths": {
-        "id": "3ee43790-2954-4a81-b7a1-c3d84b65c974",
-        "file": "Naturopaths_contextual.json"
-    },
-    "Integrative_Medicine": {
-        "id": "e194ac70-5f95-4dec-8ff4-142267156d83",
-        "file": "Integrative_Medicine_contextual.json"
-    },
-    "Functional_Medicine": {
-        "id": "e6f91524-42c1-4c87-abcf-928f7596da3d",
-        "file": "Functional_Medicine_contextual.json"
-    },
-    "Acupuncturists": {
-        "id": "22ad067d-be37-46d6-b6bb-cd7fa9d4e808",
-        "file": "Acupuncturists_contextual.json"
-    },
+    Path(_entry["contextual_file"]).stem.replace("_contextual", ""): {
+        "id": _entry["id"],
+        "file": _entry["contextual_file"],
+    }
+    for _entry in _CANONICAL["pathways"].values()
 }
 
 

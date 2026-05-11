@@ -1,0 +1,125 @@
+---
+description: Enforce end-to-end code completeness -- no scaffolding, dead code, or broken wiring
+alwaysApply: true
+---
+
+# No-Scaffold / End-to-End Completeness Rule
+
+Every piece of code must be fully wired, integrated, and functional. Scaffolding that compiles but does nothing real is a defect.
+
+## Definition of Complete Code
+
+Every unit of code written in a session must satisfy ALL of these properties:
+
+- **Called**: Every function/method is invoked from at least one real code path (not just tests).
+- **Connected**: Every API endpoint has a corresponding frontend call; every frontend call hits a real backend endpoint.
+- **Wired**: Every component receives real data from actual state/API -- not hardcoded placeholders or dummy values.
+- **Handled**: Every error path has real handling -- not empty catch blocks, not `pass`, not `TODO`, not `console.log` alone.
+- **Imported**: Every import is used; every used symbol is imported.
+- **Routed**: Every route is reachable from navigation; every navigation target exists as a real route.
+- **Typed**: Request/response shapes match across the frontend-backend boundary.
+- **Configured**: Any new env var is added to `superpatch-frontend/.env.local.example` (frontend), to the relevant Supabase Function secrets (Edge Functions), and documented for Vercel (frontend deploy) or Supabase (Edge Functions + DB).
+
+If ANY property is missing, the code is incomplete. Do not move on.
+
+## Banned Patterns
+
+These are hard failures. Code containing any of these is not shippable:
+
+| Pattern | Why it fails |
+|---------|-------------|
+| `TODO`, `FIXME`, `HACK`, `XXX` in committed code without an attached GitHub issue | Deferred work with no tracking is forgotten work |
+| `pass` or empty function/method bodies as placeholders (Python) | Dead code that silently does nothing |
+| `throw new Error("not implemented")` or equivalent | Runtime bomb waiting to explode |
+| `console.log` / `print()` as the only error handling | Errors swallowed in production |
+| Hardcoded mock data in production components | UI lies about system state |
+| Unused imports, variables, or functions | Dead code that obscures real logic |
+| API routes with no frontend consumer | Backend work that cannot be reached |
+| Frontend calls to endpoints that do not exist yet | UI that will crash on interaction |
+| Components that accept props but are rendered with hardcoded values | Wiring that looks connected but is not |
+| State slices or hooks defined but never read or dispatched | Infrastructure with no consumers |
+
+## Integration Tracing Checklist
+
+Before marking any change complete, trace the FULL data path end-to-end:
+
+### Backend path
+1. DB query/mutation executes correctly
+2. Service/utility function transforms data as expected
+3. API route calls the service and returns the correct response shape
+4. Auth middleware protects the route if required
+5. Error cases return proper HTTP status codes and messages
+
+### Frontend path
+1. API client function calls the correct endpoint with correct params
+2. State management (hook/store) calls the API client and stores the result
+3. Component reads from state and renders real data
+4. User interactions dispatch real actions that trigger real API calls
+5. Loading, error, and empty states are handled (not just the happy path)
+
+### Cross-boundary verification
+1. Request body/params sent by frontend match what the backend expects
+2. Response shape returned by backend matches what the frontend destructures
+3. Auth tokens are attached to requests and validated on the backend
+4. CORS, content-type, and headers are correct
+
+### Environment and config
+1. New frontend env vars added to `superpatch-frontend/.env.local.example`
+2. New Edge Function secrets added via `supabase secrets set` and listed in the function README
+3. New vars documented for Vercel (frontend) or Supabase (Edge Functions) deployment
+4. No secrets hardcoded in source, pathway JSON, or `canonical_ids.json`
+
+## Verification Protocol
+
+Before claiming code is complete, execute these checks:
+
+1. **Trace callers**: For every new function, find at least one real call site (grep/search). If none exists, wire it or delete it.
+2. **Trace endpoints**: For every new API route, find the frontend fetch/call that hits it. If none exists, build it or delete the route.
+3. **Trace props**: For every new component prop, find where real data is passed in. If it is hardcoded or placeholder, replace it with a real data source.
+4. **Trace state**: For every new state variable/hook, find where it is read AND where it is written. Both must exist.
+5. **Run tests**: Execute the relevant test suite. Zero failures required.
+6. **Run linter**: Execute linter on changed files. Zero new errors required.
+7. **Cross-stack check**: If the change touches both frontend and backend, verify the integration works as a pair -- not just each side independently.
+
+## Workflow Integration
+
+This rule works alongside existing practices:
+
+- **TDD** proves behavior is correct. This rule proves the behavior is reachable.
+- **Verification-before-completion** requires evidence. This rule defines exactly what evidence to collect.
+- **README-first-session** documents architecture. This rule ensures code matches that architecture.
+
+Sequence for any feature or fix:
+
+```
+1. Write failing test (TDD)
+2. Implement minimal code to pass (TDD)
+3. Wire the code into the real system (this rule)
+4. Trace the full path end-to-end (this rule)
+5. Run tests + linter (verification)
+6. Update docs if behavior changed (README rule)
+```
+
+## Rationalization Prevention
+
+| Excuse | Reality |
+|--------|---------|
+| "I'll wire it up in the next PR" | Unwired code in main is dead code. Wire it now or don't merge it. |
+| "The frontend isn't ready yet" | Then don't build the backend route yet, or build both together. |
+| "It's just a utility function" | Utility functions nobody calls are dead weight. Prove it is called. |
+| "I'll replace the mock data later" | Later never comes. Use real data now. |
+| "The endpoint exists, I just haven't tested the integration" | Untested integration is broken integration. Test it. |
+| "It compiles and the tests pass" | Compiling proves syntax. Tests prove behavior. Neither proves wiring. Trace the path. |
+| "This is just scaffolding for now" | Scaffolding is not shippable. Either finish it or don't commit it. |
+
+## Quick Self-Check
+
+Before every commit, answer these questions. If any answer is "no", the work is not done:
+
+- Can a user trigger every new code path through the actual UI or API?
+- Does every new function have a real caller outside of tests?
+- Does every new endpoint have a real frontend consumer?
+- Are all error states handled with real logic (not stubs)?
+- Do frontend and backend agree on request/response shapes?
+- Are there zero `TODO`/`FIXME` markers without linked issues?
+- Have I verified the integration works, not just the individual pieces?

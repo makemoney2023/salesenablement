@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireApiAuth } from "@/lib/auth";
 import { UpdateSampleSchema, validateBody } from "@/lib/validation";
 import { supabaseAdmin, isSupabaseConfigured } from "@/lib/supabase";
+import { sanitizeSearchInput } from "@/lib/security";
 import type { SampleRequest } from "@/lib/db/types";
+import { SAMPLES_CSV_MAX_ROWS } from "./constants";
 
 // GET /api/samples - Fetch sample requests with filtering and pagination
 export async function GET(request: NextRequest) {
@@ -35,16 +37,27 @@ export async function GET(request: NextRequest) {
     }
 
     if (search) {
-      query = query.or(
-        `requester_name.ilike.%${search}%,practice_name.ilike.%${search}%,phone.ilike.%${search}%,shipping_city.ilike.%${search}%`
-      );
+      // PostgREST treats `,` `(` `)` `%` as filter-syntax control chars;
+      // raw user input was being interpolated directly into a .or()
+      // clause and could inject additional predicates (or break the
+      // query). sanitizeSearchInput escapes %/_ and strips ,/(/) before
+      // we splice the value back into the wildcard.
+      const sanitized = sanitizeSearchInput(search, 120);
+      if (sanitized) {
+        query = query.or(
+          `requester_name.ilike.%${sanitized}%,practice_name.ilike.%${sanitized}%,phone.ilike.%${sanitized}%,shipping_city.ilike.%${sanitized}%`
+        );
+      }
     }
 
     // Order by created_at descending (newest first)
     query = query.order("created_at", { ascending: false });
 
-    // If CSV export, get all records
+    // CSV export: bound the response to SAMPLES_CSV_MAX_ROWS so a
+    // growing dataset can't OOM the Vercel function (or produce a
+    // multi-minute streaming download for the client).
     if (format === "csv") {
+      query = query.limit(SAMPLES_CSV_MAX_ROWS);
       const { data, error } = await query;
 
       if (error) {
@@ -52,13 +65,18 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ error: error.message }, { status: 500 });
       }
 
-      // Generate CSV
-      const csv = generateCSV((data as SampleRequest[]) || []);
-      
+      const rows = (data as SampleRequest[]) || [];
+      const csv = generateCSV(rows);
+      const hitCap = rows.length === SAMPLES_CSV_MAX_ROWS;
+
       return new NextResponse(csv, {
         headers: {
           "Content-Type": "text/csv",
           "Content-Disposition": `attachment; filename="sample_requests_${new Date().toISOString().split("T")[0]}.csv"`,
+          // Surface the cap to the client so the UI can warn that the
+          // export may be truncated (consumed by the admin samples page).
+          "X-Export-Truncated": hitCap ? "true" : "false",
+          "X-Export-Row-Cap": String(SAMPLES_CSV_MAX_ROWS),
         },
       });
     }

@@ -1,8 +1,10 @@
 # SuperPatch Sales App - Data Structure Specification
 
+> **Status (2026-04-21): Partially outdated.** Authoritative sources are `src/types/index.ts`, `src/data/markets.ts`, and `src/data/products.ts`. The D2C wordtrack tree referenced below is being removed (see git history for `src/data/wordtracks/`); the `Market` type is shifting toward `b2b` + `canadian`. Update this document when the wordtrack refactor ships.
+
 ## Overview
 
-Content will be sourced from the existing markdown files in `SalesEnablement/` and transformed into structured JSON/TypeScript data for the app.
+Content is sourced from the existing markdown files in `b2b_sales_enablement/` and transformed into structured JSON/TypeScript data consumed by the Next.js app.
 
 ---
 

@@ -14,33 +14,42 @@ Usage:
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime
+from pathlib import Path
 
 # Configuration
 API_KEY = os.environ.get("BLAND_API_KEY")
 if not API_KEY:
     raise ValueError("BLAND_API_KEY environment variable is required")
 BASE_URL = "https://api.bland.ai/v1"
-KB_ID = "b671527d-0c2d-4a21-9586-033dad3b0255"
 
-# Cal.com Integration Tools
-CHECK_AVAILABILITY_TOOL = "TL-79a3c232-ca51-4244-b5d2-21f4e70fd872"
-BOOK_APPOINTMENT_TOOL = "TL-bbaa7f38-1b6a-4f27-ad27-18fb7c6e1526"
+# Load canonical IDs from the single source of truth.
+# See canonical_ids.json in this folder.
+CANONICAL_PATH = Path(__file__).parent / "canonical_ids.json"
+if not CANONICAL_PATH.exists():
+    raise FileNotFoundError(
+        f"canonical_ids.json not found at {CANONICAL_PATH}. "
+        "This file is the source of truth for Bland.ai IDs."
+    )
 
-# Voice ID for Jennifer
-VOICE_ID = "78c8543e-e5fe-448e-8292-20a7b8c45247"
+with CANONICAL_PATH.open("r") as _f:
+    _CANONICAL = json.load(_f)
 
-# Pathway IDs
-PATHWAYS = {
-    "chiropractors": "cf2233ef-7fb2-49ff-af29-0eee47204e9f",
-    "massage": "d202aad7-bcb6-478c-a211-b00877545e05",
-    "naturopaths": "1d07d635-147e-4f69-a4cd-c124b33b073d",
-    "integrative": "1c958dd7-e1ff-4f6d-b9a3-f80a369c26aa",
-    "functional": "236dbd85-c74d-4774-a7af-4b5812015c68",
-    "acupuncturists": "154f93f4-54a5-4900-92e8-0fa217508127",
-}
+KB_ID = _CANONICAL["knowledge_base"]["id"]
+VOICE_ID = _CANONICAL["voice"]["id"]
+CHECK_AVAILABILITY_TOOL = _CANONICAL["tools"]["check_availability"]["id"]
+BOOK_APPOINTMENT_TOOL = _CANONICAL["tools"]["book_appointment"]["id"]
+
+# PATHWAYS maps every canonical slug + alias to its pathway id so CLI users can
+# pass any familiar practitioner-type label.
+PATHWAYS = {}
+for _slug, _entry in _CANONICAL["pathways"].items():
+    PATHWAYS[_slug] = _entry["id"]
+    for _alias in _entry.get("aliases", []):
+        PATHWAYS[_alias] = _entry["id"]
 
 def api_request(method: str, endpoint: str, data: dict = None) -> dict:
     """Make an API request using curl."""

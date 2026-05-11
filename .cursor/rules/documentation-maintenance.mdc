@@ -1,0 +1,53 @@
+---
+description: Doc-drift decision matrix — what to update when code changes
+alwaysApply: true
+---
+
+# Documentation Maintenance
+
+Sales Enablement docs stay truthful or they lie. This rule defines **what must be updated when specific kinds of change ship**. It complements `readme-first-session.mdc` (what to read at session start).
+
+## Decision matrix
+
+| Change kind | Must update |
+|---|---|
+| Bland pathway, KB, voice, tool, Cal.com, or webhook ID | `canonical_ids.json` + both TS mirrors + `b2b_sales_enablement/bland_ai_pathways/README.md` + `docs/dev/changelog.md` |
+| Pathway node / extractVars / prompt content | `<Type>_contextual.json` + `superpatch-frontend/docs/PATHWAY_VARIABLES.md` (if vars changed) + `docs/dev/changelog.md` |
+| Supabase migration (table / index / RLS / function / trigger) | Migration file + `schema.sql` + `src/lib/db/types.ts` (if columns changed) + `superpatch-frontend/docs/CHANGELOG.md` |
+| Edge Function added / removed / behavior changed | `superpatch-frontend/README.md` (Edge Functions section) + `docs/dev/changelog.md` |
+| New frontend API route (`src/app/api/*`) | `superpatch-frontend/README.md` (API table) + `superpatch-frontend/docs/CHANGELOG.md` |
+| Call-center UI (`/campaign`, dialer, qualification) | `superpatch-frontend/docs/CALL_CENTER.md` + `superpatch-frontend/docs/CHANGELOG.md` |
+| Lead ingestion (scraper, enrichment, LinkedIn, migrate) | `superpatch-frontend/docs/LEAD_PIPELINE.md` + `docs/dev/changelog.md` |
+| Data model for wordtracks / products / markets | `superpatch-frontend/docs/DATA_STRUCTURE.md` + `superpatch-frontend/docs/CHANGELOG.md` |
+| New env var / renamed env var | `.env.local.example` (frontend) or function secret list + consumer README + changelog |
+| Dependency bump affecting behavior | README stack section (if major) + changelog |
+
+## Changelog locations
+
+- **Backend / system / infra / pathway / Python / migrations that affect ops**: `docs/dev/changelog.md` (root)
+- **Frontend app behavior, UI, API routes, frontend deps**: `superpatch-frontend/docs/CHANGELOG.md`
+
+Both use the README Delta template from `readme-first-session.mdc`. Newest entries at the top.
+
+## Hub stability
+
+- Never append deltas to hub READMEs (`README.md` root, `superpatch-frontend/README.md`). Hubs stay as stable references.
+- If a hub fact is wrong (e.g., listed env var no longer exists), fix the hub and record the fix in the changelog.
+
+## Verification
+
+Before marking any doc update complete:
+
+- [ ] Every file listed in the decision matrix for the change kind has been updated.
+- [ ] Code and docs agree (no stale example, no stale env var, no stale ID).
+- [ ] Changelog delta is present with a date and touchpoints.
+- [ ] `grep -R "OLD_ID_OR_NAME" superpatch-frontend/ b2b_sales_enablement/ docs/` returns no lingering references when doing a rename.
+
+## Rationalization prevention
+
+| Excuse | Reality |
+|---|---|
+| "The code is self-documenting" | Self-documenting code does not tell operators which cron job calls it. Update the doc. |
+| "I'll update docs in a follow-up" | Follow-ups never come. Update in the same commit. |
+| "Only I will touch this" | False. Future-you, subagents, and new teammates will. |
+| "The changelog is noisy" | The changelog is the audit trail. Add the entry. |

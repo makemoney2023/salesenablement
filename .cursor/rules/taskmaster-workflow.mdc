@@ -1,0 +1,46 @@
+---
+description: Task-master driven workflow for multi-step Sales Enablement changes
+alwaysApply: true
+---
+
+# Task-master Workflow
+
+All multi-step work (3+ tasks or cross-cutting changes) uses the task-master workflow. This rule complements `post-plan-deep-review.mdc` (review after execution) and `testing-tdd.mdc` (testing during execution).
+
+## When to use task-master
+
+- Any feature or refactor that touches more than one component.
+- Any plan that spans frontend + Edge Functions + pathways + Python scripts.
+- Any change that requires multiple doc updates.
+
+Skip task-master for: one-line bug fixes, trivial UI tweaks, pure docs edits.
+
+## Flow
+
+1. **Clarify requirements** — read the relevant docs per `readme-first-session.mdc`; brainstorm per the `brainstorming` skill when scope is ambiguous.
+2. **Write a plan** — use the `writing-plans` skill to produce a checklist-driven plan with TodoWrite entries.
+3. **Execute with subagents** — dispatch parallel `explore` agents to gather context; use `best-of-n-runner` or `generalPurpose` agents for isolated implementation where it saves parent-context tokens.
+4. **TDD each task** — failing test first, minimum code, wire end-to-end.
+5. **Verify per task** — run `pnpm test`, `pnpm tsc --noEmit`, linter, and the targeted checks for the stage affected (pathway publish, migration push, etc.).
+6. **Post-plan review** — run the full `post-plan-deep-review.mdc` sweep before finishing.
+7. **Finish the branch** — follow `finishing-a-development-branch` skill.
+
+## TodoWrite discipline
+
+- One todo per plan item, granular enough that each completes in a single tool turn.
+- Exactly one `in_progress` todo at a time.
+- Mark `completed` immediately after the change lands; do not batch completions.
+- When new work is surfaced, append new todos rather than silently expanding existing ones.
+
+## Communication with the user
+
+- Announce major phase transitions (Phase 1 -> Phase 2).
+- Surface blockers early (missing API key, ambiguous requirement) — do not guess.
+- Summarize at the end: what shipped, what tests ran, what docs were updated.
+
+## Banned shortcuts
+
+- Jumping to code without a plan for multi-step work.
+- Running tests only at the end (tests run after each task).
+- Silently skipping task-master for "small" multi-step work (if it is multi-step, use the flow).
+- Merging before the post-plan deep-dive review is complete.

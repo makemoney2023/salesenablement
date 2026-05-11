@@ -203,7 +203,13 @@ Vous pouvez me joindre au 1-800-SUPERPATCH, ou je vous rappellerai bientôt. Bon
         "voice": kwargs.get("voice", "78c8543e-e5fe-448e-8292-20a7b8c45247"),
         "first_sentence": first_sentence,
         "record": kwargs.get("record", True),
-        "webhook": kwargs.get("webhook", "https://sales-enablement-six.vercel.app/api/webhooks/bland"),
+        "webhook": kwargs.get(
+            "webhook",
+            # Canonical webhook: Supabase Edge Function `webhook-processor`.
+            # The legacy Next.js route /api/webhooks/bland was retired on 2026-05-12
+            # and now returns HTTP 410. See canonical_ids.json -> webhooks.primary.
+            "https://gdwwppwaxyvudsecexuq.supabase.co/functions/v1/webhook-processor",
+        ),
         
         # ============================================
         # IVR NAVIGATION CONFIG

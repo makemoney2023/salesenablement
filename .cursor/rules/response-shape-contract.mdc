@@ -1,0 +1,94 @@
+---
+description: Enforce response shape contracts when consolidating, proxying, or replacing API endpoints
+alwaysApply: true
+---
+
+# Response Shape Contract Rule
+
+When creating consolidated, proxy, or replacement endpoints that serve data previously returned by existing endpoints, the new endpoint **must return the identical response shape** as the original. Shape mismatches between backend responses and frontend consumers are silent failures that cause runtime crashes, missing UI sections, and NaN/undefined rendering.
+
+## When This Rule Applies
+
+- Consolidating multiple API calls into a single endpoint (e.g., `/dashboard/init`)
+- Creating a BFF (backend-for-frontend) layer that aggregates upstream data
+- Replacing an existing endpoint with a new implementation
+- Migrating data fetching from one service to another
+- Caching endpoint responses (cached shape must match live shape)
+
+## Requirements
+
+### 1. Trace the Original Shape
+
+Before writing a consolidated/replacement helper function, **read the original endpoint handler** and document its exact response shape:
+
+- Every key name (e.g., `practitioner_type` not `type`, `call_record_id` not `callId`)
+- Nested structures (e.g., `call_record: { extracted_vars: { practice_name: ... } }`)
+- Default/fallback values (e.g., `""` when null name, `"unknown"` when practitioner_type missing)
+- Transformation logic (e.g., formatting Cal.com ISO timestamps to `America/Toronto` display strings, deriving `appointment_booked` from tool invocations)
+- Empty-state shapes (what the endpoint returns when there are no practitioners / calls / appointments)
+
+### 2. Match, Don't Approximate
+
+| Mistake | Why It Breaks |
+|---------|---------------|
+| Returning raw DB rows instead of transformed data | Frontend expects computed/formatted fields (`appointment_time_display`, not `appointment_time`) |
+| Different key names (`callId` vs `call_record_id`) | Frontend destructures by exact key name |
+| Flat structure where original nests (`practice_name` at root vs inside `extracted_vars`) | Frontend reads `data.extracted_vars.practice_name` |
+| Missing default values | Frontend gets `undefined` -> renders `NaN`, `-`, or crashes |
+| Inverted boolean (`do_not_call` true vs false) | Practitioners get called when they opted out, or vice versa |
+| Wrong DB column name (`practitioner_type` vs `type`) | Query returns `null` for nonexistent column |
+| Returning raw Cal.com payload vs mapped fields (`id` vs `booking_id`) | Frontend checks `appointment.booking_id`, gets `undefined` |
+
+### 3. Verification Checklist
+
+Before marking a consolidated/replacement endpoint complete:
+
+- [ ] **Side-by-side diff**: Compare the return statement of the original handler with the new helper. Every key, nesting level, and default must match.
+- [ ] **Empty-state match**: Call both endpoints with a user that has no data. Shapes must be identical.
+- [ ] **Transformation parity**: If the original applies formatting, classification, or computation, the new helper must apply the same logic.
+- [ ] **Frontend trace**: Grep the frontend for how it destructures the response. Confirm every accessed path exists in the new shape.
+- [ ] **Type alignment**: If TypeScript interfaces exist for the response, confirm the new shape satisfies them.
+
+### 4. Implementation Pattern
+
+When writing a consolidated endpoint helper:
+
+```ts
+// BAD: Return raw DB row from a Supabase Edge Function
+async function getCallRecord(id: string) {
+  const { data } = await supabase.from("call_records").select("*").eq("id", id).single();
+  return data; // Frontend expects transformed shape
+}
+
+// GOOD: Match the original endpoint's transformation
+async function getCallRecord(id: string) {
+  const { data } = await supabase.from("call_records").select("*").eq("id", id).single();
+  if (!data) {
+    return { call_record_id: null, appointment_time_display: "-", appointment_booked: false };
+  }
+  return {
+    call_record_id: data.id,                                 // Match original key names
+    appointment_booked: Boolean(data.appointment_booked),    // Match original type coercion
+    appointment_time_display: formatInToronto(data.appointment_time), // Match original transformations
+    extracted_vars: data.extracted_vars ?? {},               // Match original defaults
+  };
+}
+```
+
+### 5. When Adding Fields
+
+If the consolidated endpoint adds new fields not in the original:
+
+- New fields must be additive only (never rename or restructure existing fields)
+- Document the addition in the endpoint docstring
+- Ensure the frontend handles the field's absence gracefully (for backward compatibility during rollout)
+
+## Rationalization Prevention
+
+| Excuse | Reality |
+|--------|---------|
+| "The raw DB data has all the info" | Raw data is not the contract. The frontend consumes shapes, not schemas. |
+| "The frontend can handle both formats" | It can't. It was written for one shape. |
+| "I'll fix the frontend to match the new shape" | Two changes instead of one. Match the existing contract. |
+| "It's basically the same" | `basically` means `broken`. Field names, nesting, and defaults must be exact. |
+| "The types are compatible" | Compatible is not identical. `{callId}` is not `{call_record_id}`. |

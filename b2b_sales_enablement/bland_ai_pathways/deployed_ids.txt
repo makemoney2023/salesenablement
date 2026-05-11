@@ -1,6 +1,14 @@
-Chiropractors|cf2233ef-7fb2-49ff-af29-0eee47204e9f
-SuperPatch - Acupuncturists Sales|154f93f4-54a5-4900-92e8-0fa217508127
-SuperPatch - Functional Medicine Sales|236dbd85-c74d-4774-a7af-4b5812015c68
-SuperPatch - Integrative Medicine Sales|1c958dd7-e1ff-4f6d-b9a3-f80a369c26aa
-SuperPatch - Massage Therapists Sales|f73305c8-0824-45a5-a464-7d2e21ff00cb
-SuperPatch - Naturopaths Sales|1d07d635-147e-4f69-a4cd-c124b33b073d
+# DEPRECATED — do not edit.
+#
+# This file previously held a stale set of pathway UUIDs that disagreed with
+# production. The single source of truth for Bland.ai pathway, tool, KB, and
+# voice IDs is now:
+#
+#   canonical_ids.json (same folder)
+#
+# TypeScript mirrors:
+#   superpatch-frontend/src/lib/config/pathways.ts
+#   superpatch-frontend/supabase/functions/_shared/pathways.ts
+#
+# Python loaders read canonical_ids.json directly (bland_cli.py,
+# publish_pathways_production.py). A Vitest test enforces TS <-> JSON sync.

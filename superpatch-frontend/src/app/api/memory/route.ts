@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireApiAuth } from "@/lib/auth";
 import { MemoryActionSchema, validateBody } from "@/lib/validation";
 import { supabaseAdmin, isSupabaseConfigured } from "@/lib/supabase";
+import { sanitizeSearchInput } from "@/lib/security";
 
 import { getEnvVar } from "@/lib/config/env";
 
@@ -190,10 +191,20 @@ export async function POST(request: NextRequest) {
 
       // Update each practitioner in Supabase by phone number
       for (const user of users) {
-        // Normalize phone number for matching
+        // Phone values come from Bland's API. Strip PostgREST control
+        // chars (`,()%_\\`) before interpolating into the .or() clause —
+        // the previous version splice-interpolated raw values and was
+        // vulnerable to clause-injection. normalizedPhone is already
+        // digit-only after the \D scrub.
         const normalizedPhone = user.phone_number.replace(/\D/g, "").slice(-10);
+        const safeFullPhone = sanitizeSearchInput(user.phone_number, 32);
+        if (!normalizedPhone && !safeFullPhone) continue;
 
-        // Try to find and update practitioner by phone
+        const filters = [
+          safeFullPhone ? `phone.eq.${safeFullPhone}` : null,
+          normalizedPhone ? `phone.ilike.%${normalizedPhone}%` : null,
+        ].filter(Boolean) as string[];
+
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data, error } = await (supabaseAdmin as any)
           .from("practitioners")
@@ -203,7 +214,7 @@ export async function POST(request: NextRequest) {
             bland_last_call_at: user.last_call_at,
             bland_metadata: user.metadata ? { raw: user.metadata } : null,
           })
-          .or(`phone.eq.${user.phone_number},phone.ilike.%${normalizedPhone}%`)
+          .or(filters.join(","))
           .select();
 
         if (error) {

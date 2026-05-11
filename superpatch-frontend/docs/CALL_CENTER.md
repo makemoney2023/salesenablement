@@ -495,14 +495,15 @@ useRealtimeRetryQueue({
 POST https://<project-id>.supabase.co/functions/v1/webhook-processor
 ```
 
-**Legacy (Vercel API Route - deprecated):**
+**Legacy (Vercel API Route — retired 2026-05-12):**
 ```
-POST /api/webhooks/bland
+POST /api/webhooks/bland   →   HTTP 410 Gone
 ```
+The legacy Next.js route was decommissioned on 2026-05-12 and now responds with HTTP 410 and `{ deprecated: true, replacement: "/functions/v1/webhook-processor" }`. Any pathway still configured against this URL will fail loudly — repoint it at the Supabase Edge Function above.
 
-The webhook is now processed by the Supabase Edge Function `webhook-processor` for improved reliability and direct database access. Configure this URL in the Bland.ai dashboard under your pathway settings.
+The webhook is now processed exclusively by the Supabase Edge Function `webhook-processor` for improved reliability and direct database access. Configure this URL in the Bland.ai dashboard under your pathway settings.
 
-**Note:** Webhook signature verification is currently disabled to allow direct Bland.ai integration. The Edge Function processes webhooks without requiring HMAC validation.
+**Note (2026-04-21):** `webhook-processor` verifies request origin and required headers, and performs per-call-record dedup (via `call_records.booking_id` checks before invoking `book-appointment`). Bland.ai does not currently expose an HMAC signing secret for pathway webhooks; once available, HMAC validation should be added in this Edge Function. Track via `docs/dev/changelog.md`.
 
 Receives call completion data:
 - Call status and duration
@@ -553,6 +554,15 @@ NEXT_PUBLIC_BLAND_WEBHOOK_URL=https://<project-id>.supabase.co/functions/v1/webh
 Set the webhook URL in Bland.ai dashboard to point directly to the Supabase Edge Function. This bypasses the Vercel API route and provides more reliable webhook processing.
 
 Note: `NEXT_PUBLIC_BLAND_WEBHOOK_URL` is used by the frontend when initiating calls. For production, this should match the URL configured in the Bland dashboard.
+
+### API versions
+
+| Vendor | Version | How it's pinned |
+|---|---|---|
+| Cal.com | v2 (header `cal-api-version: 2026-02-25`) | `CAL_API_VERSION` env var (default `2026-02-25`), enforced in `supabase/functions/_shared/cal.ts`. Cal.com retired v1 on 2026-04-08; `book-appointment` and `sync-cal-bookings` both call v2. |
+| Bland.ai | v1 (`https://api.bland.ai`) | Bland is not yet versioned in URL; pathway / KB / voice IDs are pinned in `b2b_sales_enablement/bland_ai_pathways/canonical_ids.json` and mirrored into `supabase/functions/_shared/pathways.ts` and `src/lib/config/pathways.ts` (cross-checked by Vitest **and** a Deno test). |
+| Supabase JS | `@supabase/supabase-js@2.x` | Pinned in `package.json`; Edge Functions import `2.39.0` directly. |
+| Google Generative AI | `@google/generative-ai@latest` (Gemini 2.0 Flash) | Used by `analyze-call` for transcript extraction and follow-up classification. |
 
 ---
 

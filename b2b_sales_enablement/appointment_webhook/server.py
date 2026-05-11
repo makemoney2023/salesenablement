@@ -12,7 +12,7 @@ from flask_cors import CORS
 import os
 import requests
 from datetime import datetime, timedelta
-from sheets_integration import log_appointment_to_sheets
+from sheets_integration import append_appointment_to_sheet as log_appointment_to_sheets
 import json
 
 app = Flask(__name__)

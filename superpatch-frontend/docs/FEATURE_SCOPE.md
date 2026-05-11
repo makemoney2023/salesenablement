@@ -1,5 +1,7 @@
 # SuperPatch Sales Enablement App - Feature Scope
 
+> **Status (2026-04-21): Historical.** This scope was written for the original reference-app phase. The app has since grown into a full AI call center. For current architecture, start with `../../ARCHITECTURE.md`. For current surfaces and APIs, see the main [README](../README.md). Preserved here for historical context.
+
 ## Overview
 
 **Purpose:** Internal sales team reference app for accessing word tracks, roadmaps, and clinical evidence
@@ -534,7 +536,7 @@ AI-powered voice agent call center for outbound B2B practitioner outreach, integ
 | `/api/campaign/calls` | GET/PATCH | Call record management |
 | `/api/bland/calls` | POST | Initiate call via Bland.ai |
 | `/api/bland/calls/[id]` | GET | Get call status |
-| `/api/webhooks/bland` | POST | Bland.ai webhook handler |
+| `/api/webhooks/bland` | POST/GET | Retired 2026-05-12 — returns HTTP 410. Canonical webhook is `/functions/v1/webhook-processor`. |
 | `/api/samples` | GET/PATCH | Sample request management |
 | `/api/memory` | GET/POST | Bland.ai memory management |
 

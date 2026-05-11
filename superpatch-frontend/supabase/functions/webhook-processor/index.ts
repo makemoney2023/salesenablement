@@ -5,6 +5,10 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { canonicalPractitionerType } from "../_shared/practitioner-type.ts";
+import { toBool } from "../_shared/coerce.ts";
+import { pickSampleEmail } from "./email.ts";
+import { buildProductsRequested, classifySampleType } from "./sample-type.ts";
 
 function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 30000): Promise<Response> {
   const controller = new AbortController();
@@ -15,8 +19,11 @@ function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 30
 // Environment variables
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
-const CAL_API_KEY = Deno.env.get("CAL_API_KEY") || "";
-const CAL_EVENT_TYPE_ID = Number(Deno.env.get("CAL_EVENT_TYPE_ID")) || 4352394;
+// Cal.com configuration lives in the dedicated book-appointment Edge
+// Function (which is invoked via fetch below). Don't re-declare CAL_API_KEY
+// or CAL_EVENT_TYPE_ID here; an unused-but-defaulted CAL_EVENT_TYPE_ID
+// previously baked a stale event-type ID into this module and obscured
+// that the booking path was delegated.
 const BLAND_WEBHOOK_SECRET = Deno.env.get("BLAND_WEBHOOK_SECRET") || "";
 const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY") || "";
 
@@ -293,9 +300,7 @@ function calculateLeadScore(
   if (callStatus === "booked" || callStatus === "calendar_sent") score += 50;
   
   const vars = payload.variables || {};
-  // Handle both string and boolean values from Bland
-  if (String(vars.wants_sample || "").toLowerCase() === "true" || vars.wants_sample === true ||
-      String(vars.sample_requested || "").toLowerCase() === "true" || vars.sample_requested === true) {
+  if (toBool(vars.wants_sample) || toBool(vars.sample_requested)) {
     score += 25;
   }
   
@@ -534,12 +539,9 @@ function extractQualificationData(
   const cleanContactEmail = sanitizeTranscribedEmail(rawContactEmail);
   if (cleanContactEmail) qualification.contact_email = cleanContactEmail;
   
-  const decisionMaker = vars.decision_maker || vars.is_decision_maker;
+  const decisionMaker = vars.decision_maker ?? vars.is_decision_maker;
   if (decisionMaker !== undefined && decisionMaker !== null) {
-    // Handle both string and boolean values from Bland
-    qualification.decision_maker = decisionMaker === true || 
-      String(decisionMaker).toLowerCase() === "yes" || 
-      String(decisionMaker).toLowerCase() === "true";
+    qualification.decision_maker = toBool(decisionMaker);
   }
   
   const bestCallbackTime = vars.best_callback_time || vars.callback_time || vars.preferred_time_to_call;
@@ -598,18 +600,17 @@ function extractQualificationData(
   const productsInterested = vars.products_interested || vars.sample_products || vars.products_requested || vars.products;
   if (productsInterested) qualification.products_interested = productsInterested;
   
-  const wantsSample = vars.wants_sample || (productsInterested ? "true" : undefined);
-  if (wantsSample !== undefined && wantsSample !== null) {
-    // Handle both string and boolean values from Bland
-    const sampleValue = String(wantsSample).toLowerCase();
-    qualification.wants_sample = sampleValue === "true" || sampleValue === "yes";
+  // wants_sample: true when Bland set it OR when the AI captured any
+  // product-of-interest (an implicit-sample-intent signal we want to
+  // preserve from the legacy behaviour).
+  if (vars.wants_sample !== undefined && vars.wants_sample !== null) {
+    qualification.wants_sample = toBool(vars.wants_sample);
+  } else if (productsInterested) {
+    qualification.wants_sample = true;
   }
-  
-  const wantsDemo = vars.wants_demo;
-  if (wantsDemo !== undefined && wantsDemo !== null) {
-    // Handle both string and boolean values from Bland
-    const demoValue = String(wantsDemo).toLowerCase();
-    qualification.wants_demo = demoValue === "true" || demoValue === "yes";
+
+  if (vars.wants_demo !== undefined && vars.wants_demo !== null) {
+    qualification.wants_demo = toBool(vars.wants_demo);
   }
   
   return qualification;
@@ -1028,10 +1029,7 @@ serve(async (req) => {
       }
     }
 
-    // Extract variables — handle both string "true" and boolean true from Bland pathways
-    const wantsDemo = String(vars.wants_demo).toLowerCase() === "true" || 
-                      String(vars.schedule_demo).toLowerCase() === "true" ||
-                      vars.wants_demo === true || vars.schedule_demo === true;
+    const wantsDemo = toBool(vars.wants_demo) || toBool(vars.schedule_demo);
     const appointmentTime = vars.appointment_time || vars.preferred_time || vars.start_time;
     const practitionerName = vars.practitioner_name || vars.name || vars.contact_name || meta.practice_name || meta.contact_name;
     // Form email (meta.clinic_email) takes priority over AI-extracted vars
@@ -1145,6 +1143,15 @@ serve(async (req) => {
         || undefined;
     }
 
+    // Canonicalize the practitioner type once, after all of the
+    // resolution-source fallbacks have run. Every downstream write of
+    // resolvedPractitionerType (call_records, analyze-call payload,
+    // pathway-suggestions analytics) uses the canonical slug from
+    // _shared/practitioner-type.ts so the DB stops accumulating mixed
+    // casings, "Chiropractors"/"chiropractor"/"chiro" variants, and
+    // experiment-version suffixes.
+    resolvedPractitionerType = canonicalPractitionerType(resolvedPractitionerType);
+
     // Determine call status
     let callStatus: CallStatus = "completed";
     const wentToVoicemail = payload.voicemail_detected === true || payload.answered_by === "voicemail" ||
@@ -1252,19 +1259,26 @@ serve(async (req) => {
       console.log("✅ Call record saved:", savedRecord.id);
     }
 
-    // Trigger LLM analysis (fire and forget - don't await to avoid webhook timeout)
+    // Trigger LLM analysis. We don't await the fetch on the request path
+    // (that would hold the Bland.ai webhook open for 10-20s and risk a
+    // gateway timeout), but we DO hand the promise to EdgeRuntime.waitUntil
+    // so Supabase's Fluid Compute runtime keeps the isolate alive until the
+    // analyze-call request completes. Previously we just dropped the
+    // promise on the floor, so the runtime sometimes terminated the
+    // isolate before the request flushed and the analysis was lost.
     if (savedRecord?.id && payload.concatenated_transcript && payload.concatenated_transcript.length > 50) {
       console.log("🔬 Triggering LLM analysis...");
-      // Mark analysis as processing before triggering
       await supabase.from("call_records").update({ analysis_status: "processing" }).eq("id", savedRecord.id);
-      fetchWithTimeout(`${SUPABASE_URL}/functions/v1/analyze-call`, {
+
+      const savedRecordId = savedRecord.id;
+      const analyzeCallPromise = fetchWithTimeout(`${SUPABASE_URL}/functions/v1/analyze-call`, {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          call_record_id: savedRecord.id,
+          call_record_id: savedRecordId,
           transcript: payload.concatenated_transcript,
           practitioner_id: resolvedPractitionerId,
           practitioner_type: resolvedPractitionerType,
@@ -1272,37 +1286,53 @@ serve(async (req) => {
         }),
       }).catch(async (err) => {
         console.error("Failed to trigger LLM analysis:", err);
-        // Mark analysis as failed so the UI can show the error
-        await supabase.from("call_records").update({ analysis_status: "failed" }).eq("id", savedRecord!.id);
+        await supabase.from("call_records").update({ analysis_status: "failed" }).eq("id", savedRecordId);
       });
+
+      // EdgeRuntime is the Supabase Edge Runtime global; guard for local /
+      // unit-test contexts where it may be undefined.
+      // deno-lint-ignore no-explicit-any
+      const edge = (globalThis as any).EdgeRuntime;
+      if (edge && typeof edge.waitUntil === "function") {
+        edge.waitUntil(analyzeCallPromise);
+      }
     }
 
     // Handle sample request (handle both string and boolean values from Bland)
-    const wantsSample = 
-      String(vars.wants_sample || "").toLowerCase() === "true" || 
-      vars.wants_sample === true ||
-      String(vars.sample_requested || "").toLowerCase() === "true" ||
-      vars.sample_requested === true;
+    const wantsSample = toBool(vars.wants_sample) || toBool(vars.sample_requested);
     if (wantsSample) {
       console.log("📦 Sample request detected...");
-      const productsRaw = vars.products_interested || vars.sample_products || vars.products_requested || vars.products || "";
-      let productsRequested: string[] | null = null;
-      if (productsRaw && productsRaw !== "all" && productsRaw !== "standard_kit") {
-        productsRequested = productsRaw.split(",").map(p => p.trim().toLowerCase()).filter(Boolean);
-      }
+      const productsRaw =
+        vars.products_interested ||
+        vars.sample_products ||
+        vars.products_requested ||
+        vars.products ||
+        "";
+      const sampleType = classifySampleType(productsRaw);
+      const productsRequested = buildProductsRequested(productsRaw, sampleType);
+
+      // Final email validation gate. resolvedEmail already passed through
+      // sanitizeTranscribedEmail, but pickSampleEmail enforces the
+      // form > db > AI priority + a strict regex, so a half-cleaned AI
+      // value can't leak into sample_requests.email.
+      const sampleEmail = pickSampleEmail({
+        formEmail: meta.clinic_email,
+        dbEmail: resolvedEmail,
+        aiEmail: vars.email ?? vars.practitioner_email,
+      });
 
       const sampleRequest = {
         call_record_id: savedRecord?.id || null,
         practitioner_id: resolvedPractitionerId || null,
         requester_name: contactName || resolvedPractitionerName || "Unknown",
         practice_name: practiceName || resolvedPractitionerName,
-        email: resolvedEmail || null,
+        email: sampleEmail,
         phone: payload.to,
         shipping_address: vars.sample_shipping_address || vars.shipping_address || resolvedAddress || null,
         shipping_city: vars.sample_shipping_city || vars.shipping_city || resolvedCity || null,
         shipping_province: vars.sample_shipping_province || vars.shipping_province || resolvedProvince || null,
         shipping_postal_code: vars.sample_postal_code || vars.shipping_postal_code || meta.postal_code || null,
-        sample_type: productsRaw === "all" || !productsRaw ? "standard_kit" : "custom",
+        sample_type: sampleType,
         products_requested: productsRequested,
         quantity: parseInt(vars.sample_quantity || "1", 10) || 1,
         notes: vars.sample_notes || null,
@@ -1321,9 +1351,14 @@ serve(async (req) => {
         console.error("❌ Failed to create sample request:", sampleError);
       } else {
         console.log("✅ Sample request created:", sampleData?.id);
-        
-        // Trigger sample confirmation email
-        if (resolvedEmail) {
+
+        // Trigger sample confirmation email. Gate AND recipient must both
+        // use the strict-regex output (`sampleEmail`) so the row's
+        // `email` column and the Resend recipient can never diverge —
+        // previously this used the looser `resolvedEmail`, which could
+        // ship a confirmation to an unvalidated address while the row
+        // stored `null`.
+        if (sampleEmail) {
           try {
             await fetchWithTimeout(`${SUPABASE_URL}/functions/v1/send-sample-confirmation`, {
               method: "POST",
@@ -1335,7 +1370,7 @@ serve(async (req) => {
                 sample_request_id: sampleData?.id,
                 practitioner_name: resolvedPractitionerName,
                 practice_name: practiceName,
-                email: resolvedEmail,
+                email: sampleEmail,
                 products: productsRequested,
                 shipping_address: sampleRequest.shipping_address,
                 shipping_city: sampleRequest.shipping_city,
@@ -1353,6 +1388,13 @@ serve(async (req) => {
               }).eq("id", sampleData.id);
             }
           }
+        } else if (sampleData?.id) {
+          // No valid email survived pickSampleEmail — record that we
+          // can't auto-send so ops can follow up manually.
+          await supabase.from("sample_requests").update({
+            notes: "No valid email captured — sample confirmation not auto-sent.",
+          }).eq("id", sampleData.id);
+          console.log("⚠️ Sample request saved but no valid email available; manual follow-up required.");
         }
       }
     }

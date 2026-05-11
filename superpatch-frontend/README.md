@@ -113,33 +113,67 @@ This ensures call completion webhooks are processed directly by Supabase for rel
 
 ## API Endpoints
 
+All endpoints return `{ status: "success", data: ... }` or `{ status: "error", message: string }` per `.cursor/rules/response-shape-contract.mdc`.
+
+### Auth
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/auth/invite` | Send a team-member invite email |
+| POST | `/api/auth/signout` | Invalidate the current Supabase session |
+
 ### Practitioners
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/practitioners` | List practitioners with filters |
-| POST | `/api/practitioners` | Create user-added practitioner |
-| PATCH | `/api/practitioners/[id]/dnc` | Mark/restore DNC status |
+| GET | `/api/practitioners` | List practitioners with filters (type, city, do_not_call, retry window) |
+| POST | `/api/practitioners` | Create a user-added practitioner |
+| PATCH | `/api/practitioners/[id]/dnc` | Mark / restore do-not-call status |
 
 ### Campaign & Calls
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET/PATCH | `/api/campaign/calls` | Call record management |
-| POST | `/api/bland/calls` | Initiate call via Bland.ai |
-| GET | `/api/bland/calls/[id]` | Get call status/details |
-| POST | `/api/webhooks/bland` | Webhook for call completion |
+| GET / PATCH | `/api/campaign/calls` | Call record CRUD (list, update disposition, attach notes) |
+| GET / POST | `/api/campaign/notes` | Operator notes on call records |
+| POST | `/api/bland/calls` | Initiate a single Bland.ai call (resolves pathway from practitioner_type) |
+| GET | `/api/bland/calls/[id]` | Fetch call status / transcript / recording URL |
+| POST/GET | `/api/webhooks/bland` | Retired 2026-05-12 — responds with HTTP 410 and `{ deprecated: true, replacement: "/functions/v1/webhook-processor" }`. Canonical handler is the Supabase Edge Function `webhook-processor`. |
 
 ### Practitioner Search
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/search/places` | Search Google Maps for practitioners |
-| POST | `/api/search/import` | Bulk import practitioners to database |
-| POST | `/api/search/enrich` | Enrich practitioner with Firecrawl |
+| POST | `/api/search/places` | Google Maps Places search with practitioner-type filters |
+| POST | `/api/search/import` | Bulk import searched practitioners into Supabase |
+| POST | `/api/search/enrich` | Trigger Firecrawl + LinkedIn enrichment for selected practitioners |
 
-### Other
+### Samples & Memory
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET/PATCH | `/api/samples` | Sample request management |
-| GET/POST | `/api/memory` | Bland.ai memory management |
+| GET / PATCH | `/api/samples` | Sample request queue and fulfillment status |
+| GET / POST | `/api/memory` | Bland.ai shared memory store management |
+
+### Pathway suggestions
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/pathway-suggestions/export` | Export AI-suggested pathway improvements from call analysis |
+
+### Debug
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/debug-env` | Non-secret environment visibility (behind auth in production) |
+
+## Supabase Edge Functions
+
+These live in `supabase/functions/` and are deployed via `supabase functions deploy <name>` from this folder.
+
+| Function | Trigger | Purpose |
+|----------|---------|---------|
+| `webhook-processor` | Bland.ai webhook POST | Canonical receiver for call completions; writes `call_records`, creates `sample_requests`, invokes `book-appointment`. |
+| `process-retry-queue` | pg_cron | Business-hours retry dialer; resolves pathway via `_shared/pathways.ts`. |
+| `book-appointment` | Invoked by `webhook-processor` | Creates Cal.com v2 booking and fills `call_records.booking_id`. |
+| `send-sample-confirmation` | Invoked by `webhook-processor` | Sends Resend confirmation email and stamps `sample_requests.email_sent_at`. |
+| `sync-cal-bookings` | pg_cron | Backfills bookings created on Cal.com but missing from `call_records`. |
+| `enrich-practitioners-v2` | Manual / API | Runs Firecrawl + LinkedIn enrichment for selected practitioners. |
+| `analyze-call` | Invoked post-call | Runs Gemini analysis on transcripts; writes to `call_records.analysis_json`. |
+| `generate-daily-report` | pg_cron | Produces the EOD report served at `/reports`. |
 
 ## Project Structure
 
@@ -164,10 +198,16 @@ superpatch-frontend/
 
 ## Documentation
 
-- [Feature Scope](docs/FEATURE_SCOPE.md) - Detailed feature specifications
-- [Data Structure](docs/DATA_STRUCTURE.md) - Type definitions and schemas
-- [Call Center](docs/CALL_CENTER.md) - Campaign dialer documentation
-- [Component Library](docs/COMPONENT_LIBRARY.md) - UI component reference
+- [Architecture (repo root)](../ARCHITECTURE.md) — End-to-end system flow
+- [Lead Pipeline](docs/LEAD_PIPELINE.md) — Ingestion, enrichment, and import
+- [Call Center](docs/CALL_CENTER.md) — `/campaign` dialer, qualification, call lifecycle
+- [Pathway Variables](docs/PATHWAY_VARIABLES.md) — `extractVars` reference
+- [Data Structure](docs/DATA_STRUCTURE.md) — Type definitions and schemas
+- [Component Library](docs/COMPONENT_LIBRARY.md) — UI component reference
+- [Feature Scope](docs/FEATURE_SCOPE.md) — Historical feature specifications
+- [Frontend Changelog](docs/CHANGELOG.md) — Frontend app deltas
+- [Backend Changelog (repo root)](../docs/dev/changelog.md) — Backend / system deltas
+- [Bland Pathways README](../b2b_sales_enablement/bland_ai_pathways/README.md) — Pathway authoring and deploy
 
 ## Deployment
 

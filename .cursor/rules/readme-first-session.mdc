@@ -1,0 +1,113 @@
+---
+description: Always load Sales Enablement README references at session start
+alwaysApply: true
+---
+
+# README-First Session Rule
+
+For every new session, review the hub and relevant spoke docs before proposing code changes, plans, or architecture decisions. This rule covers **what to read**. Sister rules cover **what to write**:
+
+- `documentation-maintenance.mdc` — doc-drift decision matrix (what to update)
+- `supabase-migrations.mdc` — migration command workflow
+- `supabase-conventions.mdc` — schema / RLS / types.ts sync rules
+
+## Documentation Structure
+
+Sales Enablement uses a hub-and-spoke documentation model:
+
+- **Hub**: `README.md` (root) — project overview, architecture, stack
+- **E2E flow**: `ARCHITECTURE.md` (root) — lead → pathway → call → outcome diagram
+- **Frontend hub**: `superpatch-frontend/README.md` — Next.js app, API routes, env vars
+- **Pathway hub**: `b2b_sales_enablement/bland_ai_pathways/README.md` — pathway authoring, deploy scripts, ID registry
+- **Spokes**: Focused docs in `superpatch-frontend/docs/` and `docs/dev/`
+
+## Required startup reads
+
+Always:
+
+1. `README.md` (root hub)
+2. `ARCHITECTURE.md` (root)
+3. `superpatch-frontend/README.md` (whenever frontend work is in scope)
+
+On demand (read when the task touches the matching area):
+
+| If the task touches | Also read |
+|---------------------|-----------|
+| `/campaign` UI, call center flow, dialer | `superpatch-frontend/docs/CALL_CENTER.md` |
+| Bland.ai pathways, extractVars, webhook variables | `superpatch-frontend/docs/PATHWAY_VARIABLES.md` |
+| Pathway JSON, deploy scripts, Bland tool wiring | `b2b_sales_enablement/bland_ai_pathways/README.md` + `canonical_ids.json` |
+| Lead ingestion (Places, Firecrawl, LinkedIn, migrate) | `superpatch-frontend/docs/LEAD_PIPELINE.md` |
+| Supabase schema, RLS, triggers, Edge Functions | `superpatch-frontend/supabase/schema.sql` + recent files in `supabase/migrations/` |
+| DB query code, types, hooks | `superpatch-frontend/src/lib/db/types.ts` |
+| Data model changes to word tracks / products / markets | `superpatch-frontend/docs/DATA_STRUCTURE.md` |
+| Prior system integration history | `superpatch-frontend/docs/SYSTEM_REVIEW_FINDINGS.md` |
+
+## Behavior requirements
+
+- Treat `ARCHITECTURE.md` and `CALL_CENTER.md` as authoritative for E2E behavior; treat `canonical_ids.json` as authoritative for Bland.ai IDs.
+- If code and docs conflict, verify code behavior first, then update docs in the same session.
+- Before major changes, trace the impacted path across the Sales Enablement stages: **lead ingest -> enrichment -> dialer -> Bland pathway -> webhook-processor -> sample / appointment / follow-up -> analytics**.
+- Keep terminology aligned across docs and code (e.g., `practitioner`, `call_record`, `sample_request`, `appointment`, `pathway_id`, `extractVars`).
+- Automatically update docs in the same session when changes affect behavior, data flow, API routes, schema, pathways, or integrations.
+- Do not mark work complete until doc updates are finished and reflect the implemented code.
+
+## Auto-update triggers (must update docs)
+
+Update one or more doc files whenever changes touch:
+
+- Pathway IDs, tool IDs, KB, voice, webhook URL (mandatory: update `canonical_ids.json` first, then the TS mirrors)
+- API endpoints, request / response shapes, auth flow, validation schemas
+- Supabase migrations: schema/table/index/RLS/trigger changes, Edge Function behavior
+- Frontend rendering logic in `/campaign` or `[market]/*` that changes how call / sample / appointment data is presented
+- Lead ingestion scripts (scraper, enrichment, LinkedIn, migrate)
+- Environment variables (new keys, renamed keys, removed keys)
+
+## Doc update targets
+
+| What changed | Update this file |
+|---|---|
+| Project overview, stack, top-level folder map | `README.md` (hub) |
+| End-to-end flow (leads -> pathways -> outcomes) | `ARCHITECTURE.md` |
+| Frontend routes, API table, components | `superpatch-frontend/README.md` |
+| Call center UI / dialer / qualification flow | `superpatch-frontend/docs/CALL_CENTER.md` |
+| Pathway variables, extractVars format | `superpatch-frontend/docs/PATHWAY_VARIABLES.md` |
+| Pathway JSON authoring, deploy scripts, IDs | `b2b_sales_enablement/bland_ai_pathways/README.md` + `canonical_ids.json` |
+| Lead ingestion pipeline | `superpatch-frontend/docs/LEAD_PIPELINE.md` |
+| Supabase schema / types | `superpatch-frontend/supabase/schema.sql` + `superpatch-frontend/src/lib/db/types.ts` |
+| Backend / system / infra delta | `docs/dev/changelog.md` (newest at top) |
+| Frontend delta | `superpatch-frontend/docs/CHANGELOG.md` (newest at top) |
+| System-wide review history | `superpatch-frontend/docs/SYSTEM_REVIEW_FINDINGS.md` |
+
+## Changelog Append Policy
+
+- New README Delta entries go to `docs/dev/changelog.md` (backend/system/infra) or `superpatch-frontend/docs/CHANGELOG.md` (frontend).
+- Never append deltas to the hub `README.md` or `superpatch-frontend/README.md`; those stay stable references.
+- Newest entries go at the top of the changelog files.
+- Use the README Delta template below.
+
+## Quick preflight checklist
+
+- Read the root hub, `ARCHITECTURE.md`, and relevant spoke(s)
+- Confirm affected stages and data-flow touchpoints
+- For schema / migration changes, read existing migrations before writing a new one
+- For pathway changes, verify `canonical_ids.json` is the source of truth before editing TS mirrors
+- Proceed with TDD and update docs when behavior changes
+- Before finalizing, verify doc content matches the implemented code paths
+
+## README Delta template
+
+When recording changes, add a delta block using this structure:
+
+- **What changed**: One-line description of implemented behavior / code change.
+- **Why it changed**: One-line rationale (bug fix, feature, refactor, alignment).
+- **Code touchpoints**: Paths of changed files (frontend, Edge Functions, Python scripts, pathway JSON).
+- **Data-flow impact**: Which stage(s) changed (lead ingest, enrichment, dialer, pathway, webhook-processor, sample, appointment, follow-up, analytics).
+- **ID / contract changes**: Pathway / tool / KB / voice / webhook URL changes (or "none"). Link to `canonical_ids.json` if touched.
+- **API / schema impact**: Endpoint contract or migration / table / index / RLS changes (or "none").
+- **Verification**: Tests / commands / checks performed and result (include `pnpm test` result when frontend code changed).
+
+Append this template to:
+
+- `docs/dev/changelog.md` for backend / system / infra changes
+- `superpatch-frontend/docs/CHANGELOG.md` for frontend changes
+- `superpatch-frontend/docs/SYSTEM_REVIEW_FINDINGS.md` for cross-cutting integration reviews

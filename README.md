@@ -623,22 +623,24 @@ The voice agent workflow:
 ### Webhook Endpoint
 
 ```typescript
-// superpatch-frontend/src/app/api/webhooks/bland/route.ts
-
-// Receives call completion data from Bland.ai
-// Extracts: name, email, preferred_time, address, practice_name
-// Books: Cal.com appointment for in-person sales visit
-//   - Uses 'description' field for booking notes (practice info + call summary)
-// Saves: Call record with transcript to Supabase
-//   - Upserts by call_id first (most reliable), then practitioner_id
-// Links: Automatically finds practitioner by phone number
-// Fallback: Logs for manual follow-up if booking fails
+// superpatch-frontend/supabase/functions/webhook-processor/index.ts
+//
+// Canonical Bland.ai webhook handler (Supabase Edge Function).
+// - Receives call completion data from Bland.ai
+// - Extracts: name, email, preferred_time, address, practice_name
+// - Books: Cal.com v2 appointment for in-person sales visit
+//     (delegated to /functions/v1/book-appointment, which dedup-checks against call_records.booking_id)
+// - Saves: Call record with transcript to Supabase
+// - Links: Automatically finds practitioner by phone number
+// - Fires: /functions/v1/analyze-call (Gemini extraction) via EdgeRuntime.waitUntil
 ```
 
 **Production Webhook URL**:
 ```
-https://sales-enablement-six.vercel.app/api/webhooks/bland
+https://gdwwppwaxyvudsecexuq.supabase.co/functions/v1/webhook-processor
 ```
+
+The legacy Next.js route `https://sales-enablement-six.vercel.app/api/webhooks/bland` was retired on 2026-05-12 and now returns HTTP 410. Any Bland.ai pathway still configured against it will fail loudly.
 
 ---
 

@@ -4,6 +4,13 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  KB_ID,
+  VOICE_ID,
+  DEFAULT_WEBHOOK_URL,
+  getPathwayId,
+} from "../_shared/pathways.ts";
+import { incrementRetry, IncrementRetryError } from "./retry.ts";
 
 function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 30000): Promise<Response> {
   const controller = new AbortController();
@@ -19,36 +26,9 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "
 // Batch size for concurrent calls (limit to avoid rate limits)
 const BATCH_SIZE = 10;
 
-// Knowledge base and voice IDs (same as batch-caller.ts)
-const KB_ID = "b671527d-0c2d-4a21-9586-033dad3b0255";
-const VOICE_ID = "78c8543e-e5fe-448e-8292-20a7b8c45247";
-const WEBHOOK_URL = Deno.env.get("WEBHOOK_URL") || "https://gdwwppwaxyvudsecexuq.supabase.co/functions/v1/webhook-processor";
+const WEBHOOK_URL = Deno.env.get("WEBHOOK_URL") || DEFAULT_WEBHOOK_URL;
 // Bland Memory Store ID for cross-call context retention
 const MEMORY_ID = Deno.env.get("BLAND_MEMORY_ID") || "";
-
-// SYNC NOTE: These pathway IDs must match the values in src/lib/config/pathways.ts
-// If you update pathways here, update the frontend config too.
-//
-// Pathway IDs for different practitioner types (same as batch-caller.ts)
-// Each practitioner type has its own conversation pathway
-const PATHWAYS: Record<string, string> = {
-  chiropractor: "9aa760af-6f9a-430f-8d0c-25bf84afd8fb",
-  "massage therapist": "1fee31b1-8179-48c6-b6fa-12fcd434ed2b",
-  massage_therapist: "1fee31b1-8179-48c6-b6fa-12fcd434ed2b",
-  rmt: "1fee31b1-8179-48c6-b6fa-12fcd434ed2b",
-  naturopath: "db955b59-d278-410e-981e-5728dfa2dafd",
-  "naturopathic doctor": "db955b59-d278-410e-981e-5728dfa2dafd",
-  "integrative medicine": "b6240419-3b24-4415-9541-804994cce425",
-  "integrative medicine doctor": "b6240419-3b24-4415-9541-804994cce425",
-  "integrative medicine practitioner": "b6240419-3b24-4415-9541-804994cce425",
-  "functional medicine": "70f3a50a-9055-4f41-bc0d-81964dfae19a",
-  "functional medicine doctor": "70f3a50a-9055-4f41-bc0d-81964dfae19a",
-  "functional medicine practitioner": "70f3a50a-9055-4f41-bc0d-81964dfae19a",
-  acupuncturist: "084673ec-84d6-4c3a-bedb-ba9d72bd7e3b",
-};
-
-// Default pathway (chiropractor) for unknown types
-const DEFAULT_PATHWAY = "9aa760af-6f9a-430f-8d0c-25bf84afd8fb";
 
 // Business hours configuration
 const BUSINESS_TIMEZONE = Deno.env.get("BUSINESS_TIMEZONE") || "America/Toronto";
@@ -80,16 +60,6 @@ function isWithinBusinessHours(): boolean {
     console.warn("[RetryQueue] Business hours check failed, defaulting to allow:", error);
     return true; // Default to allowing calls if timezone check fails
   }
-}
-
-/**
- * Get pathway ID for a practitioner type
- * Matches the logic in batch-caller.ts
- */
-function getPathwayId(practitionerType: string | null): string {
-  if (!practitionerType) return DEFAULT_PATHWAY;
-  const typeKey = practitionerType.toLowerCase().trim();
-  return PATHWAYS[typeKey] || DEFAULT_PATHWAY;
 }
 
 interface RetryQueueEntry {
@@ -233,12 +203,12 @@ async function initiateCall(practitioner: RetryQueueEntry): Promise<CallResult> 
   }
 }
 
-// Update practitioner after call attempt
+// Update practitioner after call attempt. The Bland call_id used to be
+// passed in and ignored — removed (callers no longer pass it either).
 async function updatePractitionerAfterCall(
   supabase: ReturnType<typeof createClient>,
   practitionerId: string,
   success: boolean,
-  callId?: string
 ): Promise<void> {
   if (success) {
     // Clear next_retry_at since call was initiated
@@ -255,18 +225,15 @@ async function updatePractitionerAfterCall(
     // On failure, use atomic increment to prevent race conditions
     const maxAttempts = 3;
     let newRetryCount: number;
-    
-    // Try atomic increment first (uses database RPC for thread safety)
-    const { data: rpcResult, error: rpcError } = await supabase.rpc(
-      "increment_retry_count",
-      { practitioner_id: practitionerId }
-    );
 
-    if (!rpcError && rpcResult !== null && rpcResult !== undefined) {
-      newRetryCount = rpcResult as number;
-    } else {
-      // Fallback to non-atomic read/write if RPC not available
-      console.warn("[RetryQueue] Atomic increment RPC failed, using fallback:", rpcError);
+    try {
+      newRetryCount = await incrementRetry(supabase, practitionerId);
+    } catch (err) {
+      // Fallback to non-atomic read/write only if the atomic RPC is unavailable.
+      // (Previously this branch ran on every call because the RPC was being
+      // invoked with the wrong argument name; see retry.ts.)
+      const cause = err instanceof IncrementRetryError ? err.cause : err;
+      console.warn("[RetryQueue] Atomic increment RPC failed, using fallback:", cause);
       const { data: current } = await supabase
         .from("practitioners")
         .select("retry_count")
@@ -338,7 +305,7 @@ async function processRetryQueue(supabase: ReturnType<typeof createClient>): Pro
     const batchResults = await Promise.all(
       batch.map(async (practitioner) => {
         const result = await initiateCall(practitioner);
-        await updatePractitionerAfterCall(supabase, practitioner.id, result.success, result.call_id);
+        await updatePractitionerAfterCall(supabase, practitioner.id, result.success);
         return result;
       })
     );
@@ -442,7 +409,7 @@ serve(async (req: Request) => {
       const results: CallResult[] = [];
       for (const practitioner of practitioners as RetryQueueEntry[]) {
         const result = await initiateCall(practitioner);
-        await updatePractitionerAfterCall(supabase, practitioner.id, result.success, result.call_id);
+        await updatePractitionerAfterCall(supabase, practitioner.id, result.success);
         results.push(result);
       }
 
