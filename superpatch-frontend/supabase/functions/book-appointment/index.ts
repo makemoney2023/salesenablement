@@ -4,17 +4,21 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createCalBooking, CalError, type CalBookingResult } from "../_shared/cal.ts";
 
-function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 30000): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timeout));
+const CAL_API_KEY = Deno.env.get("CAL_API_KEY") ?? "";
+const CAL_API_VERSION = Deno.env.get("CAL_API_VERSION") ?? "2024-08-13";
+const CAL_EVENT_TYPE_ID = Number(Deno.env.get("CAL_EVENT_TYPE_ID"));
+const BUSINESS_TIMEZONE = Deno.env.get("BUSINESS_TIMEZONE") ?? "America/Toronto";
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+
+if (!CAL_API_KEY) {
+  throw new Error("CAL_API_KEY is required");
 }
-
-const CAL_API_KEY = Deno.env.get("CAL_API_KEY") || "";
-const CAL_EVENT_TYPE_ID = Number(Deno.env.get("CAL_EVENT_TYPE_ID")) || 4352394;
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+if (!Number.isFinite(CAL_EVENT_TYPE_ID)) {
+  throw new Error("CAL_EVENT_TYPE_ID is required and must match canonical_ids.json");
+}
 
 interface BookingRequest {
   call_record_id: string;
@@ -31,90 +35,53 @@ interface BookingRequest {
   appointment_type?: string;  // demo, follow_up, in_person, other
 }
 
-interface CalComBookingResponse {
-  id: number;
-  uid: string;
-  title: string;
-  startTime: string;
-  endTime: string;
-  status: string;
-}
-
 /**
- * Book an appointment with Cal.com
+ * Book an appointment with Cal.com v2.
+ * v2 derives the end time from the configured event type — we no longer compute it.
  */
-async function bookCalComAppointment(data: BookingRequest): Promise<CalComBookingResponse> {
-  if (!CAL_API_KEY) {
-    throw new Error("CAL_API_KEY not configured");
-  }
+async function bookCalComAppointment(data: BookingRequest): Promise<CalBookingResult> {
+  const startIso = new Date(data.appointment_time).toISOString();
 
-  // Parse the start time and calculate end time (30 min later)
-  const start = new Date(data.appointment_time);
-  const end = new Date(start.getTime() + 30 * 60 * 1000);
+  const metadata: Record<string, string> = {
+    source: "supabase_edge_function",
+    call_record_id: data.call_record_id,
+  };
+  if (data.practitioner_id) metadata.practitioner_id = data.practitioner_id;
+  if (data.practice_name) metadata.practice_name = data.practice_name;
+  if (data.practitioner_type) metadata.practitioner_type = data.practitioner_type;
+  if (data.phone) metadata.practitioner_phone = data.phone;
+  if (data.products) metadata.products_interested = data.products;
 
-  // Build notes for sales team with full context
-  const notes = [
-    `Practice: ${data.practice_name || data.practitioner_name || "N/A"}`,
-    `Type: ${data.practitioner_type || "N/A"}`,
-    `Phone: ${data.phone || "N/A"}`,
-    `Products Interested: ${data.products || "N/A"}`,
-    `Address: ${data.address || "TBD"}`,
-    "",
-    "Call Summary:",
-    data.summary || "No summary available",
-  ].join("\n");
+  const attendee: { name: string; email: string; timeZone: string; phoneNumber?: string } = {
+    name: data.practitioner_name || "Unknown",
+    email: data.practitioner_email || "noemail@superpatch.com",
+    timeZone: BUSINESS_TIMEZONE,
+  };
+  if (data.phone) attendee.phoneNumber = data.phone;
 
   const bookingPayload = {
     eventTypeId: CAL_EVENT_TYPE_ID,
-    start: start.toISOString(),
-    end: end.toISOString(),
-    responses: {
-      name: data.practitioner_name || "Unknown",
-      email: data.practitioner_email || "noemail@superpatch.com",
-      location: {
-        value: "inPerson",
-        optionValue: data.address || "TBD",
-      },
-    },
-    timeZone: "America/New_York",
-    language: "en",
-    title: `SuperPatch Demo - ${data.practice_name || data.practitioner_name || "Unknown"}`,
-    description: notes,
-    metadata: {
-      source: "supabase_edge_function",
-      call_record_id: data.call_record_id,
-      practice_name: data.practice_name,
-      practitioner_type: data.practitioner_type,
-      practitioner_phone: data.phone,
-      products_interested: data.products,
-    },
+    start: startIso,
+    attendee,
+    metadata,
   };
 
-  console.log("📅 Cal.com booking payload:", JSON.stringify(bookingPayload, null, 2));
+  console.log("📅 Cal.com v2 booking payload:", JSON.stringify(bookingPayload, null, 2));
 
-  const response = await fetchWithTimeout(`https://api.cal.com/v1/bookings?apiKey=${CAL_API_KEY}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(bookingPayload),
+  return await createCalBooking(bookingPayload, {
+    apiKey: CAL_API_KEY,
+    apiVersion: CAL_API_VERSION,
   });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Cal.com booking failed: ${response.status} - ${errorText}`);
-  }
-
-  return response.json();
 }
 
 /**
- * Update call record with booking information
+ * Update call record with booking information.
+ * Intentionally does NOT touch `notes` — that field carries call-summary context
+ * and is updated elsewhere (Task 2.8 owns the notes flow).
  */
 async function updateCallRecord(
   supabase: ReturnType<typeof createClient>,
   callRecordId: string,
-  bookingId: string,
   bookingUid: string
 ): Promise<void> {
   const { error } = await supabase
@@ -122,7 +89,6 @@ async function updateCallRecord(
     .update({
       booking_id: bookingUid,
       calendar_invite_sent: true,
-      notes: `Cal.com Booking ID: ${bookingId}, UID: ${bookingUid}`,
       updated_at: new Date().toISOString(),
     })
     .eq("id", callRecordId);
@@ -138,14 +104,17 @@ async function updateCallRecord(
 async function createAppointmentRecord(
   supabase: ReturnType<typeof createClient>,
   data: BookingRequest,
-  booking: CalComBookingResponse
+  booking: CalBookingResult
 ): Promise<string | null> {
+  const scheduledAt = booking.start ?? new Date(data.appointment_time).toISOString();
+  const title = `SuperPatch Demo - ${data.practice_name || data.practitioner_name || "Unknown"}`;
+
   const appointmentData = {
     practitioner_id: data.practitioner_id || null,
     call_record_id: data.call_record_id,
     type: data.appointment_type || 'demo',
-    title: booking.title,
-    scheduled_at: booking.startTime,
+    title,
+    scheduled_at: scheduledAt,
     duration_minutes: 30,
     status: 'scheduled',
     cal_booking_id: String(booking.id),
@@ -227,7 +196,7 @@ serve(async (req) => {
   try {
     // Parse request body
     const body: BookingRequest = await req.json();
-    
+
     console.log("📋 Booking request:", {
       call_record_id: body.call_record_id,
       practitioner_name: body.practitioner_name,
@@ -262,10 +231,10 @@ serve(async (req) => {
     if (existingRecord?.booking_id) {
       console.log("⏭️ Booking already exists in call_records, skipping");
       return new Response(
-        JSON.stringify({ 
-          success: true, 
+        JSON.stringify({
+          success: true,
           message: "Booking already exists",
-          booking_id: existingRecord.booking_id 
+          booking_id: existingRecord.booking_id
         }),
         { status: 200, headers: { "Content-Type": "application/json" } }
       );
@@ -281,19 +250,40 @@ serve(async (req) => {
     if (existingAppointment?.cal_booking_uid) {
       console.log("⏭️ Appointment already exists, skipping");
       return new Response(
-        JSON.stringify({ 
-          success: true, 
+        JSON.stringify({
+          success: true,
           message: "Appointment already exists",
           appointment_id: existingAppointment.id,
-          booking_id: existingAppointment.cal_booking_uid 
+          booking_id: existingAppointment.cal_booking_uid
         }),
         { status: 200, headers: { "Content-Type": "application/json" } }
       );
     }
 
-    // Book the appointment
-    const booking = await bookCalComAppointment(body);
-    
+    // Book the appointment via Cal.com v2
+    let booking: CalBookingResult;
+    try {
+      booking = await bookCalComAppointment(body);
+    } catch (err) {
+      if (err instanceof CalError) {
+        console.error("❌ Cal.com booking error:", err.status, err.message);
+        try {
+          await logBookingFailure(supabase, body.call_record_id, `Cal.com ${err.status}: ${err.message}`);
+        } catch {
+          // logging failure must not mask the upstream error
+        }
+        const status = err.status === 409 ? 409 : 502;
+        return new Response(
+          JSON.stringify({ success: false, error: err.message, status: err.status }),
+          {
+            status,
+            headers: { ...corsHeaders(), "Content-Type": "application/json" },
+          }
+        );
+      }
+      throw err;
+    }
+
     console.log("✅ Cal.com booking created:", {
       id: booking.id,
       uid: booking.uid,
@@ -301,12 +291,7 @@ serve(async (req) => {
     });
 
     // Update call record with booking info (for backward compatibility)
-    await updateCallRecord(
-      supabase,
-      body.call_record_id,
-      String(booking.id),
-      booking.uid
-    );
+    await updateCallRecord(supabase, body.call_record_id, booking.uid);
 
     console.log("✅ Call record updated with booking info");
 
@@ -319,18 +304,18 @@ serve(async (req) => {
         booking: {
           id: booking.id,
           uid: booking.uid,
-          title: booking.title,
-          startTime: booking.startTime,
           status: booking.status,
+          start: booking.start,
+          end: booking.end,
         },
         appointment_id: appointmentId,
       }),
-      { 
-        status: 200, 
-        headers: { 
+      {
+        status: 200,
+        headers: {
+          ...corsHeaders(),
           "Content-Type": "application/json",
-          "Access-Control-Allow-Origin": "*",
-        } 
+        }
       }
     );
   } catch (error) {
@@ -348,16 +333,16 @@ serve(async (req) => {
     }
 
     return new Response(
-      JSON.stringify({ 
-        success: false, 
-        error: error instanceof Error ? error.message : "Unknown error" 
+      JSON.stringify({
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error"
       }),
-      { 
-        status: 500, 
-        headers: { 
+      {
+        status: 500,
+        headers: {
+          ...corsHeaders(),
           "Content-Type": "application/json",
-          "Access-Control-Allow-Origin": "*",
-        } 
+        }
       }
     );
   }
