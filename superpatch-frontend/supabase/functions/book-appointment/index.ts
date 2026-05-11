@@ -5,6 +5,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { createCalBooking, CalError, type CalBookingResult } from "../_shared/cal.ts";
+import { buildNotesUpdate } from "./notes.ts";
 
 const CAL_API_KEY = Deno.env.get("CAL_API_KEY") ?? "";
 const CAL_API_VERSION = Deno.env.get("CAL_API_VERSION");
@@ -82,20 +83,36 @@ async function bookCalComAppointment(data: BookingRequest): Promise<CalBookingRe
 }
 
 /**
- * Update call record with booking information.
- * Intentionally does NOT touch `notes` — that field carries call-summary context
- * and is updated elsewhere (Task 2.8 owns the notes flow).
+ * Update the call_record with booking information. Reads the existing
+ * `notes` first so that we APPEND the Cal.com booking line rather than
+ * overwriting prior call-summary content (analyze-call writes
+ * conversational context into `notes`, and an earlier version of this
+ * function was overwriting it on every booking).
  */
 async function updateCallRecord(
   supabase: ReturnType<typeof createClient>,
   callRecordId: string,
-  bookingUid: string
+  bookingUid: string,
 ): Promise<void> {
+  const { data: existing, error: readError } = await supabase
+    .from("call_records")
+    .select("notes")
+    .eq("id", callRecordId)
+    .maybeSingle();
+
+  if (readError) {
+    throw new Error(`Failed to read call record before booking write-back: ${readError.message}`);
+  }
+
+  const nextNotes = buildNotesUpdate(existing?.notes ?? null, bookingUid);
+
   const { error } = await supabase
     .from("call_records")
     .update({
+      appointment_booked: true,
       booking_id: bookingUid,
       calendar_invite_sent: true,
+      notes: nextNotes,
       updated_at: new Date().toISOString(),
     })
     .eq("id", callRecordId);
