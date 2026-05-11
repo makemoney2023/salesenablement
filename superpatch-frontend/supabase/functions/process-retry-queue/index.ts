@@ -203,12 +203,12 @@ async function initiateCall(practitioner: RetryQueueEntry): Promise<CallResult> 
   }
 }
 
-// Update practitioner after call attempt
+// Update practitioner after call attempt. The Bland call_id used to be
+// passed in and ignored — removed (callers no longer pass it either).
 async function updatePractitionerAfterCall(
   supabase: ReturnType<typeof createClient>,
   practitionerId: string,
   success: boolean,
-  callId?: string
 ): Promise<void> {
   if (success) {
     // Clear next_retry_at since call was initiated
@@ -305,7 +305,7 @@ async function processRetryQueue(supabase: ReturnType<typeof createClient>): Pro
     const batchResults = await Promise.all(
       batch.map(async (practitioner) => {
         const result = await initiateCall(practitioner);
-        await updatePractitionerAfterCall(supabase, practitioner.id, result.success, result.call_id);
+        await updatePractitionerAfterCall(supabase, practitioner.id, result.success);
         return result;
       })
     );
@@ -409,7 +409,7 @@ serve(async (req: Request) => {
       const results: CallResult[] = [];
       for (const practitioner of practitioners as RetryQueueEntry[]) {
         const result = await initiateCall(practitioner);
-        await updatePractitionerAfterCall(supabase, practitioner.id, result.success, result.call_id);
+        await updatePractitionerAfterCall(supabase, practitioner.id, result.success);
         results.push(result);
       }
 

@@ -90,6 +90,13 @@ function getGeminiClient() {
 }
 
 // Structured Extraction Prompt
+// Gemini 2.0 Flash will occasionally wrap its JSON in a markdown fence
+// despite the "Return ONLY valid JSON" prompt instruction. Centralized
+// here so the four LLM-call paths share one strip implementation.
+function stripJsonFences(raw: string): string {
+  return raw.replace(/```json\n?|\n?```/g, "").trim();
+}
+
 async function extractStructuredData(
   genAI: GoogleGenerativeAI,
   transcript: string
@@ -123,9 +130,7 @@ Be precise. Only include items explicitly mentioned in the transcript.`;
   try {
     const result = await model.generateContent(prompt);
     const response = result.response.text();
-    
-    // Clean up response - remove markdown code blocks if present
-    const jsonStr = response.replace(/```json\n?|\n?```/g, "").trim();
+    const jsonStr = stripJsonFences(response);
     return JSON.parse(jsonStr);
   } catch (error) {
     console.error("Error in structured extraction:", error);
@@ -186,7 +191,7 @@ Return this exact JSON:
   try {
     const result = await model.generateContent(prompt);
     const response = result.response.text();
-    const jsonStr = response.replace(/```json\n?|\n?```/g, "").trim();
+    const jsonStr = stripJsonFences(response);
     return JSON.parse(jsonStr);
   } catch (error) {
     console.error("Error in lead scoring:", error);
@@ -280,7 +285,7 @@ IMPORTANT: Only suggest improvements for clear issues. Don't suggest changes for
   try {
     const result = await model.generateContent(prompt);
     const response = result.response.text();
-    const jsonStr = response.replace(/```json\n?|\n?```/g, "").trim();
+    const jsonStr = stripJsonFences(response);
     return JSON.parse(jsonStr);
   } catch (error) {
     console.error("Error in pathway analysis:", error);
@@ -342,7 +347,7 @@ Return this exact JSON:
   try {
     const result = await model.generateContent(prompt);
     const response = result.response.text();
-    const jsonStr = response.replace(/```json\n?|\n?```/g, "").trim();
+    const jsonStr = stripJsonFences(response);
     return JSON.parse(jsonStr);
   } catch (error) {
     console.error("Error generating follow-up:", error);
