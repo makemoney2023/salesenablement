@@ -15,8 +15,11 @@ function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 30
 // Environment variables
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
-const CAL_API_KEY = Deno.env.get("CAL_API_KEY") || "";
-const CAL_EVENT_TYPE_ID = Number(Deno.env.get("CAL_EVENT_TYPE_ID")) || 4352394;
+// Cal.com configuration lives in the dedicated book-appointment Edge
+// Function (which is invoked via fetch below). Don't re-declare CAL_API_KEY
+// or CAL_EVENT_TYPE_ID here; an unused-but-defaulted CAL_EVENT_TYPE_ID
+// previously baked a stale event-type ID into this module and obscured
+// that the booking path was delegated.
 const BLAND_WEBHOOK_SECRET = Deno.env.get("BLAND_WEBHOOK_SECRET") || "";
 const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY") || "";
 
