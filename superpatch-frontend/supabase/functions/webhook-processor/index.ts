@@ -6,6 +6,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { canonicalPractitionerType } from "../_shared/practitioner-type.ts";
+import { toBool } from "../_shared/coerce.ts";
 
 function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 30000): Promise<Response> {
   const controller = new AbortController();
@@ -297,9 +298,7 @@ function calculateLeadScore(
   if (callStatus === "booked" || callStatus === "calendar_sent") score += 50;
   
   const vars = payload.variables || {};
-  // Handle both string and boolean values from Bland
-  if (String(vars.wants_sample || "").toLowerCase() === "true" || vars.wants_sample === true ||
-      String(vars.sample_requested || "").toLowerCase() === "true" || vars.sample_requested === true) {
+  if (toBool(vars.wants_sample) || toBool(vars.sample_requested)) {
     score += 25;
   }
   
@@ -538,12 +537,9 @@ function extractQualificationData(
   const cleanContactEmail = sanitizeTranscribedEmail(rawContactEmail);
   if (cleanContactEmail) qualification.contact_email = cleanContactEmail;
   
-  const decisionMaker = vars.decision_maker || vars.is_decision_maker;
+  const decisionMaker = vars.decision_maker ?? vars.is_decision_maker;
   if (decisionMaker !== undefined && decisionMaker !== null) {
-    // Handle both string and boolean values from Bland
-    qualification.decision_maker = decisionMaker === true || 
-      String(decisionMaker).toLowerCase() === "yes" || 
-      String(decisionMaker).toLowerCase() === "true";
+    qualification.decision_maker = toBool(decisionMaker);
   }
   
   const bestCallbackTime = vars.best_callback_time || vars.callback_time || vars.preferred_time_to_call;
@@ -602,18 +598,17 @@ function extractQualificationData(
   const productsInterested = vars.products_interested || vars.sample_products || vars.products_requested || vars.products;
   if (productsInterested) qualification.products_interested = productsInterested;
   
-  const wantsSample = vars.wants_sample || (productsInterested ? "true" : undefined);
-  if (wantsSample !== undefined && wantsSample !== null) {
-    // Handle both string and boolean values from Bland
-    const sampleValue = String(wantsSample).toLowerCase();
-    qualification.wants_sample = sampleValue === "true" || sampleValue === "yes";
+  // wants_sample: true when Bland set it OR when the AI captured any
+  // product-of-interest (an implicit-sample-intent signal we want to
+  // preserve from the legacy behaviour).
+  if (vars.wants_sample !== undefined && vars.wants_sample !== null) {
+    qualification.wants_sample = toBool(vars.wants_sample);
+  } else if (productsInterested) {
+    qualification.wants_sample = true;
   }
-  
-  const wantsDemo = vars.wants_demo;
-  if (wantsDemo !== undefined && wantsDemo !== null) {
-    // Handle both string and boolean values from Bland
-    const demoValue = String(wantsDemo).toLowerCase();
-    qualification.wants_demo = demoValue === "true" || demoValue === "yes";
+
+  if (vars.wants_demo !== undefined && vars.wants_demo !== null) {
+    qualification.wants_demo = toBool(vars.wants_demo);
   }
   
   return qualification;
@@ -1032,10 +1027,7 @@ serve(async (req) => {
       }
     }
 
-    // Extract variables — handle both string "true" and boolean true from Bland pathways
-    const wantsDemo = String(vars.wants_demo).toLowerCase() === "true" || 
-                      String(vars.schedule_demo).toLowerCase() === "true" ||
-                      vars.wants_demo === true || vars.schedule_demo === true;
+    const wantsDemo = toBool(vars.wants_demo) || toBool(vars.schedule_demo);
     const appointmentTime = vars.appointment_time || vars.preferred_time || vars.start_time;
     const practitionerName = vars.practitioner_name || vars.name || vars.contact_name || meta.practice_name || meta.contact_name;
     // Form email (meta.clinic_email) takes priority over AI-extracted vars
@@ -1305,11 +1297,7 @@ serve(async (req) => {
     }
 
     // Handle sample request (handle both string and boolean values from Bland)
-    const wantsSample = 
-      String(vars.wants_sample || "").toLowerCase() === "true" || 
-      vars.wants_sample === true ||
-      String(vars.sample_requested || "").toLowerCase() === "true" ||
-      vars.sample_requested === true;
+    const wantsSample = toBool(vars.wants_sample) || toBool(vars.sample_requested);
     if (wantsSample) {
       console.log("📦 Sample request detected...");
       const productsRaw = vars.products_interested || vars.sample_products || vars.products_requested || vars.products || "";
