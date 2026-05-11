@@ -6,6 +6,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { CalError, listCalBookings, type CalBookingResult } from "../_shared/cal.ts";
+import { appendNoteLine } from "../_shared/notes.ts";
 import { normalizeCalStatus } from "./status.ts";
 
 const CAL_API_KEY = Deno.env.get("CAL_API_KEY") ?? "";
@@ -110,10 +111,11 @@ async function syncBooking(
       console.log(`✅ Synced booking ${booking.uid} to appointments table`);
     }
 
-    // Bridge to legacy call_records table.
+    // Bridge to legacy call_records table. We pull `notes` so the
+    // cancellation path can append (not overwrite) the cancel marker.
     const { data: existingByBookingId } = await supabase
       .from("call_records")
-      .select("id, status, appointment_time")
+      .select("id, status, appointment_time, notes")
       .eq("booking_id", booking.uid)
       .single();
 
@@ -124,7 +126,7 @@ async function syncBooking(
     if (metadataCallRecordId) {
       const { data } = await supabase
         .from("call_records")
-        .select("id, status, appointment_time, booking_id")
+        .select("id, status, appointment_time, booking_id, notes")
         .eq("id", metadataCallRecordId)
         .single();
       existingByMetadata = data;
@@ -150,9 +152,16 @@ async function syncBooking(
 
     if (normalizeCalStatus(booking.status) === "cancelled") {
       updates.appointment_booked = false;
-      updates.notes = booking.updatedAt
+      // Append the cancel marker via appendNoteLine so the analyze-call
+      // summary and the prior `Cal.com Booking ID: ...` line written by
+      // book-appointment are preserved across sync cycles.
+      const cancelLine = booking.updatedAt
         ? `Appointment cancelled on Cal.com at ${booking.updatedAt}`
         : `Appointment cancelled on Cal.com (timestamp not provided; observed during sync at ${new Date().toISOString()})`;
+      updates.notes = appendNoteLine(
+        (existing as { notes?: string | null }).notes,
+        cancelLine,
+      );
 
       const { error } = await supabase
         .from("call_records")

@@ -2,6 +2,7 @@ import { assertEquals } from "https://deno.land/std@0.208.0/assert/mod.ts";
 import {
   canonicalPractitionerType,
   displayName,
+  pathwaySuggestionsKey,
   pathwaySummaryFor,
 } from "./practitioner-type.ts";
 
@@ -43,6 +44,22 @@ Deno.test("displayName returns canonical human label", () => {
   assertEquals(displayName("acupuncturist"), "Acupuncturists");
   assertEquals(displayName("unknown"), "Unknown");
 });
+
+Deno.test(
+  "pathwaySuggestionsKey returns the underscore-joined UI wire format hardcoded in pathway-suggestions/page.tsx and the export route",
+  () => {
+    // These must stay in lockstep with PRACTITIONER_TYPES in
+    // src/app/campaign/pathway-suggestions/page.tsx and the keys of
+    // practitionerTypeToFile in src/app/api/pathway-suggestions/export/route.ts.
+    assertEquals(pathwaySuggestionsKey("chiropractor"), "Chiropractors");
+    assertEquals(pathwaySuggestionsKey("naturopath"), "Naturopaths");
+    assertEquals(pathwaySuggestionsKey("acupuncturist"), "Acupuncturists");
+    assertEquals(pathwaySuggestionsKey("massage_therapist"), "Massage_Therapists");
+    assertEquals(pathwaySuggestionsKey("functional_medicine"), "Functional_Medicine");
+    assertEquals(pathwaySuggestionsKey("integrative_medicine"), "Integrative_Medicine");
+    assertEquals(pathwaySuggestionsKey("unknown"), "Unknown");
+  },
+);
 
 Deno.test("pathwaySummaryFor returns canonical + non-empty summary; unknown gets fallback", () => {
   const chiro = pathwaySummaryFor("chiropractor_v2");

@@ -23,21 +23,31 @@
 --   VALUES ('service_role_key', '<service_role_key_value>')
 --   ON CONFLICT (name) DO UPDATE SET secret = EXCLUDED.secret;
 --
+-- IMPORTANT — token never lands in cron.job.command: the scheduled command
+-- looks the secret up from `vault.decrypted_secrets` at run time, so the
+-- JWT is not embedded in the (world-readable to superuser/postgres) job
+-- definition. Earlier drafts of this migration interpolated the token at
+-- schedule time via `'Bearer ' || service_token`, which would have
+-- persisted the plaintext token into `cron.job`.
+--
 -- The `cleanup-stale-enrichment` job is a pure SQL job (no HTTP) and is
 -- left alone.
 
 DO $$
 DECLARE
   job_id BIGINT;
-  service_token TEXT;
   supabase_url CONSTANT TEXT := 'https://gdwwppwaxyvudsecexuq.supabase.co';
 BEGIN
-  SELECT decrypted_secret INTO service_token
-  FROM vault.decrypted_secrets
-  WHERE name = 'service_role_key'
-  LIMIT 1;
-
-  IF service_token IS NULL OR length(service_token) = 0 THEN
+  -- Pre-flight: fail fast if the operator forgot to insert the Vault secret.
+  -- The token is NOT captured into a variable here — we only want to verify
+  -- it exists. The scheduled commands below resolve it at run time.
+  IF NOT EXISTS (
+    SELECT 1
+    FROM vault.decrypted_secrets
+    WHERE name = 'service_role_key'
+      AND decrypted_secret IS NOT NULL
+      AND length(decrypted_secret) > 0
+  ) THEN
     RAISE EXCEPTION
       'vault.secrets entry "service_role_key" is missing or empty. Insert it before applying this migration. See the comment at the top of 20260512_repoint_cron_jobs.sql.';
   END IF;
@@ -61,11 +71,16 @@ BEGIN
         url := %L,
         headers := jsonb_build_object(
           'Content-Type', 'application/json',
-          'Authorization', %L
+          'Authorization', 'Bearer ' || (
+            SELECT decrypted_secret
+            FROM vault.decrypted_secrets
+            WHERE name = 'service_role_key'
+            LIMIT 1
+          )
         ),
         body := jsonb_build_object('source', 'pg_cron', 'scheduled', true)
       ) AS request_id;
-    $cron$, supabase_url || '/functions/v1/enrich-practitioners-v2', 'Bearer ' || service_token)
+    $cron$, supabase_url || '/functions/v1/enrich-practitioners-v2')
   );
 
   PERFORM cron.schedule(
@@ -76,11 +91,16 @@ BEGIN
         url := %L,
         headers := jsonb_build_object(
           'Content-Type', 'application/json',
-          'Authorization', %L
+          'Authorization', 'Bearer ' || (
+            SELECT decrypted_secret
+            FROM vault.decrypted_secrets
+            WHERE name = 'service_role_key'
+            LIMIT 1
+          )
         ),
         body := jsonb_build_object('source', 'pg_cron', 'scheduled', true)
       ) AS request_id;
-    $cron$, supabase_url || '/functions/v1/process-retry-queue', 'Bearer ' || service_token)
+    $cron$, supabase_url || '/functions/v1/process-retry-queue')
   );
 
   PERFORM cron.schedule(
@@ -91,11 +111,16 @@ BEGIN
         url := %L,
         headers := jsonb_build_object(
           'Content-Type', 'application/json',
-          'Authorization', %L
+          'Authorization', 'Bearer ' || (
+            SELECT decrypted_secret
+            FROM vault.decrypted_secrets
+            WHERE name = 'service_role_key'
+            LIMIT 1
+          )
         ),
         body := jsonb_build_object('source', 'pg_cron', 'scheduled', true)
       ) AS request_id;
-    $cron$, supabase_url || '/functions/v1/sync-cal-bookings', 'Bearer ' || service_token)
+    $cron$, supabase_url || '/functions/v1/sync-cal-bookings')
   );
 
   PERFORM cron.schedule(
@@ -106,10 +131,15 @@ BEGIN
         url := %L,
         headers := jsonb_build_object(
           'Content-Type', 'application/json',
-          'Authorization', %L
+          'Authorization', 'Bearer ' || (
+            SELECT decrypted_secret
+            FROM vault.decrypted_secrets
+            WHERE name = 'service_role_key'
+            LIMIT 1
+          )
         ),
         body := jsonb_build_object('source', 'pg_cron', 'scheduled', true)
       ) AS request_id;
-    $cron$, supabase_url || '/functions/v1/generate-daily-report', 'Bearer ' || service_token)
+    $cron$, supabase_url || '/functions/v1/generate-daily-report')
   );
 END $$;

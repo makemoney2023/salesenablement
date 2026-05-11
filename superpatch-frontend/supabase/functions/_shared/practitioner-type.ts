@@ -55,6 +55,22 @@ const DISPLAY: Record<CanonicalPractitionerType, string> = {
   unknown: "Unknown",
 };
 
+// Wire-format key the frontend uses to filter `pathway_suggestions`,
+// load pathway JSON files, and label dropdown options. Mirrors the
+// existing pathway file names (Massage_Therapists_pathway.json etc.)
+// and the values that the UI hardcodes in pathway-suggestions/page.tsx.
+// Keep this in sync with `practitionerTypeToFile` in
+// `src/app/api/pathway-suggestions/export/route.ts`.
+const PATHWAY_SUGGESTIONS_KEY: Record<CanonicalPractitionerType, string> = {
+  chiropractor: "Chiropractors",
+  massage_therapist: "Massage_Therapists",
+  naturopath: "Naturopaths",
+  integrative_medicine: "Integrative_Medicine",
+  functional_medicine: "Functional_Medicine",
+  acupuncturist: "Acupuncturists",
+  unknown: "Unknown",
+};
+
 const SUMMARIES: Record<CanonicalPractitionerType, string> = {
   chiropractor:
     "Chiropractic practice focused on spinal manipulation, neuromusculoskeletal pain, and rehab protocols. Superpatch positioned as drug-free acute and recovery pain management.",
@@ -88,6 +104,15 @@ export function canonicalPractitionerType(
 
 export function displayName(canonical: CanonicalPractitionerType): string {
   return DISPLAY[canonical];
+}
+
+// Return the value the frontend stores in `pathway_suggestions.practitioner_type`
+// and uses for filtering. Use this whenever an Edge Function writes a row that
+// the pathway-suggestions UI / export route will later read.
+export function pathwaySuggestionsKey(
+  canonical: CanonicalPractitionerType,
+): string {
+  return PATHWAY_SUGGESTIONS_KEY[canonical];
 }
 
 export interface PathwaySummary {

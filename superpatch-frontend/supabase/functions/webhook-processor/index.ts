@@ -1351,9 +1351,14 @@ serve(async (req) => {
         console.error("❌ Failed to create sample request:", sampleError);
       } else {
         console.log("✅ Sample request created:", sampleData?.id);
-        
-        // Trigger sample confirmation email
-        if (resolvedEmail) {
+
+        // Trigger sample confirmation email. Gate AND recipient must both
+        // use the strict-regex output (`sampleEmail`) so the row's
+        // `email` column and the Resend recipient can never diverge —
+        // previously this used the looser `resolvedEmail`, which could
+        // ship a confirmation to an unvalidated address while the row
+        // stored `null`.
+        if (sampleEmail) {
           try {
             await fetchWithTimeout(`${SUPABASE_URL}/functions/v1/send-sample-confirmation`, {
               method: "POST",
@@ -1365,7 +1370,7 @@ serve(async (req) => {
                 sample_request_id: sampleData?.id,
                 practitioner_name: resolvedPractitionerName,
                 practice_name: practiceName,
-                email: resolvedEmail,
+                email: sampleEmail,
                 products: productsRequested,
                 shipping_address: sampleRequest.shipping_address,
                 shipping_city: sampleRequest.shipping_city,
@@ -1383,6 +1388,13 @@ serve(async (req) => {
               }).eq("id", sampleData.id);
             }
           }
+        } else if (sampleData?.id) {
+          // No valid email survived pickSampleEmail — record that we
+          // can't auto-send so ops can follow up manually.
+          await supabase.from("sample_requests").update({
+            notes: "No valid email captured — sample confirmation not auto-sent.",
+          }).eq("id", sampleData.id);
+          console.log("⚠️ Sample request saved but no valid email available; manual follow-up required.");
         }
       }
     }

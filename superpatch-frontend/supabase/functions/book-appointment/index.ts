@@ -5,6 +5,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { createCalBooking, CalError, type CalBookingResult } from "../_shared/cal.ts";
+import { appendNoteLine } from "../_shared/notes.ts";
 import { buildNotesUpdate } from "./notes.ts";
 
 const CAL_API_KEY = Deno.env.get("CAL_API_KEY") ?? "";
@@ -169,17 +170,28 @@ async function createAppointmentRecord(
 }
 
 /**
- * Log booking failure for retry
+ * Log booking failure for retry. Appends the failure line to existing notes
+ * (analyze-call summary, agent annotations, etc.) instead of overwriting
+ * them — a transient Cal.com 5xx must not erase the call summary.
  */
 async function logBookingFailure(
   supabase: ReturnType<typeof createClient>,
   callRecordId: string,
   error: string
 ): Promise<void> {
+  const { data: existing } = await supabase
+    .from("call_records")
+    .select("notes")
+    .eq("id", callRecordId)
+    .maybeSingle();
+
   await supabase
     .from("call_records")
     .update({
-      notes: `Booking failed: ${error}. Will retry.`,
+      notes: appendNoteLine(
+        (existing as { notes?: string | null } | null)?.notes,
+        `Booking failed: ${error}. Will retry.`,
+      ),
       updated_at: new Date().toISOString(),
     })
     .eq("id", callRecordId);

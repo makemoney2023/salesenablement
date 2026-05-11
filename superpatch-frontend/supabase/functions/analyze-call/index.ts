@@ -6,6 +6,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import {
   canonicalPractitionerType,
+  pathwaySuggestionsKey,
   pathwaySummaryFor,
 } from "../_shared/practitioner-type.ts";
 
@@ -355,7 +356,15 @@ Return this exact JSON:
   }
 }
 
-// Save pathway suggestions with deduplication
+// Save pathway suggestions with deduplication.
+//
+// `practitionerType` is the canonical slug (e.g. "chiropractor",
+// "massage_therapist"). The pathway-suggestions UI and export route filter
+// `pathway_suggestions.practitioner_type` by the underscore-joined wire
+// format hardcoded in pathway-suggestions/page.tsx (e.g. "Chiropractors",
+// "Massage_Therapists"), so we translate via pathwaySuggestionsKey before
+// any DB read or write — otherwise the UI silently returns 0 rows for the
+// new analyses.
 async function savePathwaySuggestions(
   supabase: ReturnType<typeof createClient>,
   callRecordId: string,
@@ -363,7 +372,11 @@ async function savePathwaySuggestions(
   analysis: PathwayAnalysisResult
 ): Promise<number> {
   let savedCount = 0;
-  
+
+  const suggestionsKey = pathwaySuggestionsKey(
+    canonicalPractitionerType(practitionerType),
+  );
+
   const allSuggestions: PathwaySuggestion[] = [
     ...analysis.node_prompt_improvements,
     ...analysis.missing_edges,
@@ -377,7 +390,7 @@ async function savePathwaySuggestions(
     const { data: existing } = await supabase
       .from("pathway_suggestions")
       .select("id, frequency_count, similar_call_ids")
-      .eq("practitioner_type", practitionerType)
+      .eq("practitioner_type", suggestionsKey)
       .eq("suggestion_type", suggestion.suggestion_type)
       .eq("node_id", suggestion.node_id || "")
       .eq("status", "new")
@@ -405,7 +418,7 @@ async function savePathwaySuggestions(
         .from("pathway_suggestions")
         .insert({
           call_record_id: callRecordId,
-          practitioner_type: practitionerType,
+          practitioner_type: suggestionsKey,
           suggestion_type: suggestion.suggestion_type,
           node_id: suggestion.node_id || null,
           node_name: suggestion.node_name || null,
