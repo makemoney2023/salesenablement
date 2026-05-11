@@ -15,9 +15,15 @@
 --      to avoid breaking existing consumers (useRealtimePractitioners' UI
 --      treats it as "count of practitioners that finished enrichment").
 
+-- Legacy writers used three different "success" sentinels: 'completed'
+-- (early enrich-practitioners), 'success' (the bulk-enrichment Python
+-- jobs in b2b_sales_enablement/practitioner_enrichment/), and the
+-- canonical 'enriched' from enrich-practitioners-v2. Collapse all three
+-- to 'enriched' before adding the CHECK constraint below; otherwise the
+-- ALTER TABLE blows up on prod data (~10k 'success' rows observed).
 UPDATE practitioners
 SET enrichment_status = 'enriched'
-WHERE enrichment_status = 'completed';
+WHERE enrichment_status IN ('completed', 'success');
 
 ALTER TABLE practitioners
   DROP CONSTRAINT IF EXISTS practitioners_enrichment_status_check;
