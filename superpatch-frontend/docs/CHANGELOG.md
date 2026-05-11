@@ -8,9 +8,19 @@ Frontend app deltas (Next.js app, API routes, client components, frontend deps).
 
 ### Fixed
 - `superpatch-frontend/supabase/migrations/20260512_fix_sample_notification_trigger.sql` recreates `notify_new_sample_request()` to reference the real `sample_requests` columns (`requester_name`, `practice_name`, `products_requested`, `shipping_address`, `shipping_city`, etc.). The 20260115 trigger referenced columns that never existed (`practitioner_name`, `practitioner_type`, `products`, `address`), so every AFTER INSERT raised `column ... does not exist` and rolled the insert back — no sample requests had been persisting in production. Migration drops both the legacy `trigger_notify_new_sample` and the new `trg_notify_new_sample_request` defensively before recreating.
+- `superpatch-frontend/supabase/migrations/20260512_repoint_cron_jobs.sql` repoints the four HTTP pg_cron jobs (`process-enrichment-queue`, `process-retry-queue`, `sync-cal-bookings`, `generate-daily-report`) so they (a) target the correct Edge Function names — `enrich-practitioners-v2` was previously `enrich-practitioners` (404) — and (b) read the Bearer token from `vault.decrypted_secrets` instead of the unset `supabase.service_role_key` runtime setting. Without this fix, every scheduled invocation was rejected with HTTP 401, so enrichment, retry calls, Cal sync, and daily reports had been silently failing in production. `cleanup-stale-enrichment` (pure SQL, no HTTP) is preserved unchanged.
 
 ### Added
 - `superpatch-frontend/supabase/tests/sample_requests_insert.test.sql` pgTAP smoke test asserting a minimal `sample_requests` insert succeeds. Runs once a local Supabase test harness is wired (see the plan's Task 4.3).
+
+### Operational (run BEFORE applying 20260512_repoint_cron_jobs.sql)
+- Insert the `service_role_key` into Supabase Vault:
+  ```sql
+  INSERT INTO vault.secrets (name, secret)
+  VALUES ('service_role_key', '<SUPABASE_SERVICE_ROLE_KEY>')
+  ON CONFLICT (name) DO UPDATE SET secret = EXCLUDED.secret;
+  ```
+  The migration raises immediately if this secret is missing.
 
 ## 2026-05-11
 
