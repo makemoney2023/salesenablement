@@ -1,0 +1,84 @@
+---
+description: Supabase schema, RLS, Edge Function, pg_net, and pg_cron conventions
+globs: superpatch-frontend/supabase/**/*.{sql,ts}
+alwaysApply: false
+---
+
+# Supabase Conventions
+
+Complements `supabase-migrations.mdc` (command workflow). This rule covers **schema design, RLS, Edge Functions, pg_net, pg_cron, and cross-runtime invariants**.
+
+## Canonical paths
+
+- `superpatch-frontend/supabase/schema.sql` — structural snapshot (source of truth for DDL review)
+- `superpatch-frontend/supabase/migrations/` — only location for new migrations
+- `superpatch-frontend/supabase/functions/` — Edge Functions (Deno)
+- `superpatch-frontend/supabase/functions/_shared/` — code shared across Edge Functions
+- `superpatch-frontend/src/lib/db/types.ts` — manual TS mirror of the schema
+
+## Schema rules
+
+- Primary keys: `id uuid primary key default gen_random_uuid()` unless a specific reason (e.g., external provider id).
+- Timestamps: every mutable row has `created_at timestamptz default now()` and `updated_at timestamptz default now()`. Add a trigger to bump `updated_at`.
+- Foreign keys: always `on delete` action explicit (`cascade`, `set null`, or `restrict`). Never implicit.
+- Enums: prefer `text` + `CHECK (value IN (...))` over Postgres enum types — easier to evolve.
+- Indexes: index every FK used in joins, every `where` predicate used by an Edge Function or API route.
+- Booleans default to `false`, not `null`, unless tri-state is meaningful (e.g., `do_not_call boolean default false not null`).
+
+## Row Level Security
+
+- **Every table has RLS enabled.** Public tables (e.g., published products) still need an explicit policy.
+- Use `auth.uid()` checks for per-user rows; use `SECURITY DEFINER` functions for service-role-only access.
+- Edge Functions and scripts that need unrestricted access use the `SUPABASE_SERVICE_ROLE_KEY` client (not the anon key).
+- Add policy comments that describe the intent in one line.
+
+## types.ts mirror
+
+Every schema change that affects table shape must update `src/lib/db/types.ts`:
+
+- Match field names and nullability 1:1.
+- Use `Tables<"practitioners">` pattern when possible so consumers get a strict row type.
+- When generating via `supabase gen types typescript` is unsafe, update by hand — verify with `pnpm tsc --noEmit` before committing.
+
+## Edge Function rules
+
+- Every Edge Function has `index.ts` + an inline `@ts-nocheck` header (Deno types are fine at runtime; Next.js tsconfig excludes this folder).
+- Use the helpers in `_shared/`:
+  - `_shared/pathways.ts` for any Bland pathway / KB / voice / webhook lookup.
+  - Shared CORS + auth helpers when present.
+- Every function validates inbound requests (verify origin, verify service-role auth for cron-triggered endpoints, verify webhook signatures where Bland supports them).
+- Every function has timeouts (`fetchWithTimeout` pattern) and surfaces errors with non-200 status + JSON body.
+- Log with a consistent prefix per function: `[WebhookProcessor]`, `[RetryQueue]`, `[BookAppointment]`, etc.
+
+## Side-effect path policy
+
+**One downstream path per event.** Never combine a pg_net trigger and an explicit `fetch` from an Edge Function for the same side effect.
+
+Current canonical paths (2026-04):
+
+| Event | Canonical path | Do NOT use |
+|---|---|---|
+| Bland webhook arrives | `webhook-processor` Edge Function | DB trigger |
+| Appointment requested in call | `webhook-processor` -> `book-appointment` Edge Function | pg_net trigger on `call_records.appointment_booked` (disabled 2026-04-21) |
+| Sample request | `webhook-processor` -> `send-sample-confirmation` + Resend | Raw SMTP / direct Resend from frontend |
+| Retry queue | `process-retry-queue` Edge Function (pg_cron trigger) | Ad hoc Python scripts |
+| Cal.com sync | `sync-cal-bookings` Edge Function (pg_cron trigger) | Manual insert |
+
+When adding a new automation, pick one path and document why it is preferred over the alternatives.
+
+## pg_net / pg_cron hygiene
+
+- pg_net HTTP calls must never reference hardcoded service-role keys in the SQL. Use `current_setting('supabase.service_role_key', true)` or schedule via `pg_cron` that calls an Edge Function authenticated by the service role.
+- Every cron job has a matching comment on its schedule and the Edge Function it invokes. Schedules live in `supabase/migrations/*cron*.sql`.
+- Prefer explicit Edge Function invocation over pg_net where possible — it is easier to observe, retry, and debug.
+
+## Breaking-change protocol
+
+When a migration changes a table, column, or index:
+
+1. Write the migration.
+2. Update `schema.sql`.
+3. Update `src/lib/db/types.ts`.
+4. Grep for string references to the old name in `supabase/functions/` and `src/`; update them.
+5. Add a README Delta to `superpatch-frontend/docs/CHANGELOG.md`.
+6. Run `pnpm test` and `pnpm tsc --noEmit` from `superpatch-frontend/`.

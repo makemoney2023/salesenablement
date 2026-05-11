@@ -1,0 +1,85 @@
+{
+  "_meta": {
+    "description": "Single source of truth for Bland.ai pathway, tool, knowledge-base, voice, and webhook IDs used by Sales Enablement. Loaded at runtime by Python scripts in this folder and cross-checked by a Vitest test against superpatch-frontend/src/lib/config/pathways.ts and superpatch-frontend/supabase/functions/_shared/pathways.ts.",
+    "updated_at": "2026-04-21",
+    "consumers": [
+      "b2b_sales_enablement/bland_ai_pathways/bland_cli.py",
+      "b2b_sales_enablement/bland_ai_pathways/publish_pathways_production.py",
+      "b2b_sales_enablement/bland_ai_pathways/deploy_updated_pathways.py",
+      "superpatch-frontend/src/lib/config/pathways.ts",
+      "superpatch-frontend/supabase/functions/_shared/pathways.ts",
+      "superpatch-frontend/supabase/functions/process-retry-queue/index.ts"
+    ],
+    "update_procedure": "When a pathway, tool, KB, or voice ID changes: (1) edit this file, (2) bump _meta.updated_at, (3) update the TS mirrors if the key list changed, (4) run pnpm test from superpatch-frontend/ to verify cross-check."
+  },
+  "pathways": {
+    "chiropractor": {
+      "id": "9aa760af-6f9a-430f-8d0c-25bf84afd8fb",
+      "contextual_file": "Chiropractors_contextual.json",
+      "aliases": ["chiropractors"]
+    },
+    "massage_therapist": {
+      "id": "1fee31b1-8179-48c6-b6fa-12fcd434ed2b",
+      "contextual_file": "Massage_Therapists_contextual.json",
+      "aliases": ["massage", "massage therapist", "rmt"]
+    },
+    "naturopath": {
+      "id": "db955b59-d278-410e-981e-5728dfa2dafd",
+      "contextual_file": "Naturopaths_contextual.json",
+      "aliases": ["naturopaths", "naturopathic doctor"]
+    },
+    "integrative_medicine": {
+      "id": "b6240419-3b24-4415-9541-804994cce425",
+      "contextual_file": "Integrative_Medicine_contextual.json",
+      "aliases": [
+        "integrative",
+        "integrative medicine",
+        "integrative medicine doctor",
+        "integrative medicine practitioner"
+      ]
+    },
+    "functional_medicine": {
+      "id": "70f3a50a-9055-4f41-bc0d-81964dfae19a",
+      "contextual_file": "Functional_Medicine_contextual.json",
+      "aliases": [
+        "functional",
+        "functional medicine",
+        "functional medicine doctor",
+        "functional medicine practitioner"
+      ]
+    },
+    "acupuncturist": {
+      "id": "084673ec-84d6-4c3a-bedb-ba9d72bd7e3b",
+      "contextual_file": "Acupuncturists_contextual.json",
+      "aliases": ["acupuncturists"]
+    }
+  },
+  "default_pathway_key": "chiropractor",
+  "knowledge_base": {
+    "id": "b671527d-0c2d-4a21-9586-033dad3b0255",
+    "description": "SuperPatch knowledge base (shared across all pathways). Source text: b2b_sales_enablement/bland_ai_pathways/superpatch_knowledge_base.txt"
+  },
+  "voice": {
+    "id": "78c8543e-e5fe-448e-8292-20a7b8c45247",
+    "description": "Jennifer (SuperPatch outbound sales voice)"
+  },
+  "tools": {
+    "check_availability": {
+      "id": "TL-79a3c232-ca51-4244-b5d2-21f4e70fd872",
+      "description": "Cal.com availability lookup (wired to Cal.com v1 /slots)"
+    },
+    "book_appointment": {
+      "id": "TL-bbaa7f38-1b6a-4f27-ad27-18fb7c6e1526",
+      "description": "Cal.com booking creation (wired to Cal.com v1 /bookings)"
+    }
+  },
+  "cal_com": {
+    "username": "superpatchhealthprosales",
+    "event_type_id": "4352394",
+    "event_type_slug": "30min"
+  },
+  "webhooks": {
+    "primary": "https://gdwwppwaxyvudsecexuq.supabase.co/functions/v1/webhook-processor",
+    "env_override": "NEXT_PUBLIC_BLAND_WEBHOOK_URL"
+  }
+}

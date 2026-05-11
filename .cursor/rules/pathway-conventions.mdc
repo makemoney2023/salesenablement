@@ -1,0 +1,64 @@
+---
+description: Bland.ai pathway authoring, deployment, and ID management conventions
+globs: b2b_sales_enablement/bland_ai_pathways/**/*.{json,py},superpatch-frontend/supabase/functions/_shared/pathways.ts,superpatch-frontend/src/lib/config/pathways.ts
+alwaysApply: false
+---
+
+# Bland.ai Pathway Conventions
+
+## Canonical source of truth
+
+`b2b_sales_enablement/bland_ai_pathways/canonical_ids.json` is the ONLY place where Bland pathway / KB / voice / tool / Cal.com / webhook IDs are defined.
+
+Mirrors:
+
+- `superpatch-frontend/src/lib/config/pathways.ts` (frontend)
+- `superpatch-frontend/supabase/functions/_shared/pathways.ts` (Edge Functions)
+- `b2b_sales_enablement/bland_ai_pathways/bland_cli.py` (loads at runtime)
+- `b2b_sales_enablement/bland_ai_pathways/publish_pathways_production.py` (loads at runtime)
+
+A Vitest test (`superpatch-frontend/src/__tests__/canonical-ids-sync.test.ts`) enforces that all three TS / JSON sources agree.
+
+## Editing pathway IDs
+
+1. Edit `canonical_ids.json` and bump `_meta.updated_at` to today.
+2. Mirror any change into `src/lib/config/pathways.ts` and `supabase/functions/_shared/pathways.ts`.
+3. Run `pnpm test` from `superpatch-frontend/` — the canonical-ids-sync test will fail if any mirror is stale.
+4. Add a README Delta to `docs/dev/changelog.md` describing the ID swap and the affected pathway.
+
+Never hardcode a Bland ID in a new file. If you need one, fetch it from the canonical source.
+
+## Pathway JSON authoring
+
+- Production pathway JSON files are named `<Type>_contextual.json` (Chiropractors_contextual.json, Naturopaths_contextual.json, etc.) and live in `b2b_sales_enablement/bland_ai_pathways/`.
+- Each pathway has:
+  - `nodes`: `Default`, `Knowledge Base`, `Webhook`, `End Call`, `Transfer Call`, etc.
+  - `edges`: directed transitions with `label` text that the LLM matches against speech.
+  - `global_prompt`: persona / rules that apply to every node.
+  - `extractVars`: keys the pathway extracts from the conversation and returns in the webhook payload.
+- Use `data.prompt` (not `data.text`) for default node prompts — the `_contextual.json` files already follow this.
+- Keep `extractVars` aligned with `superpatch-frontend/docs/PATHWAY_VARIABLES.md`. If you add a new var, update the doc and the `webhook-processor` Edge Function that reads it.
+
+## Tool wiring
+
+- Cal.com tools (`check_availability`, `book_appointment`) are updated via `b2b_sales_enablement/appointment_webhook/update_bland_tools_calcom.py`. That script now loads IDs from `canonical_ids.json`.
+- Do not duplicate tool definitions inside pathway JSON — reference the tool by ID.
+- Webhook nodes point to the Edge Function URL in `canonical_ids.json.webhooks.primary`, overridable via `NEXT_PUBLIC_BLAND_WEBHOOK_URL`.
+
+## Deploying a new pathway version
+
+Use the documented workflow (see `b2b_sales_enablement/bland_ai_pathways/README.md`):
+
+1. Edit `<Type>_contextual.json`.
+2. `BLAND_API_KEY=... python3 publish_pathways_production.py` — creates a new version and promotes it.
+3. Verify in the Bland dashboard that the version loads without errors.
+4. Append a README Delta to `docs/dev/changelog.md`.
+
+Never publish directly from the Bland dashboard without saving the updated JSON back into the repo — the repo is the source of truth for pathway content.
+
+## Never
+
+- Never commit a new pathway UUID without adding it to `canonical_ids.json`.
+- Never maintain a separate deployed-IDs text file (the deprecated `deployed_ids.txt` is intentionally a redirect).
+- Never reference a pathway by display name ("SuperPatch - Chiropractors Sales"); always by canonical key or ID.
+- Never embed `BLAND_API_KEY`, KB secrets, or Cal.com API keys in pathway JSON — those are passed at call-initiation time by the Edge Function.

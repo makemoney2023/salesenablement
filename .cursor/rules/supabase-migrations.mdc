@@ -1,0 +1,46 @@
+---
+description: Supabase migration workflow — triggers when creating or editing Sales Enablement migration SQL files
+globs: superpatch-frontend/supabase/migrations/*.sql
+alwaysApply: false
+---
+
+# Supabase Migration Workflow
+
+Sales Enablement uses a single canonical migrations folder: `superpatch-frontend/supabase/migrations/`. Every schema, RLS, function, or trigger change lives here and is applied via the Supabase CLI.
+
+This rule covers the **migration command workflow only**. Complementary rules:
+
+- `supabase-conventions.mdc` — schema/RLS/types.ts sync rules, pg_net vs explicit-fetch policy
+- `readme-first-session.mdc` — required startup reads
+- `documentation-maintenance.mdc` — doc-update matrix after migrations
+
+## Canonical paths
+
+- **Migration folder**: `superpatch-frontend/supabase/migrations/`
+- **Schema snapshot**: `superpatch-frontend/supabase/schema.sql`
+- **Types mirror**: `superpatch-frontend/src/lib/db/types.ts`
+
+File naming: `YYYYMMDD_short_description.sql` (date-prefixed, snake_case, single purpose). Example: `20260421_disable_book_appointment_trigger.sql`.
+
+## Quick Checklist
+
+1. Read the most recent 3-5 files in `superpatch-frontend/supabase/migrations/` before writing a new one — match their style and naming.
+2. Create `superpatch-frontend/supabase/migrations/YYYYMMDD_<name>.sql` with a single focused change, wrapped with `IF EXISTS` / `IF NOT EXISTS` where possible.
+3. Include a header comment: purpose, why, which Edge Function or frontend path depends on it, and rollback note.
+4. Apply with `supabase db push` from `superpatch-frontend/` (project is linked via `supabase/config.toml`).
+5. Update `superpatch-frontend/supabase/schema.sql` if the change is structural (tables, columns, indexes, constraints).
+6. Update `superpatch-frontend/src/lib/db/types.ts` if any table/column/enum changes (manual mirror — keep field names identical).
+7. Append a README Delta to `superpatch-frontend/docs/CHANGELOG.md` (frontend delta) with migration file name, touchpoints, verification.
+8. Commit migration + `schema.sql` + `types.ts` + changelog delta in the same commit.
+
+## Never do this
+
+- Never edit an already-applied migration file; write a new one that supersedes it.
+- Never commit auto-generated `supabase/migrations/` copies under the repo root; the canonical path is `superpatch-frontend/supabase/migrations/`.
+- Never bypass `db push` by running ad-hoc SQL in the Supabase Studio; migrations must be source-controlled.
+
+## Verification
+
+- `supabase db push` output shows the new migration applied.
+- `pnpm test` from `superpatch-frontend/` passes (types.ts sync tests catch schema drift).
+- Any Edge Function that reads the changed schema has been redeployed.

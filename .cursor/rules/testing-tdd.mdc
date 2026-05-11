@@ -1,0 +1,59 @@
+---
+description: Test-driven development and verification policy for Sales Enablement
+alwaysApply: true
+---
+
+# Testing & TDD Policy
+
+Sales Enablement uses Vitest for the frontend and targeted Python tests for scripts and the Flask webhook. TDD is the default for new behavior.
+
+## TDD flow
+
+1. Write the failing test first. Confirm it fails for the intended reason.
+2. Write the minimum code to pass.
+3. Refactor with tests still green.
+4. Wire the change end-to-end (see `no-scaffold-code.mdc`).
+5. Update docs (see `documentation-maintenance.mdc`).
+
+Skip TDD only for: trivial stylistic tweaks, pure docs changes, or when the user explicitly says "no TDD".
+
+## Frontend (Vitest)
+
+- Command: `pnpm test` from `superpatch-frontend/`.
+- Tests live in `superpatch-frontend/src/__tests__/` — grouped by domain (e.g., `config-pathways.test.ts`, `canonical-ids-sync.test.ts`).
+- Use Vitest + React Testing Library for component tests.
+- Mock Supabase and external APIs with `vi.mock()`. Do not hit real APIs in tests.
+- Required tests for new code:
+  - Every new pure function gets at least one happy-path + one edge-case test.
+  - Every new API route handler gets a request / response shape test.
+  - Every new Edge Function gets a test harness that exercises the fetch path (can live in `_tests/` alongside the function).
+
+## Cross-mirror tests (mandatory)
+
+The canonical-ids-sync test asserts that `canonical_ids.json`, `src/lib/config/pathways.ts`, and `supabase/functions/_shared/pathways.ts` agree. Never weaken this test; if a new ID type is added (e.g., a new tool), extend the test to cover it.
+
+## Python tests
+
+- Flask webhook (`b2b_sales_enablement/appointment_webhook/`) — tests live alongside the module.
+- Pathway scripts — smoke tests that assert `canonical_ids.json` loads and every referenced `contextual_file` exists.
+- Run with `python -m pytest` from the script folder.
+
+## Pre-merge verification
+
+Before marking work complete:
+
+- [ ] `pnpm test` from `superpatch-frontend/` — all green
+- [ ] `pnpm tsc --noEmit` from `superpatch-frontend/` — no errors
+- [ ] Python smoke checks pass for any touched scripts
+- [ ] Linter clean on all changed files
+- [ ] Doc delta appended per `documentation-maintenance.mdc`
+
+## Rationalization prevention
+
+| Excuse | Reality |
+|---|---|
+| "It's a one-line fix" | One-line fixes regress. Add the test. |
+| "The behavior is obvious" | If it is obvious, the test is easy. Write it. |
+| "I'll add tests in a follow-up" | Follow-ups never come. Test now. |
+| "It's just wiring" | Wiring is where bugs hide. Test the wiring. |
+| "I ran it manually" | Manual runs are not reproducible. Automate. |

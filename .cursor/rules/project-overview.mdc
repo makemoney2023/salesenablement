@@ -1,0 +1,84 @@
+---
+description: High-level map of the Sales Enablement repo, components, and data flow
+alwaysApply: true
+---
+
+# Sales Enablement — Project Overview
+
+This rule is the 60-second orientation for any new work. Deeper detail lives in the docs referenced below.
+
+## What this system does
+
+Sales Enablement is SuperPatch's B2B outbound sales platform. It:
+
+1. **Ingests practitioner leads** from Google Maps Places + Firecrawl + LinkedIn enrichment into Supabase (`practitioners` table).
+2. **Dials practitioners** via Bland.ai using pathway-specific conversational AI agents (one pathway per practitioner type).
+3. **Captures outcomes** — sample requests and Cal.com appointments — through a Supabase Edge Function (`webhook-processor`) that processes Bland webhooks.
+4. **Presents call-center UX** in a Next.js 16 App Router app (`superpatch-frontend/`) with market switching, favorites, evidence, and analytics.
+
+## Top-level folder map
+
+| Folder | Role |
+|---|---|
+| `superpatch-frontend/` | Next.js 16 app (App Router), Supabase client + Edge Functions, Cal.com, Resend |
+| `b2b_sales_enablement/bland_ai_pathways/` | Pathway JSON (`*_contextual.json`), deploy scripts, `canonical_ids.json` (source of truth) |
+| `b2b_sales_enablement/appointment_webhook/` | Flask companion webhook (Cal.com v2 + Google Sheets logging) |
+| `b2b_sales_enablement/wordtracks/` | Reps' word-track content (consumed by frontend `src/data/wordtracks/`) |
+| `scripts/` | Python utilities (scraping, enrichment, pathway generation) |
+| `docs/dev/` | Backend / system / infra changelog + dev docs |
+| `superpatch-frontend/docs/` | Frontend docs and changelog |
+
+## Canonical sources of truth
+
+- **Bland.ai IDs** (pathways, KB, voice, tools, webhooks, Cal.com): `b2b_sales_enablement/bland_ai_pathways/canonical_ids.json`
+- **Frontend ID mirror**: `superpatch-frontend/src/lib/config/pathways.ts`
+- **Edge Function ID mirror**: `superpatch-frontend/supabase/functions/_shared/pathways.ts`
+- **Supabase schema snapshot**: `superpatch-frontend/supabase/schema.sql`
+- **DB types mirror**: `superpatch-frontend/src/lib/db/types.ts`
+
+A Vitest test (`canonical-ids-sync.test.ts`) enforces that the three ID mirrors stay aligned.
+
+## Primary data flow (E2E)
+
+```
+Places/Firecrawl/LinkedIn
+       |
+       v
+Supabase practitioners (+ enrichment JSONB)
+       |
+       v
+batch-caller / process-retry-queue (Edge Functions)
+       |
+       v   [Bland.ai call with pathway_id + KB + request_data]
+Bland pathway (per practitioner type)
+       |
+       v   [extractVars + tool invocations]
+webhook-processor (Edge Function)
+       |
+       +--> sample_requests (Resend email)
+       |
+       +--> book-appointment Edge Function (Cal.com)
+       |
+       +--> call_records (transcript, outcomes)
+       |
+       v
+Next.js UI (/campaign, analytics, follow-up queue)
+```
+
+See `ARCHITECTURE.md` for the full diagram and `LEAD_PIPELINE.md` for the ingestion side.
+
+## Stack (as of 2026-04)
+
+- **Frontend**: Next.js 16.1.1 (App Router), React 19.2.3, shadcn/ui, Tailwind v4, Supabase SSR, Vercel
+- **Backend**: Supabase Edge Functions (Deno), Supabase Postgres, pg_net, pg_cron
+- **Voice AI**: Bland.ai pathways (v1 API) with Cal.com custom tools
+- **Scheduling**: Cal.com v1/v2
+- **Email**: Resend
+- **AI analysis**: Google Gemini (transcript analysis)
+- **Python tooling**: 3.12+ (scraping, pathway authoring, Flask appointment webhook)
+
+## Scope guidance
+
+- Never create files in the repo root for application code. Frontend code belongs in `superpatch-frontend/`. Backend / Edge Function / Python work belongs under `superpatch-frontend/supabase/`, `b2b_sales_enablement/`, or `scripts/`.
+- Check `canonical_ids.json` before hardcoding any Bland / Cal.com / KB / voice / tool ID.
+- Check existing Edge Functions (`superpatch-frontend/supabase/functions/`) before writing new ones — many utilities already exist (`webhook-processor`, `process-retry-queue`, `enrich-practitioners-v2`, `book-appointment`, `send-sample-confirmation`, `sync-cal-bookings`).

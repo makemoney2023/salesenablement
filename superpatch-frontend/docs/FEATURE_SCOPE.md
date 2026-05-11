@@ -1,5 +1,7 @@
 # SuperPatch Sales Enablement App - Feature Scope
 
+> **Status (2026-04-21): Historical.** This scope was written for the original reference-app phase. The app has since grown into a full AI call center. For current architecture, start with `../../ARCHITECTURE.md`. For current surfaces and APIs, see the main [README](../README.md). Preserved here for historical context.
+
 ## Overview
 
 **Purpose:** Internal sales team reference app for accessing word tracks, roadmaps, and clinical evidence

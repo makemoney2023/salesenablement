@@ -502,7 +502,7 @@ POST /api/webhooks/bland
 
 The webhook is now processed by the Supabase Edge Function `webhook-processor` for improved reliability and direct database access. Configure this URL in the Bland.ai dashboard under your pathway settings.
 
-**Note:** Webhook signature verification is currently disabled to allow direct Bland.ai integration. The Edge Function processes webhooks without requiring HMAC validation.
+**Note (2026-04-21):** `webhook-processor` verifies request origin and required headers, and performs per-call-record dedup (via `call_records.booking_id` checks before invoking `book-appointment`). Bland.ai does not currently expose an HMAC signing secret for pathway webhooks; once available, HMAC validation should be added in this Edge Function. Track via `docs/dev/changelog.md`.
 
 Receives call completion data:
 - Call status and duration

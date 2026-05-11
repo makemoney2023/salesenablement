@@ -63,9 +63,17 @@ def append_appointment_to_sheet(appointment_data: dict) -> bool:
         print("GOOGLE_SHEET_ID not set")
         return False
     
-    # Prepare row data
+    # Prepare row data.
+    # Prefer 'confirmation_number' (the key server.py sends); fall back to
+    # 'confirmation' for any legacy callers.
+    confirmation_value = (
+        appointment_data.get('confirmation_number')
+        or appointment_data.get('confirmation')
+        or appointment_data.get('cal_booking_uid')
+        or ''
+    )
     row = [
-        appointment_data.get('confirmation', ''),
+        confirmation_value,
         datetime.now().isoformat(),
         appointment_data.get('practitioner_name', ''),
         appointment_data.get('practitioner_type', ''),

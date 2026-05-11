@@ -1,6 +1,15 @@
 /**
- * Shared Bland.ai pathway configuration.
- * Single source of truth for pathway IDs, knowledge base, and voice settings.
+ * Shared Bland.ai pathway configuration (frontend mirror).
+ *
+ * The CANONICAL source of truth is:
+ *   b2b_sales_enablement/bland_ai_pathways/canonical_ids.json
+ *
+ * This module mirrors those IDs for frontend consumption. The Edge Function
+ * mirror lives at supabase/functions/_shared/pathways.ts. A Vitest test
+ * (src/__tests__/canonical-ids-sync.test.ts) asserts all three stay in sync.
+ *
+ * If an ID changes: (1) update canonical_ids.json, (2) update this file,
+ * (3) update supabase/functions/_shared/pathways.ts, (4) run `pnpm test`.
  */
 
 // Pathway IDs for different practitioner types

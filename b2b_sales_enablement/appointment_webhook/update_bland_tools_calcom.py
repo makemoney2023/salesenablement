@@ -7,7 +7,9 @@ This creates/updates two tools:
 """
 
 import json
+import os
 import subprocess
+from pathlib import Path
 
 BLAND_API_KEY = os.environ.get("BLAND_API_KEY")
 CAL_COM_API_KEY = os.environ.get("CAL_COM_API_KEY")
@@ -16,14 +18,26 @@ if not BLAND_API_KEY:
 if not CAL_COM_API_KEY:
     raise ValueError("CAL_COM_API_KEY environment variable is required")
 
-# Cal.com configuration
-CAL_COM_USERNAME = "superpatchhealthprosales"
-CAL_COM_EVENT_TYPE_ID = "4352394"  # 30 Min Meeting
-CAL_COM_EVENT_TYPE_SLUG = "30min"
+# Load Cal.com and tool IDs from the canonical source of truth.
+# See b2b_sales_enablement/bland_ai_pathways/canonical_ids.json.
+_CANONICAL_PATH = (
+    Path(__file__).parent.parent / "bland_ai_pathways" / "canonical_ids.json"
+)
+if not _CANONICAL_PATH.exists():
+    raise FileNotFoundError(
+        f"canonical_ids.json not found at {_CANONICAL_PATH}. "
+        "This file is the source of truth for Bland.ai IDs."
+    )
 
-# Existing tool IDs (we'll update these)
-CHECK_AVAILABILITY_TOOL_ID = "TL-79a3c232-ca51-4244-b5d2-21f4e70fd872"
-SCHEDULE_APPOINTMENT_TOOL_ID = "TL-bbaa7f38-1b6a-4f27-ad27-18fb7c6e1526"
+with _CANONICAL_PATH.open("r") as _f:
+    _CANONICAL = json.load(_f)
+
+CAL_COM_USERNAME = _CANONICAL["cal_com"]["username"]
+CAL_COM_EVENT_TYPE_ID = _CANONICAL["cal_com"]["event_type_id"]
+CAL_COM_EVENT_TYPE_SLUG = _CANONICAL["cal_com"]["event_type_slug"]
+
+CHECK_AVAILABILITY_TOOL_ID = _CANONICAL["tools"]["check_availability"]["id"]
+SCHEDULE_APPOINTMENT_TOOL_ID = _CANONICAL["tools"]["book_appointment"]["id"]
 
 
 def update_check_availability_tool():

@@ -1,0 +1,69 @@
+---
+description: Next.js 16 App Router, shadcn/ui, Supabase SSR conventions for superpatch-frontend
+globs: superpatch-frontend/**/*.ts,superpatch-frontend/**/*.tsx
+alwaysApply: false
+---
+
+# Frontend Conventions (superpatch-frontend)
+
+## Stack defaults
+
+- **Framework**: Next.js 16 App Router (`src/app/`). Prefer Server Components by default; opt into `"use client"` only when hooks, events, or browser APIs are needed.
+- **UI primitives**: shadcn/ui (`src/components/ui/`). Never hand-roll a Button, Dialog, Sheet, or Form when a shadcn component exists. Use `pnpm dlx shadcn@latest add <component>` from `superpatch-frontend/` — do not copy components from other projects.
+- **Styling**: Tailwind CSS v4 utility-first. Class list order: layout -> spacing -> typography -> color -> state. Use `cn()` from `src/lib/utils.ts` for conditional classes.
+- **Icons**: `lucide-react` only.
+- **Forms**: `react-hook-form` + `zod` for validation. Use the shadcn Form + FormField primitives.
+- **Data fetching**: Server Components for initial load; `@tanstack/react-query` or SWR for client-side caching where needed.
+- **Supabase**: `@supabase/ssr` for server / middleware clients. Browser client lives in `src/lib/supabase/client.ts`; server client in `src/lib/supabase/server.ts`.
+
+## File organization
+
+| Path | Purpose |
+|---|---|
+| `src/app/` | Routes. `layout.tsx`, `page.tsx`, `loading.tsx`, `error.tsx`, `route.ts` for API handlers. |
+| `src/app/api/` | Route handlers (Node runtime unless explicitly Edge). Return `NextResponse.json` with explicit status codes. |
+| `src/components/ui/` | shadcn primitives — do not edit unless regenerating. |
+| `src/components/<feature>/` | Feature components. One component per file, PascalCase. |
+| `src/lib/` | Non-component logic: Supabase clients, config, utils, db types, hooks. |
+| `src/lib/config/pathways.ts` | Bland pathway ID mirror — kept in sync with `canonical_ids.json`. |
+| `src/lib/db/types.ts` | Manual TypeScript mirror of Supabase tables. Keep field names identical. |
+| `src/data/` | Static seed content (markets, products, wordtracks). |
+| `src/hooks/` | Client hooks (prefixed `use*`). |
+| `src/types/` | Shared cross-feature types. |
+| `src/__tests__/` | Vitest tests colocated by domain. |
+
+## Server / Client boundary
+
+- Mark client-only files with `"use client"` at the very top.
+- Never import a client component into a Server Component's render path without `dynamic()` or similar boundary.
+- Never import `src/lib/supabase/server.ts` into a client component. Use `src/lib/supabase/client.ts` instead.
+
+## Routing patterns
+
+- Use the `[market]/` segment for market-scoped pages (e.g., `[market]/products/[product]`). The market list is defined in `src/data/markets.ts`.
+- API routes use `route.ts` with exported HTTP verbs (`export async function POST(req: Request) { ... }`).
+- Never call external APIs from client components; proxy through `src/app/api/` or Supabase Edge Functions.
+
+## Pathway and ID usage
+
+- Always import pathway IDs from `@/lib/config/pathways`. Never hardcode a UUID in a component or API route.
+- If you need an ID not present there, add it to `canonical_ids.json` first, then mirror into the TS modules.
+
+## API route response shape
+
+Follow `response-shape-contract.mdc`. Every JSON response from `src/app/api/*` returns either:
+
+```ts
+{ status: "success", data: <payload> }
+// or
+{ status: "error", message: string, code?: string }
+```
+
+When adding a new endpoint, also update the API table in `superpatch-frontend/README.md`.
+
+## Forbidden patterns
+
+- `any` types in new code (use `unknown` + narrowing, or explicit types).
+- Direct `fetch` against `https://api.bland.ai/*` or `https://api.cal.com/*` from client components (must go through an API route or Edge Function).
+- `useEffect` + manual state for fetching when `@tanstack/react-query` or Server Components work.
+- Storing secrets in `NEXT_PUBLIC_*` env vars. Only non-sensitive values may be public.
