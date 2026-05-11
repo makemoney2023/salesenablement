@@ -4,6 +4,14 @@ Frontend app deltas (Next.js app, API routes, client components, frontend deps).
 
 ---
 
+## 2026-05-12
+
+### Fixed
+- `superpatch-frontend/supabase/migrations/20260512_fix_sample_notification_trigger.sql` recreates `notify_new_sample_request()` to reference the real `sample_requests` columns (`requester_name`, `practice_name`, `products_requested`, `shipping_address`, `shipping_city`, etc.). The 20260115 trigger referenced columns that never existed (`practitioner_name`, `practitioner_type`, `products`, `address`), so every AFTER INSERT raised `column ... does not exist` and rolled the insert back — no sample requests had been persisting in production. Migration drops both the legacy `trigger_notify_new_sample` and the new `trg_notify_new_sample_request` defensively before recreating.
+
+### Added
+- `superpatch-frontend/supabase/tests/sample_requests_insert.test.sql` pgTAP smoke test asserting a minimal `sample_requests` insert succeeds. Runs once a local Supabase test harness is wired (see the plan's Task 4.3).
+
 ## 2026-05-11
 
 ### Added
