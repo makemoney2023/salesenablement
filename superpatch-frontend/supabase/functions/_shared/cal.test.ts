@@ -95,11 +95,59 @@ Deno.test("listCalBookings unwraps nested data.bookings envelope", async () => {
   assertEquals(bookings[0].uid, "z");
 });
 
-Deno.test("normalizeCalStatus maps cal v2 lowercase statuses", () => {
+Deno.test("normalizeCalStatus maps cal v2 statuses to canonical AppointmentStatus", () => {
   assertEquals(normalizeCalStatus("accepted"), "confirmed");
   assertEquals(normalizeCalStatus("ACCEPTED"), "confirmed");
-  assertEquals(normalizeCalStatus("cancelled"), "cancelled");
   assertEquals(normalizeCalStatus("Rescheduled"), "rescheduled");
   assertEquals(normalizeCalStatus("no_show"), "no_show");
-  assertEquals(normalizeCalStatus(undefined), "pending");
+  assertEquals(normalizeCalStatus("no-show"), "no_show");
+  assertEquals(normalizeCalStatus("canceled"), "cancelled");
+  assertEquals(normalizeCalStatus("cancelled"), "cancelled");
+  assertEquals(normalizeCalStatus("pending"), "scheduled");
+  assertEquals(normalizeCalStatus("completed"), "completed");
+  assertEquals(normalizeCalStatus(undefined), "scheduled");
+  assertEquals(normalizeCalStatus(null), "scheduled");
+  assertEquals(normalizeCalStatus(""), "scheduled");
+  assertEquals(normalizeCalStatus("something_new"), "scheduled");
+});
+
+Deno.test("createCalBooking surfaces attendees, metadata, createdAt, updatedAt, title", async () => {
+  const fakeFetch: typeof fetch = async () =>
+    new Response(
+      JSON.stringify({
+        status: "success",
+        data: {
+          id: 42,
+          uid: "xyz-42",
+          status: "accepted",
+          start: "2026-05-12T15:00:00.000Z",
+          end: "2026-05-12T15:30:00.000Z",
+          title: "SuperPatch Demo",
+          attendees: [
+            { name: "Dr B", email: "b@clinic.ca", timeZone: "America/Toronto" },
+          ],
+          metadata: { practitioner_id: "p-2" },
+          createdAt: "2026-05-11T10:00:00.000Z",
+          updatedAt: "2026-05-11T10:05:00.000Z",
+        },
+      }),
+      { status: 201 },
+    );
+
+  const result = await createCalBooking(
+    {
+      eventTypeId: 1,
+      start: "2026-05-12T15:00:00.000Z",
+      attendee: { name: "Dr B", email: "b@clinic.ca", timeZone: "America/Toronto" },
+    },
+    { apiKey: "k", fetchImpl: fakeFetch },
+  );
+
+  assertEquals(result.uid, "xyz-42");
+  assertEquals(result.title, "SuperPatch Demo");
+  assertEquals(result.attendees?.length, 1);
+  assertEquals(result.attendees?.[0]?.email, "b@clinic.ca");
+  assertEquals(result.metadata?.practitioner_id, "p-2");
+  assertEquals(result.createdAt, "2026-05-11T10:00:00.000Z");
+  assertEquals(result.updatedAt, "2026-05-11T10:05:00.000Z");
 });

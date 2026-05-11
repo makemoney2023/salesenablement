@@ -1,23 +1,23 @@
-// Status normalization for Cal.com v2 bookings.
-//
-// Cal.com v2 returns lowercase statuses (accepted, cancelled, rescheduled,
-// pending, completed). This module maps them onto the AppointmentStatus enum
-// used by the `appointments` table.
-
+// Mirrors src/lib/db/types.ts AppointmentStatus exactly. Do not add new
+// values here without also updating the DB-facing union and the UI's
+// STATUS_CONFIG in src/app/campaign/appointments/page.tsx.
 export type AppointmentStatus =
-  | "pending"
+  | "scheduled"
   | "confirmed"
-  | "cancelled"
-  | "rescheduled"
   | "completed"
-  | "no_show";
+  | "cancelled"
+  | "no_show"
+  | "rescheduled";
 
 export function normalizeCalStatus(calStatus: string | undefined | null): AppointmentStatus {
-  if (!calStatus) return "pending";
-  switch (String(calStatus).toLowerCase()) {
+  if (!calStatus) return "scheduled";
+  const normalized = String(calStatus).toLowerCase();
+  switch (normalized) {
     case "accepted":
     case "confirmed":
       return "confirmed";
+    case "pending":
+      return "scheduled";
     case "cancelled":
     case "canceled":
       return "cancelled";
@@ -29,6 +29,7 @@ export function normalizeCalStatus(calStatus: string | undefined | null): Appoin
     case "no-show":
       return "no_show";
     default:
-      return "pending";
+      console.warn(`[normalizeCalStatus] Unknown Cal.com status "${calStatus}"; defaulting to "scheduled"`);
+      return "scheduled";
   }
 }

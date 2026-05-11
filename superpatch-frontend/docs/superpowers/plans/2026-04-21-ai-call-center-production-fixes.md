@@ -363,7 +363,13 @@ Deno.test("normalizeCalStatus maps cal v2 lowercase statuses", () => {
   assertEquals(normalizeCalStatus("cancelled"), "cancelled");
   assertEquals(normalizeCalStatus("Rescheduled"), "rescheduled");
   assertEquals(normalizeCalStatus("no_show"), "no_show");
-  assertEquals(normalizeCalStatus(undefined), "pending");
+  assertEquals(normalizeCalStatus("no-show"), "no_show");
+  assertEquals(normalizeCalStatus("canceled"), "cancelled");
+  assertEquals(normalizeCalStatus("pending"), "scheduled");
+  assertEquals(normalizeCalStatus("completed"), "completed");
+  assertEquals(normalizeCalStatus(undefined), "scheduled");
+  assertEquals(normalizeCalStatus(null), "scheduled");
+  assertEquals(normalizeCalStatus("something_new"), "scheduled");
 });
 ```
 
@@ -378,20 +384,26 @@ Expected: FAIL — module not found.
 
 Create `superpatch-frontend/supabase/functions/sync-cal-bookings/status.ts`:
 ```ts
+// Mirrors src/lib/db/types.ts AppointmentStatus exactly. Do not add new
+// values here without also updating the DB-facing union and the UI's
+// STATUS_CONFIG in src/app/campaign/appointments/page.tsx.
 export type AppointmentStatus =
-  | "pending"
+  | "scheduled"
   | "confirmed"
-  | "cancelled"
-  | "rescheduled"
   | "completed"
-  | "no_show";
+  | "cancelled"
+  | "no_show"
+  | "rescheduled";
 
 export function normalizeCalStatus(calStatus: string | undefined | null): AppointmentStatus {
-  if (!calStatus) return "pending";
-  switch (String(calStatus).toLowerCase()) {
+  if (!calStatus) return "scheduled";
+  const normalized = String(calStatus).toLowerCase();
+  switch (normalized) {
     case "accepted":
     case "confirmed":
       return "confirmed";
+    case "pending":
+      return "scheduled";
     case "cancelled":
     case "canceled":
       return "cancelled";
@@ -403,7 +415,8 @@ export function normalizeCalStatus(calStatus: string | undefined | null): Appoin
     case "no-show":
       return "no_show";
     default:
-      return "pending";
+      console.warn(`[normalizeCalStatus] Unknown Cal.com status "${calStatus}"; defaulting to "scheduled"`);
+      return "scheduled";
   }
 }
 ```

@@ -4,6 +4,22 @@ Frontend app deltas (Next.js app, API routes, client components, frontend deps).
 
 ---
 
+## 2026-05-11
+
+### Added
+- `superpatch-frontend/supabase/functions/_shared/cal.ts` shared Cal.com v2 HTTP client (`createCalBooking`, `listCalBookings`, `cancelCalBooking`, `CalError`) used by `book-appointment` and `sync-cal-bookings`.
+- `superpatch-frontend/supabase/functions/sync-cal-bookings/status.ts` `normalizeCalStatus` helper mirroring the canonical `AppointmentStatus` union from `src/lib/db/types.ts`.
+
+### Changed
+- `superpatch-frontend/supabase/functions/book-appointment/index.ts` migrated from the retired Cal.com v1 API to v2 (`cal-api-version: 2026-02-25`). `CAL_API_KEY` and `CAL_EVENT_TYPE_ID` are now required at module load; `BUSINESS_TIMEZONE` (default `America/Toronto`) replaces the hardcoded `America/New_York` for booking timezone.
+- `superpatch-frontend/supabase/functions/sync-cal-bookings/index.ts` migrated to Cal.com v2 (`start`/`end` field names, lowercase statuses) and routes `booking.status` through `normalizeCalStatus`. Outer error handler now maps `CalError` to the upstream HTTP status. CORS headers unified via `corsHeaders()` on all response paths.
+- `superpatch-frontend/.env.example` adds `CAL_API_VERSION=2026-02-25`.
+
+### Why
+- Cal.com retired the v1 API on 2026-04-08; every demo booking and Cal sync was 404'ing in production.
+
+---
+
 ## 2026-04-21 — Canonical pathway IDs + Edge Function shared module
 
 - **What changed**:

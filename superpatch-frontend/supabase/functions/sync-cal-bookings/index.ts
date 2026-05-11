@@ -13,7 +13,7 @@ const CAL_API_VERSION = Deno.env.get("CAL_API_VERSION"); // helper applies defau
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
-if (!CAL_API_KEY) throw new Error("CAL_API_KEY is required");
+if (!CAL_API_KEY) throw new Error("sync-cal-bookings: CAL_API_KEY is required");
 
 interface SyncResult {
   synced: number;
@@ -52,17 +52,22 @@ async function syncToAppointmentsTable(
 
       if (newStatus === "cancelled") {
         appointmentUpdates.cancelled_at = new Date().toISOString();
-        appointmentUpdates.cancellation_reason =
-          `Cancelled via Cal.com at ${booking.updatedAt ?? new Date().toISOString()}`;
+        appointmentUpdates.cancellation_reason = booking.updatedAt
+          ? `Cancelled via Cal.com at ${booking.updatedAt}`
+          : `Cancelled via Cal.com (timestamp not provided; observed during sync at ${new Date().toISOString()})`;
       }
     }
 
+    const startDate = booking.start ? new Date(booking.start) : null;
+    if (!startDate || Number.isNaN(startDate.getTime())) {
+      return { synced: false, error: "Invalid or missing booking.start" };
+    }
+    const bookingTime = startDate.toISOString();
     const existingTime = existingAppointment.scheduled_at
       ? new Date(existingAppointment.scheduled_at).toISOString()
       : null;
-    const bookingTime = booking.start ? new Date(booking.start).toISOString() : null;
 
-    if (bookingTime && existingTime !== bookingTime) {
+    if (existingTime !== bookingTime) {
       appointmentUpdates.scheduled_at = bookingTime;
       // Time-changed heuristic: Cal v2 sometimes returns "accepted" for a moved
       // booking instead of "rescheduled". Override unless already cancelled.
@@ -145,8 +150,9 @@ async function syncBooking(
 
     if (normalizeCalStatus(booking.status) === "cancelled") {
       updates.appointment_booked = false;
-      updates.notes =
-        `Appointment cancelled on Cal.com at ${booking.updatedAt ?? new Date().toISOString()}`;
+      updates.notes = booking.updatedAt
+        ? `Appointment cancelled on Cal.com at ${booking.updatedAt}`
+        : `Appointment cancelled on Cal.com (timestamp not provided; observed during sync at ${new Date().toISOString()})`;
 
       const { error } = await supabase
         .from("call_records")
@@ -161,12 +167,16 @@ async function syncBooking(
       return { action: "cancelled" };
     }
 
+    const startDate = booking.start ? new Date(booking.start) : null;
+    if (!startDate || Number.isNaN(startDate.getTime())) {
+      return { action: "skipped", error: "Invalid or missing booking.start" };
+    }
+    const bookingTime = startDate.toISOString();
     const existingTime = existing.appointment_time
       ? new Date(existing.appointment_time).toISOString()
       : null;
-    const bookingTime = booking.start ? new Date(booking.start).toISOString() : null;
 
-    if (bookingTime && existingTime !== bookingTime) {
+    if (existingTime !== bookingTime) {
       updates.appointment_time = bookingTime;
       console.log(`📅 Booking ${booking.uid} time updated: ${existingTime} -> ${bookingTime}`);
     }
