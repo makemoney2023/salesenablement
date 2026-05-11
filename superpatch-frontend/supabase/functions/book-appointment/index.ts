@@ -7,8 +7,9 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { createCalBooking, CalError, type CalBookingResult } from "../_shared/cal.ts";
 
 const CAL_API_KEY = Deno.env.get("CAL_API_KEY") ?? "";
-const CAL_API_VERSION = Deno.env.get("CAL_API_VERSION") ?? "2024-08-13";
-const CAL_EVENT_TYPE_ID = Number(Deno.env.get("CAL_EVENT_TYPE_ID"));
+const CAL_API_VERSION = Deno.env.get("CAL_API_VERSION");
+const CAL_EVENT_TYPE_ID_RAW = Deno.env.get("CAL_EVENT_TYPE_ID");
+const CAL_EVENT_TYPE_ID = Number(CAL_EVENT_TYPE_ID_RAW);
 const BUSINESS_TIMEZONE = Deno.env.get("BUSINESS_TIMEZONE") ?? "America/Toronto";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
@@ -16,7 +17,7 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "
 if (!CAL_API_KEY) {
   throw new Error("CAL_API_KEY is required");
 }
-if (!Number.isFinite(CAL_EVENT_TYPE_ID)) {
+if (!CAL_EVENT_TYPE_ID_RAW || !Number.isFinite(CAL_EVENT_TYPE_ID) || CAL_EVENT_TYPE_ID <= 0) {
   throw new Error("CAL_EVENT_TYPE_ID is required and must match canonical_ids.json");
 }
 
@@ -66,7 +67,13 @@ async function bookCalComAppointment(data: BookingRequest): Promise<CalBookingRe
     metadata,
   };
 
-  console.log("📅 Cal.com v2 booking payload:", JSON.stringify(bookingPayload, null, 2));
+  console.log("📅 Cal.com v2 booking payload:", {
+    eventTypeId: bookingPayload.eventTypeId,
+    start: bookingPayload.start,
+    attendeeName: bookingPayload.attendee.name,
+    attendeeTimeZone: bookingPayload.attendee.timeZone,
+    metadataKeys: Object.keys(bookingPayload.metadata ?? {}),
+  });
 
   return await createCalBooking(bookingPayload, {
     apiKey: CAL_API_KEY,

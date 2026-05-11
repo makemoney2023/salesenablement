@@ -68,7 +68,7 @@ Save the log — we'll diff against it after Phase 4 to confirm we only fixed th
 In Supabase dashboard → Project Settings → Edge Functions → Secrets, ensure these are set (do NOT commit values):
 - `CAL_API_KEY` (Cal.com v2 — starts with `cal_live_…`)
 - `CAL_EVENT_TYPE_ID` (must equal the value in `b2b_sales_enablement/bland_ai_pathways/canonical_ids.json.cal.demoEventTypeId`)
-- `CAL_API_VERSION` (new — set to `2024-08-13`)
+- `CAL_API_VERSION` (new — set to `2026-02-25`; verified against https://cal.com/docs/api-reference/v2/bookings/create-a-booking)
 - `BUSINESS_TIMEZONE` (set to `America/Toronto` unless the business has explicitly changed)
 - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `BLAND_API_KEY`, `RESEND_API_KEY`, `GEMINI_API_KEY`, `FIRECRAWL_API_KEY` — already present, re-verify.
 
@@ -77,7 +77,7 @@ In Supabase dashboard → Project Settings → Edge Functions → Secrets, ensur
 Append under the Cal.com section:
 ```
 # Cal.com v2 API version header. Must be set for Edge Functions.
-CAL_API_VERSION=2024-08-13
+CAL_API_VERSION=2026-02-25
 ```
 
 - [ ] **Step 3: Commit**
@@ -127,7 +127,7 @@ Deno.test("createCalBooking posts to v2 with required headers and body", async (
       attendee: { name: "Dr Alice", email: "alice@example.com", timeZone: "America/Toronto" },
       metadata: { practitioner_id: "p-1", call_record_id: "c-1" },
     },
-    { apiKey: "cal_live_test", apiVersion: "2024-08-13", fetchImpl: fakeFetch },
+    { apiKey: "cal_live_test", apiVersion: "2026-02-25", fetchImpl: fakeFetch },
   );
 
   assertEquals(result.uid, "abc");
@@ -135,7 +135,7 @@ Deno.test("createCalBooking posts to v2 with required headers and body", async (
   assertEquals(calls[0].url, "https://api.cal.com/v2/bookings");
   const headers = new Headers(calls[0].init.headers);
   assertEquals(headers.get("authorization"), "Bearer cal_live_test");
-  assertEquals(headers.get("cf-api-version"), "2024-08-13");
+  assertEquals(headers.get("cal-api-version"), "2026-02-25");
   const body = JSON.parse(String(calls[0].init.body));
   assertEquals(body.attendee.timeZone, "America/Toronto");
   assertEquals(body.eventTypeId, 4004901);
@@ -153,7 +153,7 @@ Deno.test("createCalBooking throws CalError on non-2xx", async () => {
           start: "2026-05-01T14:00:00.000Z",
           attendee: { name: "x", email: "x@y.z", timeZone: "UTC" },
         },
-        { apiKey: "k", apiVersion: "2024-08-13", fetchImpl: fakeFetch },
+        { apiKey: "k", apiVersion: "2026-02-25", fetchImpl: fakeFetch },
       ),
     CalError,
     "slot taken",
@@ -208,7 +208,7 @@ function buildHeaders(opts: CalClientOptions): Headers {
   const h = new Headers({
     "Content-Type": "application/json",
     Authorization: `Bearer ${opts.apiKey}`,
-    "cf-api-version": opts.apiVersion ?? "2024-08-13",
+    "cal-api-version": opts.apiVersion ?? "2026-02-25",
   });
   return h;
 }
@@ -291,7 +291,7 @@ import { createCalBooking, CalError } from "../_shared/cal.ts";
 import { PATHWAY_IDS } from "../_shared/pathways.ts";
 
 const CAL_API_KEY = Deno.env.get("CAL_API_KEY") ?? "";
-const CAL_API_VERSION = Deno.env.get("CAL_API_VERSION") ?? "2024-08-13";
+const CAL_API_VERSION = Deno.env.get("CAL_API_VERSION") ?? "2026-02-25";
 const CAL_EVENT_TYPE_ID = Number(Deno.env.get("CAL_EVENT_TYPE_ID"));
 const BUSINESS_TIMEZONE = Deno.env.get("BUSINESS_TIMEZONE") ?? "America/Toronto";
 
@@ -416,7 +416,7 @@ import { listCalBookings } from "../_shared/cal.ts";
 import { normalizeCalStatus } from "./status.ts";
 
 const CAL_API_KEY = Deno.env.get("CAL_API_KEY") ?? "";
-const CAL_API_VERSION = Deno.env.get("CAL_API_VERSION") ?? "2024-08-13";
+const CAL_API_VERSION = Deno.env.get("CAL_API_VERSION") ?? "2026-02-25";
 
 const { bookings } = await listCalBookings(
   { afterStart: windowStart, beforeStart: windowEnd, take: 250 },

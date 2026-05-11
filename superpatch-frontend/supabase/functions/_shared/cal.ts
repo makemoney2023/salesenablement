@@ -5,7 +5,7 @@
 // pass apiKey + eventTypeId in; this module owns nothing but the HTTP shape.
 //
 // Cal.com v1 was retired 2026-04-08. All requests target /v2 with the
-// `cf-api-version` header (default 2024-08-13).
+// `cal-api-version` header (default 2026-02-25).
 
 export interface CalBookingRequest {
   eventTypeId: number;
@@ -55,13 +55,13 @@ export class CalError extends Error {
 }
 
 const CAL_BASE_URL = "https://api.cal.com/v2";
-const DEFAULT_API_VERSION = "2024-08-13";
+const DEFAULT_API_VERSION = "2026-02-25";
 const DEFAULT_TIMEOUT_MS = 15000;
 
 function buildHeaders(opts: CalClientOptions): Headers {
   const headers = new Headers({
     "Authorization": `Bearer ${opts.apiKey}`,
-    "cf-api-version": opts.apiVersion ?? DEFAULT_API_VERSION,
+    "cal-api-version": opts.apiVersion ?? DEFAULT_API_VERSION,
     "Content-Type": "application/json",
   });
   return headers;
