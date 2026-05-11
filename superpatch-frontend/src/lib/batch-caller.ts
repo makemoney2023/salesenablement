@@ -21,6 +21,22 @@ import {
 // Bland Memory Store ID for cross-call context retention
 const MEMORY_ID = process.env.NEXT_PUBLIC_BLAND_MEMORY_ID || "";
 
+/**
+ * Resolves the outbound from-number for Bland calls. Reads
+ * NEXT_PUBLIC_BLAND_FROM_NUMBER so the value is available in both server
+ * and client bundles (Next.js strips non-NEXT_PUBLIC_ env vars from the
+ * client). Returns undefined when unset so Bland falls back to its
+ * account default.
+ *
+ * Exported for direct testing in batch-caller.from-number.test.ts.
+ */
+export function resolveFromNumber(): string | undefined {
+  const raw = process.env.NEXT_PUBLIC_BLAND_FROM_NUMBER;
+  if (!raw) return undefined;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 export interface Practitioner {
   id: string;
   name: string;
@@ -202,8 +218,7 @@ export class BatchCaller {
 
     const pathwayId = getPathwayId(practitioner.practitioner_type);
 
-    // From number for outbound calls (optional - Bland uses default if not set)
-    const fromNumber = process.env.NEXT_PUBLIC_BLAND_FROM_NUMBER || process.env.BLAND_FROM_NUMBER;
+    const fromNumber = resolveFromNumber();
 
     const callPayload: Record<string, unknown> = {
       phone_number: phone,
