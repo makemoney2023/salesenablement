@@ -1252,19 +1252,26 @@ serve(async (req) => {
       console.log("✅ Call record saved:", savedRecord.id);
     }
 
-    // Trigger LLM analysis (fire and forget - don't await to avoid webhook timeout)
+    // Trigger LLM analysis. We don't await the fetch on the request path
+    // (that would hold the Bland.ai webhook open for 10-20s and risk a
+    // gateway timeout), but we DO hand the promise to EdgeRuntime.waitUntil
+    // so Supabase's Fluid Compute runtime keeps the isolate alive until the
+    // analyze-call request completes. Previously we just dropped the
+    // promise on the floor, so the runtime sometimes terminated the
+    // isolate before the request flushed and the analysis was lost.
     if (savedRecord?.id && payload.concatenated_transcript && payload.concatenated_transcript.length > 50) {
       console.log("🔬 Triggering LLM analysis...");
-      // Mark analysis as processing before triggering
       await supabase.from("call_records").update({ analysis_status: "processing" }).eq("id", savedRecord.id);
-      fetchWithTimeout(`${SUPABASE_URL}/functions/v1/analyze-call`, {
+
+      const savedRecordId = savedRecord.id;
+      const analyzeCallPromise = fetchWithTimeout(`${SUPABASE_URL}/functions/v1/analyze-call`, {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          call_record_id: savedRecord.id,
+          call_record_id: savedRecordId,
           transcript: payload.concatenated_transcript,
           practitioner_id: resolvedPractitionerId,
           practitioner_type: resolvedPractitionerType,
@@ -1272,9 +1279,16 @@ serve(async (req) => {
         }),
       }).catch(async (err) => {
         console.error("Failed to trigger LLM analysis:", err);
-        // Mark analysis as failed so the UI can show the error
-        await supabase.from("call_records").update({ analysis_status: "failed" }).eq("id", savedRecord!.id);
+        await supabase.from("call_records").update({ analysis_status: "failed" }).eq("id", savedRecordId);
       });
+
+      // EdgeRuntime is the Supabase Edge Runtime global; guard for local /
+      // unit-test contexts where it may be undefined.
+      // deno-lint-ignore no-explicit-any
+      const edge = (globalThis as any).EdgeRuntime;
+      if (edge && typeof edge.waitUntil === "function") {
+        edge.waitUntil(analyzeCallPromise);
+      }
     }
 
     // Handle sample request (handle both string and boolean values from Bland)
