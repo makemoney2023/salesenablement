@@ -5,6 +5,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { canonicalPractitionerType } from "../_shared/practitioner-type.ts";
 
 function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 30000): Promise<Response> {
   const controller = new AbortController();
@@ -1147,6 +1148,15 @@ serve(async (req) => {
         || sanitizeTranscribedEmail(vars.practitioner_email)
         || undefined;
     }
+
+    // Canonicalize the practitioner type once, after all of the
+    // resolution-source fallbacks have run. Every downstream write of
+    // resolvedPractitionerType (call_records, analyze-call payload,
+    // pathway-suggestions analytics) uses the canonical slug from
+    // _shared/practitioner-type.ts so the DB stops accumulating mixed
+    // casings, "Chiropractors"/"chiropractor"/"chiro" variants, and
+    // experiment-version suffixes.
+    resolvedPractitionerType = canonicalPractitionerType(resolvedPractitionerType);
 
     // Determine call status
     let callStatus: CallStatus = "completed";

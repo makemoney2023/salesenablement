@@ -4,6 +4,10 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import {
+  canonicalPractitionerType,
+  pathwaySummaryFor,
+} from "../_shared/practitioner-type.ts";
 
 // Environment variables
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
@@ -70,25 +74,12 @@ interface FollowUpContent {
   };
 }
 
-// Pathway URLs mapped by practitioner type
-// These are stored in the b2b_sales_enablement folder - we'll load them at build time
-// For now, we'll use a simplified structure that the LLM can understand
-const PATHWAY_SUMMARIES: Record<string, string> = {
-  Chiropractors: `Pathway nodes: Introduction (1), Company Introduction (2), Discovery Questions (3), Product Presentation (4), Evidence Discussion (5), Objection Handler (6), Business Model Discussion (7), Close (8), Follow Up Setup (9), Schedule Callback (10), Soft No Handler (11), End Call (12), Knowledge Base (kb).
-Key edges: intro->company intro (what is superpatch), intro->discovery (interested), intro->callback (busy), intro->soft no (not interested), discovery->presentation (ready), presentation->evidence (wants evidence), presentation->objections (has objection), presentation->business (interested in business), objections->presentation (handled), business->close (ready), close->end (success), close->followup (needs time).
-Objection Handler covers: need research, patients won't believe, already have products, too expensive, need to try first.`,
-  
-  Naturopaths: `Pathway nodes: Introduction (1), Company Introduction (2), Discovery Questions (3), Product Presentation (4), Evidence Discussion (5), Objection Handler (6), Business Model Discussion (7), Close (8), Follow Up Setup (9), Schedule Callback (10), Soft No Handler (11), End Call (12), Knowledge Base (kb).
-Similar structure to Chiropractors but tailored for naturopathic practices. Focus on natural, non-invasive solutions.`,
-  
-  "Acupuncturists": `Pathway nodes similar to other practitioners. Focus on complementary wellness approaches and energy-based healing alignment.`,
-  
-  "Massage Therapists": `Pathway nodes similar to other practitioners. Focus on pain relief between sessions and muscle recovery.`,
-  
-  "Functional Medicine": `Pathway nodes similar to other practitioners. Focus on root cause approaches and integrative wellness.`,
-  
-  "Integrative Medicine": `Pathway nodes similar to other practitioners. Focus on combining conventional and alternative approaches.`,
-};
+// Pathway summaries are loaded from the canonical pathwaySummaryFor()
+// helper in _shared/practitioner-type.ts so we don't carry a duplicate
+// (and inevitably drifting) map of display-name keys here. The helper
+// returns canonical-slug-keyed summaries and folds inbound aliases
+// (e.g. "Chiropractors", "chiropractor_v2", "RMT") down to the same
+// canonical type used by webhook-processor when it persists the record.
 
 // Initialize Gemini
 function getGeminiClient() {
@@ -211,11 +202,11 @@ async function analyzePathwayImprovements(
 ): Promise<PathwayAnalysisResult> {
   const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
   
-  const pathwaySummary = PATHWAY_SUMMARIES[practitionerType] || PATHWAY_SUMMARIES["Chiropractors"];
-  
+  const { canonical: canonicalType, summary: pathwaySummary } = pathwaySummaryFor(practitionerType);
+
   const prompt = `You are analyzing a sales call made by an AI voice agent to identify improvements for the conversational pathway. Return ONLY valid JSON.
 
-PATHWAY STRUCTURE FOR ${practitionerType}:
+PATHWAY STRUCTURE FOR ${canonicalType}:
 ${pathwaySummary}
 
 TRANSCRIPT:
@@ -484,7 +475,11 @@ serve(async (req) => {
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
     const genAI = getGeminiClient();
     
-    const practitionerType = body.practitioner_type || "Chiropractors";
+    // webhook-processor canonicalizes before invoking us, but coerce
+    // here as well so any direct caller (testing, manual replay) gets
+    // the same canonical-slug semantics across downstream lookups
+    // (pathway_suggestions filter, pathway summary prompt, etc.).
+    const practitionerType = canonicalPractitionerType(body.practitioner_type);
     const currentScore = body.current_lead_score || 0;
 
     // Mark as processing
