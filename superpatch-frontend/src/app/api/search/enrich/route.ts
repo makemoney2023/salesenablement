@@ -327,7 +327,7 @@ export async function POST(request: NextRequest) {
             });
           }
           
-          if (existing.enrichment_status === "enriched" || existing.enrichment_status === "completed") {
+          if (existing.enrichment_status === "enriched") {
             console.log(`[Enrich API] Skipping ${practitionerId} - already enriched at ${existing.enriched_at}`);
             return NextResponse.json({
               success: false,

@@ -155,7 +155,7 @@ async function generateReport(
   const { count: enrichedPractitioners } = await supabase
     .from("practitioners")
     .select("*", { count: "exact", head: true })
-    .eq("enrichment_status", "completed")
+    .eq("enrichment_status", "enriched")
     .gte("enriched_at", dateRange.start)
     .lte("enriched_at", dateRange.end);
   

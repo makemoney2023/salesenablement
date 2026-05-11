@@ -16,7 +16,7 @@ import { useRetryTimeouts } from "@/hooks/useRetryTimeout";
 interface Practitioner {
   id: string;
   name: string;
-  enrichment_status: "pending" | "in_progress" | "completed" | "failed" | null;
+  enrichment_status: "pending" | "in_progress" | "enriched" | "failed" | "skipped" | null;
   website?: string | null;
   address?: string | null;
   phone?: string | null;
@@ -29,7 +29,7 @@ interface UseRealtimePractitionersOptions {
   /**
    * Filter by enrichment status (leave empty for all)
    */
-  enrichmentStatusFilter?: ("pending" | "in_progress" | "completed" | "failed")[];
+  enrichmentStatusFilter?: ("pending" | "in_progress" | "enriched" | "failed" | "skipped")[];
   /**
    * Called when a practitioner's enrichment completes successfully
    */
@@ -154,7 +154,7 @@ export function useRealtimePractitioners(
     const { count: completedCount } = await supabase
       .from("practitioners")
       .select("*", { count: "exact", head: true })
-      .eq("enrichment_status", "completed");
+      .eq("enrichment_status", "enriched");
 
     const { count: failedCount } = await supabase
       .from("practitioners")
@@ -278,7 +278,7 @@ export function useRealtimePractitioners(
               total: pData.length,
               pending: pData.filter(p => p.enrichment_status === "pending").length,
               inProgress: pData.filter(p => p.enrichment_status === "in_progress").length,
-              completed: pData.filter(p => p.enrichment_status === "completed").length,
+              completed: pData.filter(p => p.enrichment_status === "enriched").length,
               failed: pData.filter(p => p.enrichment_status === "failed").length,
             });
           }
@@ -327,26 +327,26 @@ export function useRealtimePractitioners(
           console.log(`📡 Practitioner ${newRecord.name}: enrichment ${oldStatus} → ${newStatus}`);
 
           // Notify callbacks
-          if (newStatus === "completed" && oldStatus !== "completed") {
+          if (newStatus === "enriched" && oldStatus !== "enriched") {
             callbacksRef.current.onEnrichmentComplete?.(newRecord);
           } else if (newStatus === "failed" && oldStatus !== "failed") {
             callbacksRef.current.onEnrichmentFailed?.(newRecord);
           }
 
-          // Update stats
+          // Update stats. State key `completed` is preserved as the UI
+          // label for "count of practitioners that finished enrichment";
+          // it now corresponds to enrichment_status === 'enriched'.
           setStats((prev) => {
             const newStats = { ...prev };
 
-            // Decrement old status count
             if (oldStatus === "pending") newStats.pending = Math.max(0, newStats.pending - 1);
             if (oldStatus === "in_progress") newStats.inProgress = Math.max(0, newStats.inProgress - 1);
-            if (oldStatus === "completed") newStats.completed = Math.max(0, newStats.completed - 1);
+            if (oldStatus === "enriched") newStats.completed = Math.max(0, newStats.completed - 1);
             if (oldStatus === "failed") newStats.failed = Math.max(0, newStats.failed - 1);
 
-            // Increment new status count
             if (newStatus === "pending") newStats.pending++;
             if (newStatus === "in_progress") newStats.inProgress++;
-            if (newStatus === "completed") newStats.completed++;
+            if (newStatus === "enriched") newStats.completed++;
             if (newStatus === "failed") newStats.failed++;
 
             return newStats;
