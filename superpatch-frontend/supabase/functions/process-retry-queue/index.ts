@@ -10,6 +10,7 @@ import {
   DEFAULT_WEBHOOK_URL,
   getPathwayId,
 } from "../_shared/pathways.ts";
+import { incrementRetry, IncrementRetryError } from "./retry.ts";
 
 function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 30000): Promise<Response> {
   const controller = new AbortController();
@@ -224,18 +225,15 @@ async function updatePractitionerAfterCall(
     // On failure, use atomic increment to prevent race conditions
     const maxAttempts = 3;
     let newRetryCount: number;
-    
-    // Try atomic increment first (uses database RPC for thread safety)
-    const { data: rpcResult, error: rpcError } = await supabase.rpc(
-      "increment_retry_count",
-      { practitioner_id: practitionerId }
-    );
 
-    if (!rpcError && rpcResult !== null && rpcResult !== undefined) {
-      newRetryCount = rpcResult as number;
-    } else {
-      // Fallback to non-atomic read/write if RPC not available
-      console.warn("[RetryQueue] Atomic increment RPC failed, using fallback:", rpcError);
+    try {
+      newRetryCount = await incrementRetry(supabase, practitionerId);
+    } catch (err) {
+      // Fallback to non-atomic read/write only if the atomic RPC is unavailable.
+      // (Previously this branch ran on every call because the RPC was being
+      // invoked with the wrong argument name; see retry.ts.)
+      const cause = err instanceof IncrementRetryError ? err.cause : err;
+      console.warn("[RetryQueue] Atomic increment RPC failed, using fallback:", cause);
       const { data: current } = await supabase
         .from("practitioners")
         .select("retry_count")
