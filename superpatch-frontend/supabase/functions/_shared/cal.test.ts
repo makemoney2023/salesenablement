@@ -1,5 +1,6 @@
 import { assertEquals, assertRejects } from "https://deno.land/std@0.208.0/assert/mod.ts";
 import { createCalBooking, listCalBookings, CalError } from "./cal.ts";
+import { normalizeCalStatus } from "../sync-cal-bookings/status.ts";
 
 Deno.test("createCalBooking posts to v2 with required headers and body", async () => {
   const calls: { url: string; init: RequestInit }[] = [];
@@ -92,4 +93,13 @@ Deno.test("listCalBookings unwraps nested data.bookings envelope", async () => {
   const { bookings } = await listCalBookings({}, { apiKey: "k", fetchImpl: fakeFetch });
   assertEquals(bookings.length, 1);
   assertEquals(bookings[0].uid, "z");
+});
+
+Deno.test("normalizeCalStatus maps cal v2 lowercase statuses", () => {
+  assertEquals(normalizeCalStatus("accepted"), "confirmed");
+  assertEquals(normalizeCalStatus("ACCEPTED"), "confirmed");
+  assertEquals(normalizeCalStatus("cancelled"), "cancelled");
+  assertEquals(normalizeCalStatus("Rescheduled"), "rescheduled");
+  assertEquals(normalizeCalStatus("no_show"), "no_show");
+  assertEquals(normalizeCalStatus(undefined), "pending");
 });

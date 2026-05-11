@@ -20,12 +20,24 @@ export interface CalBookingRequest {
   lengthInMinutes?: number;
 }
 
+export interface CalBookingAttendee {
+  name: string;
+  email: string;
+  timeZone: string;
+  phoneNumber?: string;
+}
+
 export interface CalBookingResult {
   id: number;
   uid: string;
   status: string;
   start?: string;
   end?: string;
+  attendees?: CalBookingAttendee[];
+  metadata?: Record<string, unknown>;
+  createdAt?: string;
+  updatedAt?: string;
+  title?: string;
 }
 
 export interface CalClientOptions {
@@ -122,8 +134,26 @@ function unwrapBookingPayload(body: unknown): CalBookingResult {
   const status = typeof data.status === "string" ? data.status : String(data.status ?? "");
   const start = typeof data.start === "string" ? data.start : undefined;
   const end = typeof data.end === "string" ? data.end : undefined;
+  const title = typeof data.title === "string" ? data.title : undefined;
+  const createdAt = typeof data.createdAt === "string" ? data.createdAt : undefined;
+  const updatedAt = typeof data.updatedAt === "string" ? data.updatedAt : undefined;
+  const metadata = (data.metadata && typeof data.metadata === "object")
+    ? data.metadata as Record<string, unknown>
+    : undefined;
 
-  return { id, uid, status, start, end };
+  let attendees: CalBookingAttendee[] | undefined;
+  if (Array.isArray(data.attendees)) {
+    attendees = data.attendees
+      .filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === "object")
+      .map((entry) => ({
+        name: typeof entry.name === "string" ? entry.name : "",
+        email: typeof entry.email === "string" ? entry.email : "",
+        timeZone: typeof entry.timeZone === "string" ? entry.timeZone : "",
+        phoneNumber: typeof entry.phoneNumber === "string" ? entry.phoneNumber : undefined,
+      }));
+  }
+
+  return { id, uid, status, start, end, title, createdAt, updatedAt, metadata, attendees };
 }
 
 export async function createCalBooking(

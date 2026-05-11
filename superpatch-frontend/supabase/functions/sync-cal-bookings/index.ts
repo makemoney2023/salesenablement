@@ -1,43 +1,19 @@
-// Supabase Edge Function for syncing Cal.com bookings
-// Triggered by pg_cron every 15 minutes to sync booking status
+// Supabase Edge Function for syncing Cal.com bookings.
+// Triggered by pg_cron every 15 minutes to sync booking status.
+// Uses Cal.com v2 (v1 was retired 2026-04-08).
 // @ts-nocheck - Deno types not available in IDE
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { CalError, listCalBookings, type CalBookingResult } from "../_shared/cal.ts";
+import { normalizeCalStatus } from "./status.ts";
 
-function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 30000): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timeout));
-}
+const CAL_API_KEY = Deno.env.get("CAL_API_KEY") ?? "";
+const CAL_API_VERSION = Deno.env.get("CAL_API_VERSION"); // helper applies default when undefined
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
-const CAL_API_KEY = Deno.env.get("CAL_API_KEY") || "";
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
-
-interface CalBooking {
-  id: number;
-  uid: string;
-  title: string;
-  startTime: string;
-  endTime: string;
-  status: string;
-  attendees: Array<{
-    email: string;
-    name: string;
-    timeZone: string;
-  }>;
-  metadata?: {
-    call_record_id?: string;
-    source?: string;
-  };
-  createdAt: string;
-  updatedAt: string;
-}
-
-interface CalBookingsResponse {
-  bookings: CalBooking[];
-}
+if (!CAL_API_KEY) throw new Error("CAL_API_KEY is required");
 
 interface SyncResult {
   synced: number;
@@ -48,72 +24,13 @@ interface SyncResult {
 }
 
 /**
- * Fetch recent bookings from Cal.com API
- */
-async function fetchCalBookings(
-  afterDate?: string,
-  beforeDate?: string
-): Promise<CalBooking[]> {
-  if (!CAL_API_KEY) {
-    throw new Error("CAL_API_KEY not configured");
-  }
-
-  // Build query parameters
-  const params = new URLSearchParams();
-  params.append("apiKey", CAL_API_KEY);
-  
-  if (afterDate) {
-    params.append("afterStart", afterDate);
-  }
-  if (beforeDate) {
-    params.append("beforeStart", beforeDate);
-  }
-
-  const response = await fetchWithTimeout(
-    `https://api.cal.com/v1/bookings?${params.toString()}`,
-    {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-      },
-    }
-  );
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Cal.com API error: ${response.status} - ${errorText}`);
-  }
-
-  const data: CalBookingsResponse = await response.json();
-  return data.bookings || [];
-}
-
-/**
- * Map Cal.com status to appointment status
- */
-function mapCalStatusToAppointmentStatus(calStatus: string): string {
-  switch (calStatus.toUpperCase()) {
-    case "ACCEPTED":
-    case "PENDING":
-      return "scheduled";
-    case "CANCELLED":
-      return "cancelled";
-    case "REJECTED":
-      return "cancelled";
-    default:
-      return "scheduled";
-  }
-}
-
-/**
- * Sync a single booking to the appointments table
+ * Sync a single booking to the appointments table.
  */
 async function syncToAppointmentsTable(
   supabase: ReturnType<typeof createClient>,
-  booking: CalBooking
+  booking: CalBookingResult,
 ): Promise<{ synced: boolean; error?: string }> {
   try {
-    // Find existing appointment by cal_booking_uid
     const { data: existingAppointment } = await supabase
       .from("appointments")
       .select("id, status, scheduled_at")
@@ -121,7 +38,6 @@ async function syncToAppointmentsTable(
       .single();
 
     if (!existingAppointment) {
-      // No appointment record found - skip (it wasn't created through our system)
       return { synced: false };
     }
 
@@ -129,34 +45,33 @@ async function syncToAppointmentsTable(
       updated_at: new Date().toISOString(),
     };
 
-    // Map Cal.com status to our status
-    const newStatus = mapCalStatusToAppointmentStatus(booking.status);
-    
+    const newStatus = normalizeCalStatus(booking.status);
+
     if (existingAppointment.status !== newStatus) {
       appointmentUpdates.status = newStatus;
-      
+
       if (newStatus === "cancelled") {
         appointmentUpdates.cancelled_at = new Date().toISOString();
-        appointmentUpdates.cancellation_reason = `Cancelled via Cal.com at ${booking.updatedAt}`;
+        appointmentUpdates.cancellation_reason =
+          `Cancelled via Cal.com at ${booking.updatedAt ?? new Date().toISOString()}`;
       }
     }
 
-    // Check if scheduled time changed (rescheduled)
     const existingTime = existingAppointment.scheduled_at
       ? new Date(existingAppointment.scheduled_at).toISOString()
       : null;
-    const bookingTime = new Date(booking.startTime).toISOString();
+    const bookingTime = booking.start ? new Date(booking.start).toISOString() : null;
 
-    if (existingTime !== bookingTime) {
+    if (bookingTime && existingTime !== bookingTime) {
       appointmentUpdates.scheduled_at = bookingTime;
-      // Mark as rescheduled if times differ and not cancelled
+      // Time-changed heuristic: Cal v2 sometimes returns "accepted" for a moved
+      // booking instead of "rescheduled". Override unless already cancelled.
       if (newStatus !== "cancelled" && existingTime) {
         appointmentUpdates.status = "rescheduled";
       }
       console.log(`📅 Appointment ${existingAppointment.id} rescheduled: ${existingTime} -> ${bookingTime}`);
     }
 
-    // Update appointment record
     const { error } = await supabase
       .from("appointments")
       .update(appointmentUpdates)
@@ -168,22 +83,21 @@ async function syncToAppointmentsTable(
 
     return { synced: true };
   } catch (error) {
-    return { 
-      synced: false, 
-      error: error instanceof Error ? error.message : "Unknown error" 
+    return {
+      synced: false,
+      error: error instanceof Error ? error.message : "Unknown error",
     };
   }
 }
 
 /**
- * Sync a single booking to Supabase (both call_records and appointments tables)
+ * Sync a single booking to Supabase (both call_records and appointments tables).
  */
 async function syncBooking(
   supabase: ReturnType<typeof createClient>,
-  booking: CalBooking
+  booking: CalBookingResult,
 ): Promise<{ action: "created" | "updated" | "cancelled" | "skipped"; error?: string }> {
   try {
-    // First, sync to appointments table (new system)
     const appointmentResult = await syncToAppointmentsTable(supabase, booking);
     if (appointmentResult.error) {
       console.warn(`⚠️ Failed to sync to appointments table: ${appointmentResult.error}`);
@@ -191,21 +105,22 @@ async function syncBooking(
       console.log(`✅ Synced booking ${booking.uid} to appointments table`);
     }
 
-    // Then, sync to call_records table (legacy, for backward compatibility)
-    // Try to find existing call record by booking_id (uid)
+    // Bridge to legacy call_records table.
     const { data: existingByBookingId } = await supabase
       .from("call_records")
       .select("id, status, appointment_time")
       .eq("booking_id", booking.uid)
       .single();
 
-    // Also try to find by call_record_id in metadata
     let existingByMetadata = null;
-    if (booking.metadata?.call_record_id) {
+    const metadataCallRecordId = typeof booking.metadata?.call_record_id === "string"
+      ? booking.metadata.call_record_id
+      : undefined;
+    if (metadataCallRecordId) {
       const { data } = await supabase
         .from("call_records")
         .select("id, status, appointment_time, booking_id")
-        .eq("id", booking.metadata.call_record_id)
+        .eq("id", metadataCallRecordId)
         .single();
       existingByMetadata = data;
     }
@@ -213,8 +128,6 @@ async function syncBooking(
     const existing = existingByBookingId || existingByMetadata;
 
     if (!existing) {
-      // Booking not linked to any call record - could be manually created
-      // Still consider it synced if we updated the appointments table
       if (appointmentResult.synced) {
         return { action: "updated" };
       }
@@ -222,21 +135,19 @@ async function syncBooking(
       return { action: "skipped" };
     }
 
-    // Determine what updates are needed
     const updates: Record<string, unknown> = {
       updated_at: new Date().toISOString(),
     };
 
-    // Update booking_id if not set
     if (!existingByBookingId && existingByMetadata && !existingByMetadata.booking_id) {
       updates.booking_id = booking.uid;
     }
 
-    // Handle different booking statuses
-    if (booking.status === "CANCELLED") {
+    if (normalizeCalStatus(booking.status) === "cancelled") {
       updates.appointment_booked = false;
-      updates.notes = `Appointment cancelled on Cal.com at ${booking.updatedAt}`;
-      
+      updates.notes =
+        `Appointment cancelled on Cal.com at ${booking.updatedAt ?? new Date().toISOString()}`;
+
       const { error } = await supabase
         .from("call_records")
         .update(updates)
@@ -250,18 +161,16 @@ async function syncBooking(
       return { action: "cancelled" };
     }
 
-    // Check if appointment time changed
     const existingTime = existing.appointment_time
       ? new Date(existing.appointment_time).toISOString()
       : null;
-    const bookingTime = new Date(booking.startTime).toISOString();
+    const bookingTime = booking.start ? new Date(booking.start).toISOString() : null;
 
-    if (existingTime !== bookingTime) {
+    if (bookingTime && existingTime !== bookingTime) {
       updates.appointment_time = bookingTime;
       console.log(`📅 Booking ${booking.uid} time updated: ${existingTime} -> ${bookingTime}`);
     }
 
-    // Ensure appointment_booked is true
     updates.appointment_booked = true;
     updates.calendar_invite_sent = true;
 
@@ -276,9 +185,9 @@ async function syncBooking(
 
     return { action: "updated" };
   } catch (error) {
-    return { 
-      action: "skipped", 
-      error: error instanceof Error ? error.message : "Unknown error" 
+    return {
+      action: "skipped",
+      error: error instanceof Error ? error.message : "Unknown error",
     };
   }
 }
@@ -300,12 +209,10 @@ function verifyServiceAuth(req: Request): boolean {
 }
 
 serve(async (req) => {
-  // Handle CORS preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders() });
   }
 
-  // Verify caller is authorized (service role key)
   if (!verifyServiceAuth(req)) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), {
       status: 401,
@@ -316,7 +223,6 @@ serve(async (req) => {
   console.log("🔄 sync-cal-bookings edge function called");
 
   try {
-    // Parse optional date range from request
     let afterDate: string | undefined;
     let beforeDate: string | undefined;
 
@@ -326,11 +232,10 @@ serve(async (req) => {
         afterDate = body.after_date;
         beforeDate = body.before_date;
       } catch {
-        // No body or invalid JSON, use defaults
+        // No body or invalid JSON — fall through to defaults.
       }
     }
 
-    // Default: sync bookings from last 24 hours to next 7 days
     if (!afterDate) {
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
@@ -345,15 +250,15 @@ serve(async (req) => {
 
     console.log(`📅 Syncing bookings from ${afterDate} to ${beforeDate}`);
 
-    // Initialize Supabase client
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    // Fetch bookings from Cal.com
-    const bookings = await fetchCalBookings(afterDate, beforeDate);
-    
+    const { bookings } = await listCalBookings(
+      { afterStart: afterDate, beforeStart: beforeDate, take: 250 },
+      { apiKey: CAL_API_KEY, apiVersion: CAL_API_VERSION },
+    );
+
     console.log(`📋 Found ${bookings.length} bookings to sync`);
 
-    // Sync results
     const result: SyncResult = {
       synced: 0,
       created: 0,
@@ -362,10 +267,9 @@ serve(async (req) => {
       errors: [],
     };
 
-    // Sync each booking
     for (const booking of bookings) {
       const syncResult = await syncBooking(supabase, booking);
-      
+
       if (syncResult.error) {
         result.errors.push(`${booking.uid}: ${syncResult.error}`);
       }
@@ -397,26 +301,27 @@ serve(async (req) => {
       {
         status: 200,
         headers: {
+          ...corsHeaders(),
           "Content-Type": "application/json",
-          "Access-Control-Allow-Origin": "*",
         },
-      }
+      },
     );
   } catch (error) {
     console.error("❌ Sync error:", error);
 
+    const status = error instanceof CalError ? error.status : 500;
     return new Response(
       JSON.stringify({
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
       }),
       {
-        status: 500,
+        status: status >= 400 && status < 600 ? status : 500,
         headers: {
+          ...corsHeaders(),
           "Content-Type": "application/json",
-          "Access-Control-Allow-Origin": "*",
         },
-      }
+      },
     );
   }
 });
