@@ -1,11 +1,12 @@
 {
   "_meta": {
     "description": "Single source of truth for Bland.ai pathway, tool, knowledge-base, voice, and webhook IDs used by Sales Enablement. Loaded at runtime by Python scripts in this folder and cross-checked by a Vitest test against superpatch-frontend/src/lib/config/pathways.ts and superpatch-frontend/supabase/functions/_shared/pathways.ts.",
-    "updated_at": "2026-04-21",
+    "updated_at": "2026-05-12",
     "consumers": [
       "b2b_sales_enablement/bland_ai_pathways/bland_cli.py",
       "b2b_sales_enablement/bland_ai_pathways/publish_pathways_production.py",
       "b2b_sales_enablement/bland_ai_pathways/deploy_updated_pathways.py",
+      "b2b_sales_enablement/appointment_webhook/update_bland_tools_calcom.py",
       "superpatch-frontend/src/lib/config/pathways.ts",
       "superpatch-frontend/supabase/functions/_shared/pathways.ts",
       "superpatch-frontend/supabase/functions/process-retry-queue/index.ts"
@@ -66,11 +67,11 @@
   "tools": {
     "check_availability": {
       "id": "TL-79a3c232-ca51-4244-b5d2-21f4e70fd872",
-      "description": "Cal.com availability lookup (wired to Cal.com v1 /slots)"
+      "description": "Cal.com availability lookup (Cal.com v2 /slots, cal-api-version 2024-09-04). Definition is built and pushed by b2b_sales_enablement/appointment_webhook/update_bland_tools_calcom.py."
     },
     "book_appointment": {
       "id": "TL-bbaa7f38-1b6a-4f27-ad27-18fb7c6e1526",
-      "description": "Cal.com booking creation (wired to Cal.com v1 /bookings)"
+      "description": "Cal.com booking creation (Cal.com v2 /bookings, cal-api-version 2026-02-25). Definition is built and pushed by b2b_sales_enablement/appointment_webhook/update_bland_tools_calcom.py."
     }
   },
   "cal_com": {

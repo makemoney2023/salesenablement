@@ -68,8 +68,9 @@ Pathway selection uses `getPathwayId()` from `supabase/functions/_shared/pathway
 - One pathway per practitioner type. Files: `b2b_sales_enablement/bland_ai_pathways/<Type>_contextual.json`.
 - Shared KB (`canonical_ids.json.knowledge_base.id`) + shared voice (Jennifer) applied at call initiation.
 - Two Bland custom tools are available to every pathway:
-  - `check_availability` — calls Cal.com v1 `/slots`.
-  - `book_appointment` — calls Cal.com v1 `/bookings`.
+  - `check_availability` — calls Cal.com v2 `/slots` (`cal-api-version: 2024-09-04`).
+  - `book_appointment` — calls Cal.com v2 `/bookings` (`cal-api-version: 2026-02-25`).
+  - Tool definitions are built and pushed by `b2b_sales_enablement/appointment_webhook/update_bland_tools_calcom.py`; tool IDs live in `canonical_ids.json -> tools`.
 - On call end, Bland POSTs to `webhook-processor` with the full transcript + extractVars.
 
 ### 4. Webhook processing
