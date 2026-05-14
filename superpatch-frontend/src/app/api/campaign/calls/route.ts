@@ -203,9 +203,15 @@ export async function DELETE(request: NextRequest) {
 
     if (practitionerId) {
       const success = await deleteCallRecord(practitionerId);
+      if (!success) {
+        return NextResponse.json(
+          { status: "error", message: "Failed to delete record" },
+          { status: 500 }
+        );
+      }
       return NextResponse.json({
-        status: success ? "success" : "error",
-        message: success ? "Record deleted" : "Failed to delete record",
+        status: "success",
+        message: "Record deleted",
       });
     }
 

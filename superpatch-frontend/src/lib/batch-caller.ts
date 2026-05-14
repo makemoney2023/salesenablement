@@ -134,6 +134,13 @@ export class BatchCaller {
   private delayBetweenCalls = 60000; // 1 minute default
   private listeners: EventListener[] = [];
   private pollingInterval: NodeJS.Timeout | null = null;
+  // Per-practitioner in-flight guard. Prevents the same practitioner from
+  // being dialed twice in parallel (e.g., double-click on the drawer's
+  // "Call Now" button, or one operator dialing on two tabs). Without this,
+  // Bland would receive two concurrent call requests for the same phone
+  // number within ~1 second of each other. UI-level isCalling state is per
+  // component instance and cannot stop a second instance from dialing.
+  private inFlightPractitioners = new Set<string>();
 
   constructor() {
     // Restore state from storage
@@ -171,7 +178,7 @@ export class BatchCaller {
    */
   async makeCall(practitioner: Practitioner): Promise<CallResult> {
     const phone = formatPhoneNumber(practitioner.phone || '');
-    
+
     if (!phone) {
       return {
         success: false,
@@ -179,6 +186,26 @@ export class BatchCaller {
         practitioner_id: practitioner.id,
       };
     }
+
+    // Per-practitioner mutex. A second concurrent dial for the same
+    // practitioner is a hard error — short-circuit before we hit Bland.
+    if (this.inFlightPractitioners.has(practitioner.id)) {
+      return {
+        success: false,
+        error: 'Call already in progress for this practitioner',
+        practitioner_id: practitioner.id,
+      };
+    }
+    this.inFlightPractitioners.add(practitioner.id);
+
+    try {
+      return await this.makeCallInternal(practitioner, phone);
+    } finally {
+      this.inFlightPractitioners.delete(practitioner.id);
+    }
+  }
+
+  private async makeCallInternal(practitioner: Practitioner, phone: string): Promise<CallResult> {
 
     // Ensure we have a call record
     let record = getCallRecord(practitioner.id);

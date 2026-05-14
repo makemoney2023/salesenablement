@@ -205,6 +205,9 @@ export interface Database {
           llm_lead_score: number | null;
           llm_analyzed_at: string | null;
           analysis_status: AnalysisStatus | null;
+          // Idempotency marker set by webhook-processor right before a
+          // successful 2xx return. NULL until the first delivery completes.
+          processed_at: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -239,6 +242,7 @@ export interface Database {
           llm_lead_score?: number | null;
           llm_analyzed_at?: string | null;
           analysis_status?: AnalysisStatus | null;
+          processed_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -273,6 +277,7 @@ export interface Database {
           llm_lead_score?: number | null;
           llm_analyzed_at?: string | null;
           analysis_status?: AnalysisStatus | null;
+          processed_at?: string | null;
           updated_at?: string;
         };
       };

@@ -9,12 +9,9 @@ import { canonicalPractitionerType } from "../_shared/practitioner-type.ts";
 import { toBool } from "../_shared/coerce.ts";
 import { pickSampleEmail } from "./email.ts";
 import { buildProductsRequested, classifySampleType } from "./sample-type.ts";
-
-function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 30000): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timeout));
-}
+import { verifyRequestAuth } from "./auth-gate.ts";
+import { dispatchEdgeFunction } from "./dispatch.ts";
+import { decideIdempotency } from "./idempotency.ts";
 
 // Environment variables
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
@@ -837,54 +834,8 @@ ${transcript}`;
   }
 }
 
-// Webhook signature verification using HMAC SHA-256
-async function verifyWebhookSignature(
-  secret: string,
-  payload: string,
-  signature: string | null
-): Promise<boolean> {
-  if (!signature || !secret) {
-    console.warn("⚠️ Missing signature or secret for verification");
-    return false;
-  }
-  
-  try {
-    const encoder = new TextEncoder();
-    const key = await crypto.subtle.importKey(
-      "raw",
-      encoder.encode(secret),
-      { name: "HMAC", hash: "SHA-256" },
-      false,
-      ["sign"]
-    );
-    
-    const signatureBuffer = await crypto.subtle.sign(
-      "HMAC",
-      key,
-      encoder.encode(payload)
-    );
-    
-    const expectedSignature = Array.from(new Uint8Array(signatureBuffer))
-      .map(b => b.toString(16).padStart(2, '0'))
-      .join('');
-    
-    // Timing-safe comparison to prevent timing attacks
-    if (expectedSignature.length !== signature.length) {
-      console.warn("⚠️ Signature length mismatch");
-      return false;
-    }
-    
-    let result = 0;
-    for (let i = 0; i < expectedSignature.length; i++) {
-      result |= expectedSignature.charCodeAt(i) ^ signature.charCodeAt(i);
-    }
-    
-    return result === 0;
-  } catch (error) {
-    console.error("❌ Error verifying signature:", error);
-    return false;
-  }
-}
+// Webhook signature verification is delegated to ./auth-gate.ts which is
+// fail-closed by construction and unit-tested in auth-gate.test.ts.
 
 // CORS helper
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "*";
@@ -946,30 +897,32 @@ serve(async (req) => {
       body_length: rawBody.length,
     });
 
-    // Webhook signature verification
-    if (BLAND_WEBHOOK_SECRET) {
-      const isValid = await verifyWebhookSignature(BLAND_WEBHOOK_SECRET, rawBody, signature);
-      if (!isValid) {
-        console.error("❌ Invalid webhook signature - rejecting request");
-        return new Response(
-          JSON.stringify({ status: "error", message: "Invalid webhook signature" }),
-          {
-            status: 401,
-            headers: {
-              "Content-Type": "application/json",
-              "Access-Control-Allow-Origin": "*",
-            },
-          }
-        );
-      }
-      console.log("✅ Webhook signature verified successfully");
-    } else {
-      console.warn("⚠️ BLAND_WEBHOOK_SECRET not configured - skipping signature verification. Set this secret in production!");
+    // Fail-closed authentication gate. The webhook endpoint is anonymous at
+    // the gateway (verify_jwt=false), so the ONLY thing standing between the
+    // public internet and our DB writes is this HMAC check. If the secret is
+    // unset, the signature is missing, or the signature does not match, we
+    // reject with 401 and refuse to process the payload. The previous code
+    // path used to "skip verification" on a missing secret which made the
+    // endpoint wide open if BLAND_WEBHOOK_SECRET was ever cleared/rotated.
+    const authResult = await verifyRequestAuth(BLAND_WEBHOOK_SECRET, signature, rawBody);
+    if (!authResult.ok) {
+      console.error(`❌ Webhook auth rejected: ${authResult.reason}`);
+      return new Response(
+        JSON.stringify({ status: "error", message: "Unauthorized webhook request" }),
+        {
+          status: 401,
+          headers: {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+          },
+        }
+      );
     }
+    console.log("✅ Webhook signature verified successfully");
 
     // Parse the body after verification
     const payload: BlandWebhookPayload = JSON.parse(rawBody);
-    
+
     console.log("📞 Received Bland webhook:", {
       call_id: payload.call_id,
       status: payload.status,
@@ -981,6 +934,50 @@ serve(async (req) => {
 
     // Initialize Supabase client
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+    // Idempotency check. Bland will redeliver a webhook on network errors or
+    // missed acks; without this guard we'd re-fire all side effects (create
+    // a duplicate sample_request, re-dispatch book-appointment, re-trigger
+    // analyze-call, re-schedule retries). The check is keyed on
+    // call_records.processed_at, which we set right before a 2xx return.
+    //
+    // KNOWN TRADE-OFF (deliberate): we set processed_at even when a downstream
+    // dispatch fails (sample email, booking). That's because we already
+    // returned 200 to Bland on that delivery, so a redelivery won't happen
+    // automatically. If the operator wants the booking/sample retried after
+    // a downstream failure, they look at call_records.notes (which captures
+    // dispatch errors) and the `downstream` field in this function's
+    // response. Future work: a unique index on sample_requests(call_record_id)
+    // would also let us safely retry without the TOCTOU concern.
+    if (payload.call_id) {
+      const { data: existing } = await supabase
+        .from("call_records")
+        .select("id, analysis_status, processed_at")
+        .eq("call_id", payload.call_id)
+        .maybeSingle();
+
+      const decision = decideIdempotency({ call_id: payload.call_id, existing });
+      if (decision.skip) {
+        console.log(
+          `⏭️ Webhook for call_id=${payload.call_id} already processed at ${decision.processedAt}; skipping side effects.`,
+        );
+        return new Response(
+          JSON.stringify({
+            status: "ok",
+            message: "Already processed (idempotent skip)",
+            record_id: decision.recordId,
+            call_id: payload.call_id,
+          }),
+          {
+            status: 200,
+            headers: {
+              "Content-Type": "application/json",
+              "Access-Control-Allow-Origin": "*",
+            },
+          },
+        );
+      }
+    }
 
     let vars = payload.variables || {};
     const meta = payload.metadata || {};
@@ -1271,32 +1268,51 @@ serve(async (req) => {
       await supabase.from("call_records").update({ analysis_status: "processing" }).eq("id", savedRecord.id);
 
       const savedRecordId = savedRecord.id;
-      const analyzeCallPromise = fetchWithTimeout(`${SUPABASE_URL}/functions/v1/analyze-call`, {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
+      const analyzeCallPromise = dispatchEdgeFunction({
+        url: `${SUPABASE_URL}/functions/v1/analyze-call`,
+        bearer: SUPABASE_SERVICE_ROLE_KEY,
+        body: {
           call_record_id: savedRecordId,
           transcript: payload.concatenated_transcript,
           practitioner_id: resolvedPractitionerId,
           practitioner_type: resolvedPractitionerType,
           current_lead_score: leadScore,
-        }),
-      }).catch(async (err) => {
-        console.error("Failed to trigger LLM analysis:", err);
-        await supabase.from("call_records").update({ analysis_status: "failed" }).eq("id", savedRecordId);
+        },
+        label: "analyze-call",
+      }).then(async (result) => {
+        if (!result.ok) {
+          console.error(
+            `[webhook-processor] analyze-call dispatch failed: reason=${result.reason} status=${result.httpStatus ?? "n/a"}`,
+          );
+          await supabase
+            .from("call_records")
+            .update({ analysis_status: "failed" })
+            .eq("id", savedRecordId);
+        }
       });
 
-      // EdgeRuntime is the Supabase Edge Runtime global; guard for local /
-      // unit-test contexts where it may be undefined.
       // deno-lint-ignore no-explicit-any
       const edge = (globalThis as any).EdgeRuntime;
       if (edge && typeof edge.waitUntil === "function") {
         edge.waitUntil(analyzeCallPromise);
+      } else {
+        console.warn("[webhook-processor] EdgeRuntime.waitUntil unavailable; awaiting analyze-call inline.");
+        await analyzeCallPromise;
       }
     }
+
+    // Track downstream Edge Function dispatch outcomes. Populated by the
+    // `dispatchEdgeFunction(...)` calls below (sample email, booking).
+    // Surfaced in the final response so partial-pipeline failures are visible
+    // from webhook-processor logs / Bland's call detail without needing to
+    // cross-read book-appointment / send-sample-confirmation logs separately.
+    type DispatchOutcome =
+      | { ok: true }
+      | { ok: false; reason: string; httpStatus?: number };
+    const downstreamFailures: {
+      book_appointment?: DispatchOutcome;
+      send_sample_confirmation?: DispatchOutcome;
+    } = {};
 
     // Handle sample request (handle both string and boolean values from Bland)
     const wantsSample = toBool(vars.wants_sample) || toBool(vars.sample_requested);
@@ -1359,32 +1375,32 @@ serve(async (req) => {
         // ship a confirmation to an unvalidated address while the row
         // stored `null`.
         if (sampleEmail) {
-          try {
-            await fetchWithTimeout(`${SUPABASE_URL}/functions/v1/send-sample-confirmation`, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-              },
-              body: JSON.stringify({
-                sample_request_id: sampleData?.id,
-                practitioner_name: resolvedPractitionerName,
-                practice_name: practiceName,
-                email: sampleEmail,
-                products: productsRequested,
-                shipping_address: sampleRequest.shipping_address,
-                shipping_city: sampleRequest.shipping_city,
-                shipping_province: sampleRequest.shipping_province,
-                shipping_postal_code: sampleRequest.shipping_postal_code,
-              }),
-            });
+          const sampleDispatch = await dispatchEdgeFunction({
+            url: `${SUPABASE_URL}/functions/v1/send-sample-confirmation`,
+            bearer: SUPABASE_SERVICE_ROLE_KEY,
+            label: "send-sample-confirmation",
+            body: {
+              sample_request_id: sampleData?.id,
+              practitioner_name: resolvedPractitionerName,
+              practice_name: practiceName,
+              email: sampleEmail,
+              products: productsRequested,
+              shipping_address: sampleRequest.shipping_address,
+              shipping_city: sampleRequest.shipping_city,
+              shipping_province: sampleRequest.shipping_province,
+              shipping_postal_code: sampleRequest.shipping_postal_code,
+            },
+          });
+
+          downstreamFailures.send_sample_confirmation = sampleDispatch;
+
+          if (sampleDispatch.ok) {
             console.log("📧 Sample confirmation email triggered");
-          } catch (emailError) {
-            console.error("Failed to trigger sample confirmation:", emailError);
-            // Mark confirmation as failed so it can be retried manually
+          } else {
+            console.error(`❌ ${sampleDispatch.reason}`);
             if (sampleData?.id) {
               await supabase.from("sample_requests").update({
-                notes: `Email confirmation failed: ${emailError instanceof Error ? emailError.message : "Unknown error"}`,
+                notes: sampleDispatch.reason,
               }).eq("id", sampleData.id);
             }
           }
@@ -1500,39 +1516,52 @@ serve(async (req) => {
         console.log("⚠️ Appointment already exists for this call record, skipping duplicate booking");
       } else {
         console.log("🗓️ Triggering appointment booking with parsed time:", parsedAppointmentTime);
-        try {
-          await fetchWithTimeout(`${SUPABASE_URL}/functions/v1/book-appointment`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-            },
-            body: JSON.stringify({
-              call_record_id: savedRecord.id,
-              practitioner_id: resolvedPractitionerId,
-              practitioner_name: resolvedPractitionerName,
-              practitioner_email: resolvedEmail,
-              appointment_time: parsedAppointmentTime,
-              phone: practitionerPhone,
-              address: resolvedAddress,
-              practitioner_type: resolvedPractitionerType,
-              summary: payload.analysis?.summary,
-              practice_name: practiceName,
-              products: productsInterested,
-              appointment_type: "demo",
-            }),
-          });
-          console.log("📅 Appointment booking triggered (will create Cal.com booking + appointment record)");
-        } catch (bookingError) {
-          console.error("Failed to trigger booking:", bookingError);
-          // Update call record so the failure is visible in the UI
+        const bookingDispatch = await dispatchEdgeFunction({
+          url: `${SUPABASE_URL}/functions/v1/book-appointment`,
+          bearer: SUPABASE_SERVICE_ROLE_KEY,
+          label: "book-appointment",
+          body: {
+            call_record_id: savedRecord.id,
+            practitioner_id: resolvedPractitionerId,
+            practitioner_name: resolvedPractitionerName,
+            practitioner_email: resolvedEmail,
+            appointment_time: parsedAppointmentTime,
+            phone: practitionerPhone,
+            address: resolvedAddress,
+            practitioner_type: resolvedPractitionerType,
+            summary: payload.analysis?.summary,
+            practice_name: practiceName,
+            products: productsInterested,
+            appointment_type: "demo",
+          },
+        });
+
+        downstreamFailures.book_appointment = bookingDispatch;
+
+        if (bookingDispatch.ok) {
+          console.log("📅 Appointment booking triggered (Cal.com booking + appointment record)");
+        } else {
+          console.error(`❌ ${bookingDispatch.reason}`);
           await supabase.from("call_records").update({
-            notes: `Auto-booking failed: ${bookingError instanceof Error ? bookingError.message : "Unknown error"}. Manual booking needed.`,
+            notes: `Auto-booking failed: ${bookingDispatch.reason}. Manual booking needed.`,
           }).eq("id", savedRecord.id);
         }
       }
     } else if (wantsDemo && appointmentTime && !parsedAppointmentTime) {
       console.warn(`⚠️ Could not parse appointment time "${appointmentTime}" - booking skipped. Manual follow-up needed.`);
+    }
+
+    // Mark this webhook as fully processed so the idempotency guard at the
+    // top of the handler short-circuits any redelivered duplicates. We set
+    // this right before the 2xx return REGARDLESS of downstream success —
+    // downstream failures are captured in call_records.notes and surfaced in
+    // the `downstream` response field. See the comment at the idempotency
+    // check (top of handler) for the full trade-off.
+    if (savedRecord?.id) {
+      await supabase
+        .from("call_records")
+        .update({ processed_at: new Date().toISOString() })
+        .eq("id", savedRecord.id);
     }
 
     // Return response
@@ -1543,6 +1572,7 @@ serve(async (req) => {
         record_saved: !!savedRecord,
         retry_scheduled: retryScheduled,
         retry_info: retryInfo,
+        downstream: downstreamFailures,
         call_id: payload.call_id,
         lead_score: leadScore,
       }),

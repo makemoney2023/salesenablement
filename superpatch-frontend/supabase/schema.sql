@@ -32,7 +32,13 @@ CREATE TABLE IF NOT EXISTS call_records (
   
   -- User notes (simple field for single note)
   notes TEXT,
-  
+
+  -- Webhook idempotency marker. Set by webhook-processor immediately before
+  -- returning a successful 2xx so duplicate Bland.ai redeliveries short-circuit
+  -- without re-firing side effects (sample emails, Cal.com bookings, retries).
+  -- See migration 20260514_add_call_records_processed_at.sql.
+  processed_at TIMESTAMPTZ,
+
   -- Metadata
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -64,6 +70,7 @@ CREATE INDEX IF NOT EXISTS idx_call_records_practitioner_id ON call_records(prac
 CREATE INDEX IF NOT EXISTS idx_call_records_call_id ON call_records(call_id);
 CREATE INDEX IF NOT EXISTS idx_call_records_status ON call_records(status);
 CREATE INDEX IF NOT EXISTS idx_call_records_created_at ON call_records(created_at);
+CREATE INDEX IF NOT EXISTS call_records_processed_at_idx ON call_records (processed_at) WHERE processed_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_call_notes_call_record_id ON call_notes(call_record_id);
 
 -- Enable Row Level Security (for future auth)

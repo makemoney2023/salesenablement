@@ -7,6 +7,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { createCalBooking, CalError, type CalBookingResult } from "../_shared/cal.ts";
 import { appendNoteLine } from "../_shared/notes.ts";
 import { buildNotesUpdate } from "./notes.ts";
+import { buildBookingResponse } from "./response.ts";
 
 const CAL_API_KEY = Deno.env.get("CAL_API_KEY") ?? "";
 const CAL_API_VERSION = Deno.env.get("CAL_API_VERSION");
@@ -257,12 +258,14 @@ serve(async (req) => {
     // Initialize Supabase client
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    // Check if booking already exists in call_records (legacy) or appointments table
+    // Check if booking already exists in call_records (legacy) or appointments table.
+    // maybeSingle() returns null + no error when no row exists; .single() throws
+    // PGRST116 on zero rows which conflates "no booking yet" with a real DB error.
     const { data: existingRecord } = await supabase
       .from("call_records")
       .select("booking_id")
       .eq("id", body.call_record_id)
-      .single();
+      .maybeSingle();
 
     if (existingRecord?.booking_id) {
       console.log("⏭️ Booking already exists in call_records, skipping");
@@ -276,12 +279,12 @@ serve(async (req) => {
       );
     }
 
-    // Also check appointments table
+    // Also check appointments table (same maybeSingle reasoning as above).
     const { data: existingAppointment } = await supabase
       .from("appointments")
       .select("id, cal_booking_uid")
       .eq("call_record_id", body.call_record_id)
-      .single();
+      .maybeSingle();
 
     if (existingAppointment?.cal_booking_uid) {
       console.log("⏭️ Appointment already exists, skipping");
@@ -331,29 +334,28 @@ serve(async (req) => {
 
     console.log("✅ Call record updated with booking info");
 
-    // Create appointment record in the new appointments table
+    // Create appointment record in the new appointments table. If this fails
+    // (returns null) we MUST surface that as a 500 because the Cal.com event
+    // is now real but our DB row is missing — webhook-processor needs to see
+    // a clear failure so the partial state ends up in call_records.notes for
+    // manual reconciliation.
     const appointmentId = await createAppointmentRecord(supabase, body, booking);
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        booking: {
-          id: booking.id,
-          uid: booking.uid,
-          status: booking.status,
-          start: booking.start,
-          end: booking.end,
-        },
-        appointment_id: appointmentId,
-      }),
-      {
-        status: 200,
-        headers: {
-          ...corsHeaders(),
-          "Content-Type": "application/json",
-        }
+    if (appointmentId === null) {
+      // Log the partial failure to call_records.notes so operators can find
+      // and reconcile the orphaned Cal event from the UI.
+      try {
+        await logBookingFailure(
+          supabase,
+          body.call_record_id,
+          `Cal booking succeeded (uid=${booking.uid}) but appointments row INSERT failed.`,
+        );
+      } catch {
+        // logging failure must not mask the upstream error
       }
-    );
+    }
+
+    return buildBookingResponse({ booking, appointmentId });
   } catch (error) {
     console.error("❌ Booking error:", error);
 

@@ -390,7 +390,16 @@ export function PractitionerDetailDrawer({
     }
   }, [open, practitioner, loadCallData]);
 
-  // Save notes when they change (debounced)
+  // Save notes when they change (debounced).
+  //
+  // Previously this silently fell back to localStorage on API failure, which
+  // made operators believe notes synced when they did not (the next operator
+  // on a different machine never saw them). The new behavior:
+  //   - 2xx response: update local React state, write to localStorage as a
+  //     mirror for offline reads.
+  //   - non-2xx / network error: keep the local copy in the React state so
+  //     the operator can keep typing, surface a toast with the error, and
+  //     DO NOT silently overwrite the DB-sourced record with a local-only one.
   useEffect(() => {
     if (!practitioner || !callRecord) return;
 
@@ -405,14 +414,25 @@ export function PractitionerDetailDrawer({
               notes,
             }),
           });
-          
+
           if (response.ok) {
-            setCallRecord(prev => prev ? { ...prev, notes } : null);
-          } else {
+            setCallRecord((prev) => (prev ? { ...prev, notes } : null));
             saveCallRecord({ ...callRecord, notes });
+          } else {
+            const errBody = await response.text().catch(() => "");
+            console.error(
+              `[practitioner-detail-drawer] notes PATCH failed (${response.status}): ${errBody.slice(0, 200)}`,
+            );
+            toast.error(
+              `Couldn't save note to server (${response.status}). Will retry on next change. Your text is still in this drawer.`,
+            );
           }
-        } catch {
-          saveCallRecord({ ...callRecord, notes });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : "Unknown error";
+          console.error("[practitioner-detail-drawer] notes PATCH threw:", err);
+          toast.error(
+            `Couldn't save note to server (${msg}). Will retry on next change.`,
+          );
         }
       }
     }, 500);

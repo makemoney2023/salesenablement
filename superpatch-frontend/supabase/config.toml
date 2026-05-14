@@ -14,7 +14,8 @@ project_id = "gdwwppwaxyvudsecexuq"
 
 # Bland.ai post-call webhook receiver. Bland delivers POSTs anonymously
 # from its own infrastructure and the function authenticates each request
-# using the HMAC signature in `x-bland-signature` against
+# using the HMAC-SHA256 signature in the `x-webhook-signature` header
+# (per https://docs.bland.ai/tutorials/webhook-signing) against
 # `BLAND_WEBHOOK_SECRET`. Without `verify_jwt = false`, the gateway rejects
 # every delivery (HTTP 401), silently breaking the entire post-call data
 # pipeline (call_records, sample_requests, appointments, follow_up_queue).

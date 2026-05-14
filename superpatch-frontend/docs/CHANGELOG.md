@@ -4,6 +4,31 @@ Frontend app deltas (Next.js app, API routes, client components, frontend deps).
 
 ---
 
+## 2026-05-14 — Production-hardening sweep: HTTP contract honesty + UI truth alignment
+
+Frontend slice of the cross-stack deep-dive (full report in `docs/dev/changelog.md`). Fixes silent-failure modes in API DELETE handlers, the quick-call dialer, the practitioner detail drawer, the campaign storage helper, and the batch caller's concurrency model.
+
+- **What changed**:
+  - `src/app/api/campaign/calls/route.ts` — DELETE for a specific practitioner now returns HTTP 500 (was 200) when `deleteCallRecord` returns false. Clients checking `response.ok` will now see failures.
+  - `src/app/api/campaign/notes/route.ts` — same fix for `DELETE /api/campaign/notes`. HTTP 500 on delete failure, HTTP 400 on missing `id`.
+  - `src/__tests__/api-delete-status-codes.test.ts` (new) — 6 Vitest tests covering both endpoints (success → 200, failure → 500, missing id → 400, clearAll → 200).
+  - `src/components/campaign/quick-call-tab.tsx` — manual dial path now ABORTS when the `/api/practitioners` save fails. Previously it logged the error and proceeded with `practitionerId = null`, relying on the webhook's phone-only lookup which is brittle (reformatted numbers, hidden caller-id). Operator now sees a `toast.error` with the HTTP status + truncated error body, and the call is not dispatched. `dispatch({ type: "SET_MAKING", value: false })` runs in every abort branch so the button doesn't stick.
+  - `src/components/campaign/practitioner-detail-drawer.tsx` — notes PATCH now SURFACES failures (toast + console.error) instead of silently falling back to `saveCallRecord` (localStorage-only). Operators can no longer write a note, see "saved", and have the next operator on a different machine not see it. localStorage is now only written as a MIRROR on success.
+  - `src/lib/campaign-storage.ts` — `createCallRecord` fire-and-forget Supabase sync now escalates the failure log from `console.warn` to `console.error` so drift is visible. The fire-and-forget pattern is preserved for batch-dial throughput; the campaign page and quick-call tab continue to await sync explicitly via `syncCallRecordToSupabase`. (An earlier iteration of this commit also wrote a `_sync_failed_at` marker to localStorage on failure, but it was removed before commit — nothing read it, which violates the no-scaffold-code rule.)
+  - `src/lib/batch-caller.ts` — added `inFlightPractitioners: Set<string>` mutex inside the `BatchCaller` class. `makeCall(p)` short-circuits with `{ success: false, error: "Call already in progress for this practitioner" }` if `p.id` is already in flight. Prevents double-dial on rapid-click, two tabs, or two operators racing the same practitioner. The mutex is released in a `finally` block so a thrown error doesn't permanently lock a practitioner.
+  - `src/__tests__/batch-caller.test.ts` — new test "rejects a second concurrent call for the same practitioner" exercises in-flight, post-release, and 3rd-call success.
+- **Why it changed**: Silent-failure deep-dive surfaced these as P1 items (full ranking in `docs/dev/changelog.md`).
+- **Code touchpoints**: see above.
+- **Data-flow impact**: Aligns frontend UX with HTTP truth. Failed deletes, failed practitioner saves, failed note syncs, and concurrent dials no longer present as success.
+- **ID / contract changes**: None.
+- **API / schema impact**: DELETE response contract changed: now uses HTTP 500 on failure. Body shape unchanged (`{ status: "error", message }`).
+- **Verification**:
+  - `npm test -- --run` → **185/185 passing** (gained 6 DELETE tests + 1 mutex test).
+  - `npx tsc --noEmit` → clean.
+  - `ReadLints` on `src/` → no errors.
+
+---
+
 ## 2026-05-14 — Sidebar green-call indicator now reconciles on every route
 
 - **What changed**:

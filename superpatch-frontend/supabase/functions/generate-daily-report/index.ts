@@ -102,28 +102,34 @@ async function generateReport(
   // Calculate conversions
   const demosBooked = records.filter(r => r.appointment_booked === true).length;
   
-  // Query sample requests for the day
+  // Query sample requests for the day. Fail loudly on DB error rather than
+  // silently saving a report with `samples_requested: 0` — the previous
+  // behavior produced misleading "all zeros" reports during outages.
   const { data: sampleRequests, error: sampleError } = await supabase
     .from("sample_requests")
     .select("*")
     .gte("created_at", dateRange.start)
     .lte("created_at", dateRange.end);
-  
+
   if (sampleError) {
-    console.error("Error fetching sample requests:", sampleError);
+    throw new Error(
+      `[generate-daily-report] sample_requests query failed: ${sampleError.message ?? "unknown"}`,
+    );
   }
-  
+
   const samplesRequested = (sampleRequests || []).length;
-  
-  // Calculate interest levels from practitioners table
+
+  // Calculate interest levels from practitioners table. Same fail-loud policy.
   const { data: practitioners, error: practError } = await supabase
     .from("practitioners")
     .select("interest_level")
     .gte("last_call_at", dateRange.start)
     .lte("last_call_at", dateRange.end);
-  
+
   if (practError) {
-    console.error("Error fetching practitioners:", practError);
+    throw new Error(
+      `[generate-daily-report] practitioners query failed: ${practError.message ?? "unknown"}`,
+    );
   }
   
   const practitionerData = practitioners || [];
@@ -138,26 +144,44 @@ async function generateReport(
     : 0;
   
   // Query retry data
-  const { data: retriesScheduled } = await supabase
+  const retriesResult = await supabase
     .from("practitioners")
     .select("id", { count: "exact", head: true })
     .gte("next_retry_at", dateRange.start)
     .lte("next_retry_at", dateRange.end);
-  
+  if (retriesResult.error) {
+    throw new Error(
+      `[generate-daily-report] retries_scheduled count failed: ${retriesResult.error.message ?? "unknown"}`,
+    );
+  }
+  const retriesScheduled = retriesResult.data;
+
   // Query new practitioners added
-  const { count: newPractitioners } = await supabase
+  const newPractitionersResult = await supabase
     .from("practitioners")
     .select("*", { count: "exact", head: true })
     .gte("created_at", dateRange.start)
     .lte("created_at", dateRange.end);
-  
+  if (newPractitionersResult.error) {
+    throw new Error(
+      `[generate-daily-report] new_practitioners count failed: ${newPractitionersResult.error.message ?? "unknown"}`,
+    );
+  }
+  const newPractitioners = newPractitionersResult.count;
+
   // Query enriched practitioners
-  const { count: enrichedPractitioners } = await supabase
+  const enrichedResult = await supabase
     .from("practitioners")
     .select("*", { count: "exact", head: true })
     .eq("enrichment_status", "enriched")
     .gte("enriched_at", dateRange.start)
     .lte("enriched_at", dateRange.end);
+  if (enrichedResult.error) {
+    throw new Error(
+      `[generate-daily-report] enriched_practitioners count failed: ${enrichedResult.error.message ?? "unknown"}`,
+    );
+  }
+  const enrichedPractitioners = enrichedResult.count;
   
   return {
     date: dateRange.date,

@@ -157,14 +157,36 @@ export function createCallRecord(practitioner: {
   
   // Save to localStorage for immediate UI update
   saveCallRecord(record);
-  
-  // Also sync to Supabase via API (fire and forget for batch campaigns)
+
+  // Also sync to Supabase via API (fire-and-forget for batch campaigns where
+  // throughput matters more than synchronous round-trip). The campaign page
+  // and the quick-call tab already await syncCallRecordToSupabase
+  // explicitly; only batch dials hit this fire-and-forget branch.
+  //
+  // Failures are escalated to console.error (was warn) so drift is visible
+  // in browser logs. We deliberately do NOT mark a local "_sync_failed_at"
+  // field: nothing reads it today, and per the no-scaffold rule we don't
+  // plant unused state. The reconciler runs on a separate timer and will
+  // catch any "in_progress" rows the user can see; quick-call and the
+  // campaign page already await sync explicitly so an operator-visible
+  // failure here is bounded to batch dials only.
   if (isBrowser) {
-    syncCallRecordToSupabase(record).catch(err =>
-      console.warn('Failed to sync call record to Supabase:', err)
-    );
+    syncCallRecordToSupabase(record).then((ok) => {
+      if (!ok) {
+        console.error(
+          '[campaign-storage] createCallRecord local saved but Supabase sync FAILED for',
+          record.practitioner_id,
+        );
+      }
+    }).catch((err) => {
+      console.error(
+        '[campaign-storage] createCallRecord sync threw for',
+        record.practitioner_id,
+        err,
+      );
+    });
   }
-  
+
   return record;
 }
 

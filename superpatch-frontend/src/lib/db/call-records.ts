@@ -497,6 +497,8 @@ function convertLocalStorageRecord(record: localStorage.CampaignCallRecord): Cal
     llm_lead_score: null,
     llm_analyzed_at: null,
     analysis_status: null,
+    // Idempotency marker (server-only; localStorage records are pre-server-state)
+    processed_at: null,
     created_at: record.created_at,
     updated_at: record.updated_at,
   };

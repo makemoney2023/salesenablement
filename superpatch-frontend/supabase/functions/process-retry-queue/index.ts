@@ -11,6 +11,7 @@ import {
   getPathwayId,
 } from "../_shared/pathways.ts";
 import { incrementRetry, IncrementRetryError } from "./retry.ts";
+import { isWithinBusinessHours as isBizHours } from "./business-hours.ts";
 
 function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 30000): Promise<Response> {
   const controller = new AbortController();
@@ -36,30 +37,13 @@ const BUSINESS_HOURS = { start: 9, end: 17 }; // 9 AM - 5 PM
 
 /**
  * Check if current time is within business hours in the configured timezone.
- * Returns false on weekends and outside 9 AM - 5 PM.
+ * Delegated to the pure ./business-hours.ts module which is fail-closed —
+ * timezone / formatter errors return false, never true. Previously the
+ * inline implementation defaulted to `true` ("allow calls") on failure,
+ * which during a DST transition could let after-hours dials slip through.
  */
 function isWithinBusinessHours(): boolean {
-  try {
-    const now = new Date();
-    const formatter = new Intl.DateTimeFormat("en-US", {
-      timeZone: BUSINESS_TIMEZONE,
-      hour: "numeric",
-      hour12: false,
-      weekday: "short",
-    });
-    const parts = formatter.formatToParts(now);
-    const hour = parseInt(parts.find(p => p.type === "hour")?.value || "0", 10);
-    const weekday = parts.find(p => p.type === "weekday")?.value || "";
-    
-    // Weekend check
-    if (weekday === "Sat" || weekday === "Sun") return false;
-    
-    // Business hours check
-    return hour >= BUSINESS_HOURS.start && hour < BUSINESS_HOURS.end;
-  } catch (error) {
-    console.warn("[RetryQueue] Business hours check failed, defaulting to allow:", error);
-    return true; // Default to allowing calls if timezone check fails
-  }
+  return isBizHours(BUSINESS_TIMEZONE, new Date(), BUSINESS_HOURS);
 }
 
 interface RetryQueueEntry {
@@ -85,7 +69,21 @@ interface CallResult {
   error?: string;
 }
 
-// Get practitioners due for retry
+/**
+ * Custom error so the caller can distinguish "queue is healthy but empty"
+ * from "DB query failed and we have NO IDEA whether the queue is empty".
+ * The previous implementation returned `[]` on DB error, which made the cron
+ * job log a successful "0 retries processed" tick when the queue was actually
+ * broken — exactly the class of silent failure this audit is hunting.
+ */
+class RetryQueueFetchError extends Error {
+  constructor(message: string, public cause?: unknown) {
+    super(message);
+    this.name = "RetryQueueFetchError";
+  }
+}
+
+// Get practitioners due for retry. Throws RetryQueueFetchError on DB failure.
 async function getRetryQueue(supabase: ReturnType<typeof createClient>, limit: number = 50): Promise<RetryQueueEntry[]> {
   const { data, error } = await supabase
     .from("practitioners")
@@ -98,8 +96,10 @@ async function getRetryQueue(supabase: ReturnType<typeof createClient>, limit: n
     .limit(limit);
 
   if (error) {
-    console.error("[RetryQueue] Error fetching queue:", error);
-    return [];
+    throw new RetryQueueFetchError(
+      `Failed to fetch retry queue: ${error.message ?? "unknown error"}`,
+      error,
+    );
   }
 
   return (data || []) as RetryQueueEntry[];
@@ -282,8 +282,23 @@ async function processRetryQueue(supabase: ReturnType<typeof createClient>): Pro
     return { processed: 0, successful: 0, failed: 0, skipped_reason: "outside_business_hours", results: [] };
   }
 
-  // Get practitioners due for retry
-  const queue = await getRetryQueue(supabase, 50);
+  // Get practitioners due for retry. getRetryQueue now THROWS
+  // RetryQueueFetchError on DB failure so we can return a distinct error
+  // skipped_reason instead of silently logging "0 retries processed".
+  let queue: RetryQueueEntry[];
+  try {
+    queue = await getRetryQueue(supabase, 50);
+  } catch (err) {
+    const detail = err instanceof RetryQueueFetchError ? err.message : String(err);
+    console.error("[RetryQueue] getRetryQueue failed:", detail);
+    return {
+      processed: 0,
+      successful: 0,
+      failed: 0,
+      skipped_reason: `queue_fetch_failed: ${detail}`,
+      results: [],
+    };
+  }
 
   if (queue.length === 0) {
     console.log("[RetryQueue] No practitioners due for retry");

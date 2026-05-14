@@ -123,6 +123,58 @@ describe('BatchCaller', () => {
     }));
   });
 
+  it('rejects a second concurrent call for the same practitioner', async () => {
+    // Slow fetch so the first call is still in flight when the second arrives.
+    let resolveFirst: (value: unknown) => void = () => {};
+    const slowResponse = new Promise((resolve) => {
+      resolveFirst = resolve;
+    });
+    global.fetch = vi.fn().mockReturnValue(
+      slowResponse.then(() => ({
+        json: () => Promise.resolve({ status: 'success', call_id: 'call-mutex' }),
+      }))
+    );
+
+    const { getBatchCaller } = await import('@/lib/batch-caller');
+    const caller = getBatchCaller();
+    const practitioner = {
+      id: 'mutex-test',
+      name: 'Dr. Mutex',
+      practitioner_type: 'chiropractor',
+      address: '123 Main St',
+      city: 'Toronto',
+      province: 'ON',
+      phone: '4165551234',
+    };
+
+    const firstCall = caller.makeCall(practitioner);
+    const secondCall = caller.makeCall(practitioner);
+
+    // The second call must reject IMMEDIATELY without invoking fetch a
+    // second time. fetch should still only have one call until we resolve
+    // the first.
+    const secondResult = await secondCall;
+    expect(secondResult.success).toBe(false);
+    expect(secondResult.error).toBe(
+      'Call already in progress for this practitioner'
+    );
+    expect((global.fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBe(1);
+
+    // Allow the first call to complete.
+    resolveFirst(null);
+    const firstResult = await firstCall;
+    expect(firstResult.success).toBe(true);
+
+    // After the first call completes, a third call for the same id should
+    // succeed (mutex is released in finally).
+    global.fetch = vi.fn().mockResolvedValue({
+      json: () => Promise.resolve({ status: 'success', call_id: 'call-mutex-2' }),
+    });
+    const thirdResult = await caller.makeCall(practitioner);
+    expect(thirdResult.success).toBe(true);
+    expect(thirdResult.call_id).toBe('call-mutex-2');
+  });
+
   it('handles API error responses', async () => {
     global.fetch = vi.fn().mockResolvedValue({
       json: () => Promise.resolve({ status: 'error', message: 'Rate limited' }),

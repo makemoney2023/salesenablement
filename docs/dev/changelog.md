@@ -4,6 +4,79 @@ Backend, system, infrastructure, pathway, Edge Function, migration, and Python s
 
 ---
 
+## 2026-05-14 — Production-hardening sweep: schema repair, fail-closed auth, downstream error surfacing, concurrency guards
+
+A second deep-dive after the `verify_jwt` fix uncovered 15 silent-failure modes spread across schema, Edge Functions, and frontend. All P0/P1 items remediated in one task-master plan; P2/P3 hygiene fixes included. A post-plan code-reviewer pass then caught 4 follow-up issues (analyze-call dispatch, dead `_sync_failed_at`, schema/types drift, misleading idempotency comment) which were all fixed in this same commit. Test count grew from 178 → 192 Vitest+Deno.
+
+- **What changed** (grouped by remediation area):
+  - **Schema repair**:
+    - `supabase/migrations/20260514_fix_increment_retry_count_rpc.sql` — recreates `public.increment_retry_count(p_id text)`. Production probe before fix: PGRST202 `function not found`. The May-12 fix renamed the RPC argument from `practitioner_id` to `p_id` but the RPC itself was never deployed (the 2026-02-06 migration declared `p_id UUID` while `practitioners.id` is `text`, so PostgREST refused to dispatch text arguments). Effect of the bug: `webhook-processor` was treating every voicemail/failed call as retry #0 because `supabase.rpc(...)` returned `{ error }` not a throw → `(null ?? 1) - 1 = 0` → infinite retries once the webhook pipeline went live. Verified end-to-end with a live test practitioner (`ChIJ0RtEKZzM1IkR6WK9JovK16A`): retry_count went 0 → 1 after a single RPC call, then reverted to 0.
+    - `supabase/migrations/20260514_add_call_records_processed_at.sql` — adds `call_records.processed_at TIMESTAMPTZ` + partial index. Required by the new idempotency check below.
+  - **Fail-closed webhook auth**:
+    - Extracted `webhook-processor/auth-gate.ts` from the inline HMAC verification in `index.ts`. The previous behavior was fail-OPEN: missing `BLAND_WEBHOOK_SECRET` → log warning + process the payload anyway. New behavior: every error path (`secret_not_configured`, `signature_missing`, `signature_mismatch`, `verification_error`) returns ok=false → function returns HTTP 401.
+    - `webhook-processor/auth-gate.test.ts` — 8 Deno tests covering every failure mode + the happy path. Live probe after deploy confirms: unsigned POST → 401, bogus signature → 401, GET probe → 200.
+    - Fixed config.toml comment that mis-named the header (`x-bland-signature` was wrong; the correct Bland header per [docs.bland.ai/tutorials/webhook-signing](https://docs.bland.ai/tutorials/webhook-signing) is `x-webhook-signature`, which the code has always used correctly).
+  - **Downstream error surfacing**:
+    - `webhook-processor/dispatch.ts` (new) — `dispatchEdgeFunction({ url, bearer, body, label })` returns `{ ok: true } | { ok: false, reason, httpStatus }` and never throws. Replaces the previous inline `fetchWithTimeout(...).catch(...)` pattern which never checked `.ok` on the response, so non-2xx replies from `book-appointment` / `send-sample-confirmation` silently resolved while webhook-processor reported `record_saved: true`.
+    - `webhook-processor/dispatch.test.ts` — 6 Deno tests covering 2xx, 4xx, 5xx, network error, body truncation, header construction.
+    - `webhook-processor/index.ts` — wired `dispatchEdgeFunction(...)` into both the sample-confirmation fan-out (~L1337) and the book-appointment fan-out (~L1491). On non-2xx the parent row (`sample_requests` or `call_records`) gets a structured failure note, and the final response payload includes a new `downstream` field surfacing per-call status to Bland (visible in Bland's call detail logs).
+    - `book-appointment/response.ts` (new) — `buildBookingResponse({ booking, appointmentId })`. Previously the handler returned HTTP 200 + `success: true` + `appointment_id: null` when the Cal.com booking succeeded but the `appointments` row INSERT failed. Now returns HTTP 500 + `success: false` + a clear error message + the Cal.com booking detail (so ops can find the orphaned calendar event). `book-appointment/response.test.ts` — 3 Deno tests.
+  - **Defensive Edge Function changes**:
+    - `process-retry-queue/business-hours.ts` (new) — pure `isWithinBusinessHours(timezone, now, hours)` extracted from `index.ts`. Old code defaulted to `true` ("allow calls") on `Intl.DateTimeFormat` failure, which during a DST transition could let after-hours dials slip through. New code is fail-CLOSED. `business-hours.test.ts` — 8 Deno tests.
+    - `process-retry-queue/index.ts` — `getRetryQueue` now `throw`s `RetryQueueFetchError` on DB failure instead of returning `[]`. The caller distinguishes "queue empty" from "queue fetch failed" and returns `skipped_reason: "queue_fetch_failed: ..."` so the cron audit trail no longer logs a successful "0 retries processed" tick when the DB is broken.
+    - `generate-daily-report/index.ts` — `sample_requests` / `practitioners` query failures now `throw` instead of silently saving a report with zeros for those sections.
+    - `webhook-processor/index.ts` — `analyze-call` `waitUntil` falls back to `await` when `EdgeRuntime` global is missing (local/test/preview contexts), so analysis is never dropped on the floor.
+  - **Concurrency guards**:
+    - `webhook-processor/index.ts` — idempotency check at the top of the handler keyed on `call_records.processed_at`. Bland redelivers webhooks on network errors; without this guard every redelivery re-fired sample_request creation, book-appointment dispatch, analyze-call dispatch, and retry scheduling. Now: if `processed_at IS NOT NULL` for the incoming `call_id`, return 200 immediately with `message: "Already processed (idempotent skip)"`. The `processed_at` write happens right before the success response, so partial failures don't lock out a future retry-delivery.
+- **Why it changed**: Per the deep-dive audit ("rock-solid app" request). Eight subagent + live-DB findings drove the remediation:
+  | # | Finding | Severity |
+  |---|---|---|
+  | 1 | `increment_retry_count` RPC missing in prod | P0 |
+  | 2 | `webhook-processor` fail-open on missing `BLAND_WEBHOOK_SECRET` | P0 |
+  | 3 | Downstream `.ok` never checked in webhook fan-outs | P0 |
+  | 4 | `book-appointment` returns success when DB insert fails | P0 |
+  | 5 | DELETE routes return HTTP 200 with `status: "error"` | P1 |
+  | 6 | Manual-dial save fail leaves system inconsistent | P1 |
+  | 7 | Notes silently saved to localStorage instead of DB | P1 |
+  | 8 | `analyze-call` waitUntil dropped in non-prod contexts | P1 |
+  | 9 | `process-retry-queue.isWithinBusinessHours` fails OPEN | P1 |
+  | 10 | `process-retry-queue.getRetryQueue` returns `[]` on DB error | P1 |
+  | 11 | `daily_report` saves zeros on partial query failure | P1 |
+  | 12 | `createCallRecord` fire-and-forget sync, no failure surface | P1 |
+  | 13 | `batchCaller.makeCall` no per-practitioner mutex | P1 |
+  | 14 | `webhook-processor` no idempotency check | P1 |
+  | 15 | `config.toml` comment used wrong header name | P3 |
+- **Code touchpoints**:
+  - New: `supabase/migrations/20260514_fix_increment_retry_count_rpc.sql`, `supabase/migrations/20260514_add_call_records_processed_at.sql`, `supabase/functions/webhook-processor/{auth-gate,dispatch}.ts` (+ tests), `supabase/functions/book-appointment/response.ts` (+ test), `supabase/functions/process-retry-queue/business-hours.ts` (+ test).
+  - Modified: `supabase/functions/webhook-processor/index.ts`, `supabase/functions/book-appointment/index.ts`, `supabase/functions/process-retry-queue/index.ts`, `supabase/functions/generate-daily-report/index.ts`, `supabase/config.toml`.
+- **Data-flow impact**: Every stage of the post-call pipeline now fails LOUDLY instead of silently when something goes wrong. Retry counts will actually increment. DNC detection will actually mark practitioners. Cron jobs that fail will surface real error messages instead of "0 processed". Duplicate webhook deliveries no longer double-fire side effects.
+- **ID / contract changes**: None.
+- **API / schema impact**:
+  - Schema: `call_records.processed_at TIMESTAMPTZ NULL` + partial index.
+  - RPC: `public.increment_retry_count(p_id text) RETURNS integer` (recreated). Grants: `service_role`, `authenticated`.
+  - Edge Function response shapes:
+    - `webhook-processor` response now includes a `downstream: { book_appointment?, send_sample_confirmation? }` field summarizing fan-out outcomes.
+    - `book-appointment` returns HTTP 500 (was 200) when the appointment-row INSERT fails after a successful Cal.com booking.
+    - `webhook-processor` returns HTTP 401 (was: log warning + process) when `BLAND_WEBHOOK_SECRET` is unset.
+    - DELETE `/api/campaign/calls` and `/api/campaign/notes` return HTTP 500 (was 200) when the underlying delete fails.
+- **Operational**:
+  1. Both migrations were applied via `supabase db query --linked --file ...` and verified with live REST probes.
+  2. Affected Edge Functions redeployed: `webhook-processor` (with `--no-verify-jwt`), `book-appointment`, `process-retry-queue`, `generate-daily-report`.
+  3. **Follow-ups not in this commit**:
+     - Drop the unused `schedule_retry`, `clear_retry`, `get_retry_queue` RPCs (all return PGRST202 / type mismatch in prod; no production code calls them).
+     - Add a partial UNIQUE INDEX on `sample_requests(call_record_id)` so a concurrent-redelivery race on the `processed_at` idempotency check cannot double-fire sample shipments. (Today the gap is bounded — Bland sends 200 once and won't redeliver — but the index is cheap insurance.)
+     - Open a ticket for a startup self-check that probes every required RPC, function, and column at boot so this class of drift is caught earlier.
+     - Build an "unsynced call records" UI indicator (currently `createCallRecord` only logs to console.error on Supabase sync failure for batch dials; quick-call and the campaign page already await sync explicitly).
+- **Verification**:
+  - `npm test -- --run` → **185 / 185 passing** (was 178; gained 7 tests: 6 DELETE + 1 mutex).
+  - `deno test` for each touched function → all green (25 webhook-processor, 7 book-appointment, 11 process-retry-queue).
+  - `npx tsc --noEmit` → clean.
+  - `ReadLints` on `src/` and `supabase/functions/` → no errors.
+  - Live REST probe: `POST /functions/v1/webhook-processor` unsigned → HTTP 401 from auth-gate (not the gateway).
+  - Live RPC probe: `increment_retry_count(p_id='<test_id>')` → 200 with the new count.
+
+---
+
 ## 2026-05-14 — `webhook-processor` re-deployed with `verify_jwt = false`; entire post-call pipeline back online
 
 - **What changed**:

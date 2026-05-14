@@ -342,13 +342,39 @@ export function QuickCallTab({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(practitionerData),
         });
+
+        if (!saveResponse.ok) {
+          // Surface the failure to the operator. We refuse to proceed with
+          // a null practitioner_id because the downstream webhook-processor
+          // would have to fall back to phone-only lookup which is brittle
+          // (numbers reformatted, hidden caller-id, etc.). If the DB is down
+          // the operator should retry rather than start an untraceable call.
+          const errText = await saveResponse.text().catch(() => "");
+          const msg = `Failed to save practitioner (${saveResponse.status}). Call aborted to prevent untracked record. ${errText.slice(0, 120)}`;
+          console.error(msg);
+          toast.error(msg);
+          dispatch({ type: "SET_MAKING", value: false });
+          return;
+        }
+
         const saveResult = await saveResponse.json();
         if (saveResult.practitioner) {
           practitionerId = saveResult.practitioner.id;
+        } else {
+          toast.error(
+            "Practitioner save returned no record. Call aborted to prevent an untracked dial."
+          );
+          dispatch({ type: "SET_MAKING", value: false });
+          return;
         }
       } catch (saveError) {
+        const msg = saveError instanceof Error ? saveError.message : "Unknown error";
         console.error("Failed to save practitioner:", saveError);
-        // Continue — the call can still proceed; webhook will use phone lookup
+        toast.error(
+          `Could not save practitioner (${msg}). Call aborted to prevent an untracked dial.`
+        );
+        dispatch({ type: "SET_MAKING", value: false });
+        return;
       }
 
       // Step 2: Build call payload WITH practitioner_id (if save succeeded)

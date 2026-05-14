@@ -147,9 +147,16 @@ export async function DELETE(request: NextRequest) {
 
     const success = await deleteNote(noteId);
 
+    if (!success) {
+      return NextResponse.json(
+        { status: "error", message: "Failed to delete note" },
+        { status: 500 }
+      );
+    }
+
     return NextResponse.json({
-      status: success ? "success" : "error",
-      message: success ? "Note deleted" : "Failed to delete note",
+      status: "success",
+      message: "Note deleted",
     });
   } catch (error) {
     console.error("Failed to delete note:", error);
