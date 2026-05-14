@@ -35,6 +35,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useSidebarBadges } from "@/hooks/useSidebarBadges";
+import { useQuickStats } from "@/hooks/useQuickStats";
 import type { UserProfile } from "@/lib/db/types";
 
 import {
@@ -108,83 +109,6 @@ interface AppSidebarProps extends React.ComponentProps<typeof Sidebar> {
   onMarketChange?: (market: MarketId) => void;
   user?: SupabaseUser | null;
   profile?: UserProfile | null;
-}
-
-// Quick stats hook for sidebar
-function useQuickStats() {
-  const [stats, setStats] = useState({
-    activeCalls: 0,
-    queuedCalls: 0,
-    todayBooked: 0,
-  });
-
-  useEffect(() => {
-    // Load stats from localStorage
-    const loadStats = () => {
-      if (typeof window === "undefined") return;
-      
-      try {
-        const data = localStorage.getItem("superpatch_campaign_calls");
-        if (data) {
-          const records = JSON.parse(data);
-          const today = new Date().toDateString();
-          const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
-          
-          let active = 0;
-          let queued = 0;
-          let booked = 0;
-          let needsCleanup = false;
-          
-          Object.entries(records).forEach(([id, record]: [string, any]) => {
-            const recordDate = new Date(record.updated_at || record.created_at).toDateString();
-            const recordTime = new Date(record.updated_at || record.created_at).getTime();
-            
-            // Clean up stale in_progress records (older than 24 hours)
-            if (record.status === "in_progress" && recordTime < oneDayAgo) {
-              record.status = "failed";
-              needsCleanup = true;
-            }
-            
-            // Only count as active if from today
-            if (record.status === "in_progress" && recordDate === today) {
-              active++;
-            }
-            if (record.status === "queued") queued++;
-            if (
-              (record.status === "booked" || record.status === "calendar_sent") &&
-              recordDate === today
-            ) {
-              booked++;
-            }
-          });
-          
-          // Save cleaned up records back to localStorage
-          if (needsCleanup) {
-            localStorage.setItem("superpatch_campaign_calls", JSON.stringify(records));
-          }
-          
-          setStats({ activeCalls: active, queuedCalls: queued, todayBooked: booked });
-        }
-      } catch (error) {
-        console.error("Failed to load sidebar stats:", error);
-      }
-    };
-
-    loadStats();
-    
-    // Poll for updates every 10 seconds
-    const interval = setInterval(loadStats, 10000);
-    
-    // Also listen for storage events
-    window.addEventListener("storage", loadStats);
-    
-    return () => {
-      clearInterval(interval);
-      window.removeEventListener("storage", loadStats);
-    };
-  }, []);
-
-  return stats;
 }
 
 export function AppSidebar({

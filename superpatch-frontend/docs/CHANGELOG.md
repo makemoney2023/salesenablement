@@ -4,6 +4,31 @@ Frontend app deltas (Next.js app, API routes, client components, frontend deps).
 
 ---
 
+## 2026-05-14 — Sidebar green-call indicator now reconciles on every route
+
+- **What changed**:
+  - Extracted the previously inline `useQuickStats` hook from `src/components/layout/app-sidebar.tsx` into `src/hooks/useQuickStats.ts` and wired `reconcileStaleInProgressRecords()` (from `@/lib/campaign-storage`) into every poll tick — both the initial mount tick and the recurring 10-second interval. Behaviour parity preserved: the same counts (`activeCalls` / `queuedCalls` / `todayBooked`) are computed from `localStorage["superpatch_campaign_calls"]`, the same `storage` event listener triggers a re-read, and the same 24h `in_progress` → `failed` safety-net cleanup runs.
+  - Added `src/__tests__/useQuickStats.test.ts` (4 vitest cases) covering: reconciler runs on first render, empty-storage returns zero counts, today `in_progress` records count as active, and the reported `activeCalls` drops back to 0 immediately after the reconciler flips a stale record to `failed`.
+- **Why it changed**: The green pulse on the "Call Center" sidebar item is driven by `quickStats.activeCalls > 0`. That count is taken from a localStorage flag (`status === "in_progress"` for today). The flag gets cleared by either (a) `webhook-processor` delivery (broken pre-`verify_jwt` fix — see today's root-changelog entry), or (b) `reconcileStaleInProgressRecords()` flipping records older than 20 minutes to `failed`. Pre-fix, the reconciler was mounted only on `/campaign` (`src/app/campaign/page.tsx:362-374`), so any operator who dialed a call and then navigated to `/campaign/samples`, `/campaign/appointments`, `/` (D2C/B2B/Canadian markets), Settings, or the Pathway Insights view saw the pulse stay lit until the 24h sweep — even after an abrupt hang-up. The sidebar is global, so the reconciler now lives where the indicator does.
+- **Code touchpoints**:
+  - `superpatch-frontend/src/hooks/useQuickStats.ts` (new).
+  - `superpatch-frontend/src/components/layout/app-sidebar.tsx` — removed the inline `useQuickStats` definition (lines 113-188 in the prior version); now imports the hook from `@/hooks/useQuickStats`.
+  - `superpatch-frontend/src/__tests__/useQuickStats.test.ts` (new).
+- **Data-flow impact**: Sidebar indicator only. No DB write, no API, no Edge Function, no pathway behavior changed. The `/campaign` page still runs its own `reconcileStaleInProgressRecords()` calls (page-mount and visibilitychange) — those are now functionally redundant but harmless (`reconcileStaleInProgressRecords` is idempotent and short-circuits when there are no stale records); they can be removed in a follow-up.
+- **ID / contract changes**: None.
+- **API / schema impact**: None.
+- **Operational**:
+  1. With `webhook-processor` healthy again (root changelog entry), `updateFromWebhook` will clear `in_progress` records the moment Bland's post-call webhook lands — usually within a few seconds of hang-up. The 20-minute reconciler is now a fallback, not the primary path.
+  2. Open follow-up: drop the 20-minute reconciliation window to ~5 minutes once we have a week of healthy webhook deliveries. Tracked informally; not on a dedicated plan yet.
+  3. Optional (not in this delta): poll `/api/bland/calls/{id}` from the dialer after dial so the localStorage record is flipped to `completed`/`failed` independent of webhook latency. Worth doing if we observe meaningful webhook latency in the next test cycle.
+- **Verification**:
+  - `npx vitest run src/__tests__/useQuickStats.test.ts` → 4/4 ✅.
+  - `npm test -- --run` from `superpatch-frontend/` → **178/178 ✅**.
+  - `npx tsc --noEmit` → clean.
+  - Manual: after an abrupt hang-up, navigate to any route other than `/campaign`; within a single 10-second poll tick the reconciler runs and the pulse clears (provided `call_started_at + 20 min` is in the past, per the reconciler's existing threshold).
+
+---
+
 ## 2026-05-12
 
 ### Fixed

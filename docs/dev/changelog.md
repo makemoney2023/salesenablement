@@ -4,6 +4,99 @@ Backend, system, infrastructure, pathway, Edge Function, migration, and Python s
 
 ---
 
+## 2026-05-14 — `webhook-processor` re-deployed with `verify_jwt = false`; entire post-call pipeline back online
+
+- **What changed**:
+  - Added `superpatch-frontend/supabase/config.toml` pinning `[functions.webhook-processor] verify_jwt = false` so every deploy (local, scripted, CI) applies the same gateway policy. The file also documents the rule that any function with `verify_jwt = false` must implement its own in-code authentication.
+  - Redeployed the `webhook-processor` Edge Function with `supabase functions deploy webhook-processor --no-verify-jwt --project-ref gdwwppwaxyvudsecexuq` (script size 113.8 kB, deploy 2026-05-14 ~12:18 ET). The function source code already enforces an HMAC SHA-256 signature check on `x-webhook-signature` against `BLAND_WEBHOOK_SECRET` (`webhook-processor/index.ts:949-968`); that branch was previously unreachable because the Supabase API gateway rejected every anonymous POST with HTTP 401 / `sb-error-code: UNAUTHORIZED_NO_AUTH_HEADER` before the function body ran.
+  - Added `superpatch-frontend/src/__tests__/edge-functions-verify-jwt.test.ts` as a regression test: it reads `supabase/config.toml` and asserts that `[functions.webhook-processor]` contains `verify_jwt = false`. The test currently covers a single function (extend `PUBLIC_FUNCTIONS_REQUIRING_NO_JWT` if more public, third-party-driven functions are added).
+  - Updated the `superpatch-frontend/README.md` Edge Functions table to record the per-function `verify_jwt` policy and the rule that public functions MUST keep `verify_jwt = false` paired with in-code authentication.
+- **Why it changed**: End-to-end review surfaced that the entire post-call data pipeline had been silently broken since 2026-01-28. Hard evidence:
+  - PostgREST `content-range: */0` on `call_records`, `sample_requests`, `appointments` for any `created_at >= 2026-05-01`.
+  - The two `call_records` rows that exist in production are both from 2026-01-28, both `Unknown Caller`, both with the Bland default-inbound-bot transcript ("Hello, I'm an inbound agent for Bland AI. I haven't been set up yet…") — i.e. no outbound `webhook-processor` write has ever landed in this DB.
+  - 15+ Bland outbound calls in 2026 with `wants_sample: true`, `products_interested: …`, `appointment_time: …` etc. in `extracted_vars` (queried via `GET https://api.bland.ai/v1/calls`).
+  - Live probe: `POST https://gdwwppwaxyvudsecexuq.supabase.co/functions/v1/webhook-processor` (no `Authorization` header) returned HTTP 401 with `sb-error-code: UNAUTHORIZED_NO_AUTH_HEADER` — the Supabase gateway rejection, not the in-code HMAC rejection. Bland's webhook delivery does not include a Supabase JWT (it's a third-party caller hitting a public URL), so every delivery had been silently dropped at the edge.
+  - The function source already had `BLAND_WEBHOOK_SECRET` HMAC validation in place, which is the secure, correct authentication for this endpoint; the gateway-level JWT check was redundant and was masking it.
+- **Code touchpoints**:
+  - `superpatch-frontend/supabase/config.toml` (new — declares `verify_jwt = false` for `webhook-processor`).
+  - `superpatch-frontend/src/__tests__/edge-functions-verify-jwt.test.ts` (new — 2 assertions; runs in `pnpm test`).
+  - `superpatch-frontend/README.md` — Edge Functions section now records the `verify_jwt` policy per function.
+  - No change to `webhook-processor/index.ts` itself.
+- **Data-flow impact**: Re-enables the entire post-call data pipeline — `call_records` writes, `sample_requests` creation, Resend confirmation emails, `book-appointment` invocation (which in turn writes `appointments` and updates `call_records.booking_id`), `analyze-call` Gemini summarization, and the `follow_up_queue` retry scheduler all depend on `webhook-processor` running to completion. Note that the in-pathway Cal.com booking tools (`TL-79a3c232-…` `check_cal_availability`, `TL-bbaa7f38-…` `book_cal_appointment`) call `https://api.cal.com/v2/*` directly and were not affected by this gateway issue — they have been working through the broken period.
+- **ID / contract changes**: None. Webhook URL, pathway IDs, tool IDs, KB ID, voice ID, Resend, and Cal.com settings unchanged.
+- **API / schema impact**: None to schema. Public Edge Function `webhook-processor` now accepts anonymous POSTs whose body validates HMAC against `BLAND_WEBHOOK_SECRET`. Unsigned or invalidly-signed POSTs are rejected with HTTP 401 and `{"status":"error","message":"Invalid webhook signature"}` (in-code response, not the gateway error code).
+- **Operational**:
+  1. Confirmed `BLAND_WEBHOOK_SECRET` is set in the function's secrets (the live probe returned `Invalid webhook signature` — not the `BLAND_WEBHOOK_SECRET not configured` warning bypass).
+  2. **Operator action — place a test call** to confirm: dial via `/api/bland/calls` (or the quick-call UI), let it complete, and verify within ~30 seconds that a `call_records` row appears with the live `call_id`. Sample requests / appointments will populate per the call's `extracted_vars`.
+  3. Historical Bland calls (those that completed during the broken window) can be re-driven from the Bland dashboard's "Resend webhook" action if any are worth backfilling. By default we treat 2026-01-28 → 2026-05-14 as a write-loss window; the source-of-truth for those calls is Bland's call log itself (still queryable via `GET /v1/calls/{id}`).
+  4. If a future public-facing Edge Function is added (e.g. an inbound SMS webhook), add it to `PUBLIC_FUNCTIONS_REQUIRING_NO_JWT` in `edge-functions-verify-jwt.test.ts` and add a `[functions.<name>] verify_jwt = false` block to `config.toml`. Do **not** disable JWT on a function that lacks its own authentication.
+- **Verification**:
+  - `npx vitest run src/__tests__/edge-functions-verify-jwt.test.ts` → 2/2 ✅.
+  - `npm test -- --run` from `superpatch-frontend/` → **178/178 ✅** (17 test files, including the 2 new ones).
+  - `npx tsc --noEmit` → clean.
+  - Live probe **before** redeploy: `HTTP 401 / sb-error-code: UNAUTHORIZED_NO_AUTH_HEADER`. **After** redeploy: `HTTP 401 / body: {"status":"error","message":"Invalid webhook signature"}` — gateway is no longer involved, function code is running and correctly rejecting the unsigned probe.
+  - `GET https://gdwwppwaxyvudsecexuq.supabase.co/functions/v1/webhook-processor` returns the function's self-describe JSON (status `ok`, list of 13 features), confirming the function is reachable at the URL stored as the Bland webhook target.
+
+---
+
+## 2026-05-14 — Scheduling node prompt-only fix: stop the "DateTime null" bug
+
+- **What changed**:
+  - Rewrote node 27 ("Check Availability") and node 28 ("Schedule Appointment") prompts in all 6 contextual pathway JSON files (`Chiropractors_contextual.json`, `Massage_Therapists_contextual.json`, `Naturopaths_contextual.json`, `Integrative_Medicine_contextual.json`, `Functional_Medicine_contextual.json`, `Acupuncturists_contextual.json`) and published new versions to Bland production.
+  - **Node 27** — added an explicit "HARD REQUIREMENT — do not transition until you have ALL of these" block listing `practice_address` / `practitioner_email` / `best_phone` / `appointment_time`, plus a step-by-step "Ask each question and WAIT for an answer before the next" script with `[WAIT FOR …]` markers around each ask, plus a "never read a variable out loud if its value is empty/null" rule. Old prompt: 2010 chars. New: 3444 chars.
+  - **Node 28** — added a "SAFETY CHECK — DO THIS FIRST" block that, using `{% if not appointment_time %}` / `{% if not practitioner_email %}` / `{% if not best_phone %}` / `{% if not practice_address %}` Jinja guards, asks the prospect for any missing value before reading the confirmation list. The confirmation list itself is now wrapped in `{% if appointment_time %}…{% endif %}` so each bullet only appears when its value is populated, and the prompt explicitly forbids saying "null" out loud. Old: 1425 chars. New: 2624 chars.
+  - Backup of every pre-edit pathway saved to `b2b_sales_enablement/bland_ai_pathways/backups/*_pre_scheduling_fix_20260514_113447.json`.
+  - Published via `b2b_sales_enablement/bland_ai_pathways/publish_pathways_production.py`. New versions (each promoted to `production`): Naturopaths v9, Integrative_Medicine v13, Functional_Medicine v11, Acupuncturists v12, Chiropractors and Massage_Therapists (per the publish output — see `docs/dev/changelog.md`'s adjacent reproduction). All six confirmed live by `GET /v1/pathway/{id}` returning the new prompts.
+- **Why it changed**: End-to-end test call `70bd9fe4-93ee-4c12-9419-0bea899ea100` to `+15192427550` on the Naturopaths pathway (today, 10:54 AM ET) reproduced this verbatim from the agent: *"Perfect! Let me confirm everything: - Date/Time: null, - Location: 176 Hahn Avenue…, - Email for invite: null, - Best phone: null. Does all of that look correct?"* Inspection of the call's `pathway_logs` showed the agent transitioned `Introduction → Company Introduction → Discovery → Check Availability (27) → Schedule Appointment (28)` without invoking the `check_cal_availability` Cal.com tool and without capturing any of the four scheduling extractVars. Root cause: the single-node design of node 27 (one Webhook node attempting to capture 4 facts + invoke a tool in one turn) was unreliable — Bland's runtime treated the first user response ("yes, address is correct") as satisfying the node and fired the `27→28` edge labeled `"time selected"` even though `appointment_time` was empty. Node 28 then literally interpolated the string `null` into its read-back. **All 6 pathways had byte-identical broken node 27 and node 28 prompts** (verified via SHA-1 before patching), so the bug reproduced on whichever pathway the operator tested.
+- **Code touchpoints**:
+  - `b2b_sales_enablement/bland_ai_pathways/Chiropractors_contextual.json`
+  - `b2b_sales_enablement/bland_ai_pathways/Massage_Therapists_contextual.json`
+  - `b2b_sales_enablement/bland_ai_pathways/Naturopaths_contextual.json`
+  - `b2b_sales_enablement/bland_ai_pathways/Integrative_Medicine_contextual.json`
+  - `b2b_sales_enablement/bland_ai_pathways/Functional_Medicine_contextual.json`
+  - `b2b_sales_enablement/bland_ai_pathways/Acupuncturists_contextual.json`
+  - `superpatch-frontend/docs/superpowers/plans/2026-05-14-scheduling-node-structural-fix.md` (new — follow-up plan for the structural fix)
+- **Data-flow impact**: Dialer + Bland pathway. Only the in-call scheduling branch behavior changes — no schema, no Edge Function, no webhook contract, no extractVars surface, no Cal.com tool config. `webhook-processor` continues to consume `appointment_time` / `practitioner_email` / `best_phone` / `practice_address` from the call's `extracted_vars` exactly as before; the change is that those values are now reliably populated before `book_cal_appointment` is invoked.
+- **ID / contract changes**: None. No pathway UUID, tool ID, KB ID, voice ID, or webhook URL changed. `canonical_ids.json` untouched. The published version numbers on Bland advanced (per pathway) and `_meta.updated_at` in `canonical_ids.json` was intentionally not bumped because no IDs changed.
+- **API / schema impact**: None.
+- **Operational**:
+  1. Mitigation is **live** on all 6 production pathways now (verified via `GET /v1/pathway/{id}`).
+  2. **Rollback**: re-promote the prior version per pathway from the Bland dashboard. Pre-edit versions were: Naturopaths v8, Integrative_Medicine v12, Functional_Medicine v10, Acupuncturists v11 (and equivalents on Chiropractors / Massage_Therapists from the publish output).
+  3. **Follow-up tracked**: `superpatch-frontend/docs/superpowers/plans/2026-05-14-scheduling-node-structural-fix.md` describes the proper structural refactor — split node 27 into 4 Default nodes + 1 Webhook node so each ask is a discrete runtime turn. The prompt-only mitigation is sufficient for the current testing cycle but should not be the long-term shape of the scheduling flow.
+- **Verification**:
+  - All 6 contextual JSON files re-parsed successfully after the edit.
+  - `npm test` from `superpatch-frontend/` → 172/172 ✅ (includes `canonical-ids-sync.test.ts`).
+  - `GET /v1/pathway/db955b59-…dafd` (Naturopaths) confirms node 27 `prompt_len=3444` containing `"HARD REQUIREMENT"` and node 28 `prompt_len=2624` containing `"SAFETY CHECK"` + `"NEVER say"`. Same shape expected on the other 5 pathways but not individually re-fetched (deferred to next test call).
+  - Operator-facing verification: place a fresh call to `+15192427550` (now a brand-new caller — see the adjacent 2026-05-14 memory-store entry below). The agent should ask address → email → phone → date/time in that order before reading any confirmation, and should never say "null".
+
+---
+
+## 2026-05-14 — Bland memory store recreated; stale `BLAND_MEMORY_ID` resolved
+
+- **What changed**:
+  - Created a fresh Bland.ai memory store `161014f4-1e6a-429c-a203-d9a5583dca29` (name: `SuperPatch Sales Campaign`) and repointed `BLAND_MEMORY_ID` / `NEXT_PUBLIC_BLAND_MEMORY_ID` to it across all three surfaces: `superpatch-frontend/.env.local`, Vercel project env vars (Production + Preview + Development), and the Supabase Edge Function secret `BLAND_MEMORY_ID` on project `gdwwppwaxyvudsecexuq`.
+  - Hard-deleted practitioner row `user_1771345668964_r71lna9` (name `wholehealth365`, phone `+15192427550`, type `Naturopath`, self-added test record) so the operator can call `5192427550` as a brand-new caller in end-to-end QA. Re-verified zero residue across `practitioners`, `call_records`, `sample_requests`, `appointments`, and `follow_up_queue` for both the phone substring and the practitioner_id.
+- **Why it changed**: While clearing the DB for a fresh end-to-end test, surfaced that the configured `BLAND_MEMORY_ID` (`21d48afa-0981-4f16-bd97-c1b95f04d2ac`) had been returning `NOT_FOUND` from Bland for some time — and `GET /v1/memory` reported `{ memories: [] }` on the account, meaning the store had been deleted on Bland's side without the env vars being updated. Net effect in production: `process-retry-queue` (Deno) and the in-call flows that read `NEXT_PUBLIC_BLAND_MEMORY_ID` (`src/lib/batch-caller.ts`, `src/components/campaign/quick-call-tab.tsx`) were silently dispatching calls **without** cross-call memory — every retry / quick-call was effectively a cold first contact for the recipient, with no `last_call_at` / `summary` carry-over from prior conversations. The MEMORY_ID-gated branches in those callers no-op cleanly when the env var is missing or invalid, which is why the regression was invisible from the UI but real in the Bland conversation context.
+- **Code touchpoints**:
+  - `superpatch-frontend/.env.local` — `BLAND_MEMORY_ID` and `NEXT_PUBLIC_BLAND_MEMORY_ID` updated.
+  - Vercel project `superpatch-frontend` (team `team_sSaTJgrsnrs5tFzsJeaw8DjT`) — both keys set for Production, Preview, Development via dashboard.
+  - Supabase project `gdwwppwaxyvudsecexuq` Edge Function secrets — `BLAND_MEMORY_ID` updated via dashboard. Verified by sha256 digest match: `printf '161014f4-1e6a-429c-a203-d9a5583dca29' \| shasum -a 256` = `6bdf0704b2d6c69ba682b29f26b202bb3fd78f649d4de61e51795968574428e9` (matches `supabase secrets list` digest).
+  - No source files changed.
+- **Data-flow impact**: Dialer + retry queue. `superpatch-frontend/src/lib/batch-caller.ts:22` (`MEMORY_ID` read at module load), `superpatch-frontend/src/components/campaign/quick-call-tab.tsx:238,369` (read at click time), and `superpatch-frontend/supabase/functions/process-retry-queue/index.ts:31` (read at function invocation) all now see a live, empty memory store on the next call. No call-record write path, webhook-processor, book-appointment, or analytics path was touched.
+- **ID / contract changes**: `BLAND_MEMORY_ID` rotated from `21d48afa-0981-4f16-bd97-c1b95f04d2ac` (deleted) to `161014f4-1e6a-429c-a203-d9a5583dca29` (active). The memory ID is **env-only** today and is intentionally not in `canonical_ids.json` (rotation is operational, not pathway-bound) — see follow-up below.
+- **API / schema impact**: None.
+- **Operational**:
+  1. **Vercel redeploy required** for the frontend to pick up the new `NEXT_PUBLIC_BLAND_MEMORY_ID` (Next.js inlines `NEXT_PUBLIC_*` at build time). Trigger a fresh Production deploy of `superpatch-frontend` (do **not** "use existing build cache").
+  2. Supabase Edge Functions do **not** need a redeploy — Deno reads the secret on each invocation. `process-retry-queue` will pick up the new ID on its next pg_cron tick.
+  3. Old `BLAND_MEMORY_ID=21d48afa-...d2ac` should be considered dead. If it ever resurfaces in env, function logs, or docs, treat it as stale.
+- **Verification**:
+  - `curl https://api.bland.ai/v1/memory/161014f4-...dca29` returns the store with `users: []` (confirmed).
+  - `GET /rest/v1/practitioners?phone=ilike.*5192427550*` returns `[]`; same for `call_records.phone`, `sample_requests.phone`, `appointments.attendee_phone`, and `follow_up_queue.practitioner_id` for the deleted id (confirmed).
+  - Supabase secret digest matches the new UUID (confirmed via sha256).
+- **Follow-up** (not yet shipped): Production has no guardrail against a missing/invalid `BLAND_MEMORY_ID` — the silent failure mode that hid this incident is still possible. Recommended next change: in `superpatch-frontend/supabase/functions/process-retry-queue/index.ts` (and a startup check in `batch-caller.ts`), on first read of the env var hit `GET /v1/memory/{id}` once and `console.error` (Edge) / surface a banner (frontend) if the response is `NOT_FOUND`. Track as a separate ticket; do not block on this for the current test.
+
+---
+
 ## 2026-05-12 — AI Call Center production-fix plan (Phases 1–4)
 
 - **What changed**:

@@ -1,0 +1,22 @@
+# Supabase project configuration
+#
+# This file documents per-function deploy settings so that `supabase functions
+# deploy <name>` and CI/automation always apply the same `verify_jwt` policy.
+# When `verify_jwt = false` is set here, anonymous POSTs reach the function
+# body (where in-code HMAC / method / payload checks defend the endpoint)
+# instead of being rejected by the Supabase API gateway with
+# `sb-error-code: UNAUTHORIZED_NO_AUTH_HEADER`.
+#
+# Do not set `verify_jwt = false` on any function unless it has its own
+# in-code authentication (HMAC signature, replay protection, etc.).
+
+project_id = "gdwwppwaxyvudsecexuq"
+
+# Bland.ai post-call webhook receiver. Bland delivers POSTs anonymously
+# from its own infrastructure and the function authenticates each request
+# using the HMAC signature in `x-bland-signature` against
+# `BLAND_WEBHOOK_SECRET`. Without `verify_jwt = false`, the gateway rejects
+# every delivery (HTTP 401), silently breaking the entire post-call data
+# pipeline (call_records, sample_requests, appointments, follow_up_queue).
+[functions.webhook-processor]
+verify_jwt = false

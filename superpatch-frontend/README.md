@@ -162,18 +162,18 @@ All endpoints return `{ status: "success", data: ... }` or `{ status: "error", m
 
 ## Supabase Edge Functions
 
-These live in `supabase/functions/` and are deployed via `supabase functions deploy <name>` from this folder.
+These live in `supabase/functions/` and are deployed via `supabase functions deploy <name>` from this folder. Per-function deploy flags (e.g. `verify_jwt`) are pinned in `supabase/config.toml` so the same policy applies whether the deploy is run from a workstation or from CI. Public, third-party-driven functions MUST keep `verify_jwt = false` in `config.toml` and rely on in-code authentication (HMAC, payload validation) — without that, the Supabase API gateway rejects every anonymous POST with `sb-error-code: UNAUTHORIZED_NO_AUTH_HEADER` before the function body runs.
 
-| Function | Trigger | Purpose |
-|----------|---------|---------|
-| `webhook-processor` | Bland.ai webhook POST | Canonical receiver for call completions; writes `call_records`, creates `sample_requests`, invokes `book-appointment`. |
-| `process-retry-queue` | pg_cron | Business-hours retry dialer; resolves pathway via `_shared/pathways.ts`. |
-| `book-appointment` | Invoked by `webhook-processor` | Creates Cal.com v2 booking and fills `call_records.booking_id`. |
-| `send-sample-confirmation` | Invoked by `webhook-processor` | Sends Resend confirmation email and stamps `sample_requests.email_sent_at`. |
-| `sync-cal-bookings` | pg_cron | Backfills bookings created on Cal.com but missing from `call_records`. |
-| `enrich-practitioners-v2` | Manual / API | Runs Firecrawl + LinkedIn enrichment for selected practitioners. |
-| `analyze-call` | Invoked post-call | Runs Gemini analysis on transcripts; writes to `call_records.analysis_json`. |
-| `generate-daily-report` | pg_cron | Produces the EOD report served at `/reports`. |
+| Function | Trigger | `verify_jwt` | Purpose |
+|----------|---------|--------------|---------|
+| `webhook-processor` | Bland.ai webhook POST | **false** (HMAC via `BLAND_WEBHOOK_SECRET` + `x-webhook-signature`) | Canonical receiver for call completions; writes `call_records`, creates `sample_requests`, invokes `book-appointment`. |
+| `process-retry-queue` | pg_cron | true (server-to-server with service-role) | Business-hours retry dialer; resolves pathway via `_shared/pathways.ts`. |
+| `book-appointment` | Invoked by `webhook-processor` | true (server-to-server) | Creates Cal.com v2 booking and fills `call_records.booking_id`. |
+| `send-sample-confirmation` | Invoked by `webhook-processor` | true (server-to-server) | Sends Resend confirmation email and stamps `sample_requests.email_sent_at`. |
+| `sync-cal-bookings` | pg_cron | true | Backfills bookings created on Cal.com but missing from `call_records`. |
+| `enrich-practitioners-v2` | Manual / API | true | Runs Firecrawl + LinkedIn enrichment for selected practitioners. |
+| `analyze-call` | Invoked post-call | true | Runs Gemini analysis on transcripts; writes to `call_records.analysis_json`. |
+| `generate-daily-report` | pg_cron | true | Produces the EOD report served at `/reports`. |
 
 ## Project Structure
 
