@@ -222,6 +222,15 @@ export class BatchCaller {
    * Make a single call to a practitioner
    */
   async makeCall(practitioner: Practitioner): Promise<CallResult> {
+    // Never dial a practitioner on the Do Not Call list.
+    if (practitioner.do_not_call === true) {
+      return {
+        success: false,
+        error: 'do_not_call',
+        practitioner_id: practitioner.id,
+      };
+    }
+
     const phone = formatPhoneNumber(practitioner.phone || '');
 
     if (!phone) {
@@ -438,6 +447,18 @@ export class BatchCaller {
       }
 
       if (!practitioner.phone) {
+        continue;
+      }
+
+      // Never dial Do Not Call practitioners — skip without delaying.
+      if (practitioner.do_not_call === true) {
+        this.emit({
+          type: 'call_failed',
+          practitioner_id: practitioner.id,
+          error: 'do_not_call',
+          remaining: practitioners.length - i - 1,
+        });
+        removeFromQueue(practitioner.id);
         continue;
       }
 
