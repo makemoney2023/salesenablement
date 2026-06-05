@@ -4,17 +4,31 @@
  * CRUD operations for call_records table in Supabase
  */
 
-import { supabase, supabaseAdmin, isSupabaseConfigured, TypedSupabaseClient } from '../supabase';
+import { supabase, supabaseAdmin, TypedSupabaseClient } from '../supabase';
 import type { CallRecord, CallRecordInsert, CallRecordUpdate, CallStatus, CampaignStats } from './types';
 
 // Fallback to localStorage if Supabase is not configured
 import * as localStorage from '../campaign-storage';
 
 /**
+ * Returns the DB client to use for call_records operations.
+ *
+ * These functions run server-side (invoked from API routes that already
+ * enforce requireApiAuth()). The anon client carries no user JWT, so under
+ * is_active_user() RLS its reads return empty and writes fail. Prefer the
+ * service-role admin client, falling back to anon only if the service key is
+ * not configured (e.g. some local/test setups).
+ */
+function getDb(): TypedSupabaseClient | null {
+  return supabaseAdmin ?? supabase;
+}
+
+/**
  * Get all call records
  */
 export async function getAllCallRecords(): Promise<Record<string, CallRecord>> {
-  if (!isSupabaseConfigured || !supabase) {
+  const db = getDb();
+  if (!db) {
     // Fallback to localStorage
     const records = localStorage.getCallRecords();
     return Object.fromEntries(
@@ -22,7 +36,7 @@ export async function getAllCallRecords(): Promise<Record<string, CallRecord>> {
     );
   }
 
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('call_records')
     .select('*')
     .order('created_at', { ascending: false });
@@ -42,12 +56,13 @@ export async function getAllCallRecords(): Promise<Record<string, CallRecord>> {
  * Get a single call record by practitioner ID
  */
 export async function getCallRecord(practitionerId: string): Promise<CallRecord | null> {
-  if (!isSupabaseConfigured || !supabase) {
+  const db = getDb();
+  if (!db) {
     const record = localStorage.getCallRecord(practitionerId);
     return record ? convertLocalStorageRecord(record) : null;
   }
 
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('call_records')
     .select('*')
     .eq('practitioner_id', practitionerId)
@@ -67,12 +82,13 @@ export async function getCallRecord(practitionerId: string): Promise<CallRecord 
  * Get call record by Bland.ai call_id
  */
 export async function getCallRecordByCallId(callId: string): Promise<CallRecord | null> {
-  if (!isSupabaseConfigured || !supabase) {
+  const db = getDb();
+  if (!db) {
     const record = localStorage.getCallRecordByCallId(callId);
     return record ? convertLocalStorageRecord(record) : null;
   }
 
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('call_records')
     .select('*')
     .eq('call_id', callId)
@@ -92,7 +108,8 @@ export async function getCallRecordByCallId(callId: string): Promise<CallRecord 
  * Create or update a call record (upsert)
  */
 export async function upsertCallRecord(record: CallRecordInsert): Promise<CallRecord | null> {
-  if (!isSupabaseConfigured || !supabase) {
+  const db = getDb();
+  if (!db) {
     // Fallback to localStorage
     const now = new Date().toISOString();
     // Generate a unique ID for unknown callers (when practitioner_id is null/undefined)
@@ -127,7 +144,7 @@ export async function upsertCallRecord(record: CallRecordInsert): Promise<CallRe
   // call_id has a unique constraint, practitioner_id does NOT
   // Use call_id for upsert when available, otherwise just insert
   if (record.call_id) {
-    const { data, error } = await supabase
+    const { data, error } = await db
       .from('call_records')
       .upsert(record as any, { 
         onConflict: 'call_id',
@@ -146,7 +163,7 @@ export async function upsertCallRecord(record: CallRecordInsert): Promise<CallRe
   }
   
   // No call_id or upsert failed - just insert a new record
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('call_records')
     .insert(record as any)
     .select()
@@ -167,7 +184,8 @@ export async function updateCallRecord(
   practitionerId: string, 
   updates: CallRecordUpdate
 ): Promise<CallRecord | null> {
-  if (!isSupabaseConfigured || !supabase) {
+  const db = getDb();
+  if (!db) {
     const record = localStorage.getCallRecord(practitionerId);
     if (!record) return null;
     
@@ -179,7 +197,7 @@ export async function updateCallRecord(
     return updated ? convertLocalStorageRecord(updated) : null;
   }
 
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('call_records')
     // @ts-expect-error - Supabase types need to be generated for full type safety
     .update(updates)
@@ -224,12 +242,13 @@ export async function updateCallStatus(
  * Get records by status
  */
 export async function getRecordsByStatus(status: CallStatus): Promise<CallRecord[]> {
-  if (!isSupabaseConfigured || !supabase) {
+  const db = getDb();
+  if (!db) {
     const records = localStorage.getRecordsByStatus(status);
     return records.map(convertLocalStorageRecord);
   }
 
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('call_records')
     .select('*')
     .eq('status', status)
@@ -247,11 +266,12 @@ export async function getRecordsByStatus(status: CallStatus): Promise<CallRecord
  * Get campaign statistics
  */
 export async function getCampaignStats(): Promise<CampaignStats> {
-  if (!isSupabaseConfigured || !supabase) {
+  const db = getDb();
+  if (!db) {
     return localStorage.getCampaignStats();
   }
 
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('call_records')
     .select('status, duration_seconds');
 
@@ -342,12 +362,13 @@ export async function getCampaignStats(): Promise<CampaignStats> {
  * Delete a call record
  */
 export async function deleteCallRecord(practitionerId: string): Promise<boolean> {
-  if (!isSupabaseConfigured || !supabase) {
+  const db = getDb();
+  if (!db) {
     // No delete in localStorage implementation, but we can clear it
     return false;
   }
 
-  const { error } = await supabase
+  const { error } = await db
     .from('call_records')
     .delete()
     .eq('practitioner_id', practitionerId);
@@ -364,12 +385,13 @@ export async function deleteCallRecord(practitionerId: string): Promise<boolean>
  * Clear all call records
  */
 export async function clearAllRecords(): Promise<void> {
-  if (!isSupabaseConfigured || !supabase) {
+  const db = getDb();
+  if (!db) {
     localStorage.clearAllRecords();
     return;
   }
 
-  const { error } = await supabase
+  const { error } = await db
     .from('call_records')
     .delete()
     .neq('id', '00000000-0000-0000-0000-000000000000'); // Delete all
