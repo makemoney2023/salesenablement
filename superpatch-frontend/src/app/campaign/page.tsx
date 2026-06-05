@@ -59,6 +59,7 @@ import {
 import { CommandSearch, useCommandSearch, CommandSearchTrigger } from "@/components/campaign/command-search";
 import { callNotifications } from "@/components/campaign/call-notifications";
 import { getBatchCaller, Practitioner, BatchCallerEvent } from "@/lib/batch-caller";
+import { applyListFilters } from "@/lib/campaign-filters";
 import { PractitionerDetailDrawer } from "@/components/campaign/practitioner-detail-drawer";
 import { CallTimeline } from "@/components/campaign/call-timeline";
 import { 
@@ -543,6 +544,12 @@ function CampaignPageContent() {
     if (showDNCOnly) {
       result = result.filter(p => p.do_not_call === true);
     }
+    // Website + call-status filters (pure helper so they stay unit-tested)
+    result = applyListFilters(result, {
+      hasWebsiteOnly,
+      callStatusFilter,
+      callRecords,
+    });
 
     // Apply sorting
     if (sortState.column && sortState.direction) {
@@ -638,7 +645,7 @@ function CampaignPageContent() {
     }
     
     return result;
-  }, [practitioners, hasEnrichment, hasEmails, hasTeamMembers, isMultilingual, showUserAddedOnly, hideDNC, showDNCOnly, sortState, callRecords]);
+  }, [practitioners, hasEnrichment, hasEmails, hasTeamMembers, isMultilingual, showUserAddedOnly, hideDNC, showDNCOnly, hasWebsiteOnly, callStatusFilter, sortState, callRecords]);
 
   // Virtual list setup
   const rowVirtualizer = useVirtualizer({
