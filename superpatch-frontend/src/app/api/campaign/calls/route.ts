@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiAuth } from "@/lib/auth";
+import { sanitizeApiError } from "@/lib/api-errors";
 import { CreateCallRecordSchema, UpdateCallRecordSchema, validateBody } from "@/lib/validation";
 import {
   getAllCallRecords,
@@ -77,7 +78,7 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error("Failed to get campaign calls:", error);
     return NextResponse.json(
-      { status: "error", message: String(error) },
+      sanitizeApiError(error, { code: "campaign_get_failed" }),
       { status: 500 }
     );
   }
@@ -148,7 +149,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("Failed to save campaign call:", error);
     return NextResponse.json(
-      { status: "error", message: String(error) },
+      sanitizeApiError(error, { code: "campaign_save_failed" }),
       { status: 500 }
     );
   }
@@ -186,7 +187,7 @@ export async function PATCH(request: NextRequest) {
   } catch (error) {
     console.error("Failed to update campaign call:", error);
     return NextResponse.json(
-      { status: "error", message: String(error) },
+      sanitizeApiError(error, { code: "campaign_update_failed" }),
       { status: 500 }
     );
   }
@@ -224,7 +225,7 @@ export async function DELETE(request: NextRequest) {
   } catch (error) {
     console.error("Failed to delete campaign call:", error);
     return NextResponse.json(
-      { status: "error", message: String(error) },
+      sanitizeApiError(error, { code: "campaign_delete_failed" }),
       { status: 500 }
     );
   }

@@ -83,6 +83,21 @@ export const CreatePractitionerSchema = z.object({
   notes: z.string().max(5000).optional(),
 });
 
+// Editable practitioner fields for the detail-drawer Edit action. Only these
+// fields may be updated via PATCH /api/practitioners/[id]; nulls clear a value.
+export const UpdatePractitionerSchema = z
+  .object({
+    name: z.string().min(1).max(500).optional(),
+    phone: z.string().max(20).nullable().optional(),
+    address: z.string().max(500).nullable().optional(),
+    city: z.string().max(200).nullable().optional(),
+    province: z.string().max(200).nullable().optional(),
+    website: z.string().max(500).nullable().optional(),
+  })
+  .refine((data) => Object.keys(data).length > 0, {
+    message: "At least one field is required",
+  });
+
 // ---- DNC Schemas ----
 
 export const DNCMarkSchema = z.object({

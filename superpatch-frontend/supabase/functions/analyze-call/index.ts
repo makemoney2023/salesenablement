@@ -9,6 +9,7 @@ import {
   pathwaySuggestionsKey,
   pathwaySummaryFor,
 } from "../_shared/practitioner-type.ts";
+import { sanitizeError } from "../_shared/sanitize-error.ts";
 
 // Environment variables
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
@@ -647,8 +648,10 @@ serve(async (req) => {
       // Ignore
     }
     
+    // Log full error server-side; ship sanitized {code, message} only.
+    console.error("analyze-call: returning 500", error instanceof Error ? error.message : String(error));
     return new Response(
-      JSON.stringify({ error: String(error) }),
+      JSON.stringify(sanitizeError(error, { code: "analyze_call_failed" })),
       {
         status: 500,
         headers: {

@@ -12,6 +12,7 @@ import {
 } from "../_shared/pathways.ts";
 import { incrementRetry, IncrementRetryError } from "./retry.ts";
 import { isWithinBusinessHours as isBizHours } from "./business-hours.ts";
+import { redactName, redactPhone } from "../_shared/redact.ts";
 
 function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 30000): Promise<Response> {
   const controller = new AbortController();
@@ -164,7 +165,7 @@ async function initiateCall(practitioner: RetryQueueEntry): Promise<CallResult> 
   }
 
   try {
-    console.log(`[RetryQueue] Initiating call to ${practitioner.name} (${practitioner.phone})`);
+    console.log(`[RetryQueue] Initiating call to ${redactName(practitioner.name)} (${redactPhone(practitioner.phone)})`);
     console.log(`   Retry #${practitioner.retry_count}, Reason: ${practitioner.retry_reason}`);
 
     const response = await fetchWithTimeout(`${BLAND_API_URL}/calls`, {
@@ -179,7 +180,9 @@ async function initiateCall(practitioner: RetryQueueEntry): Promise<CallResult> 
     const data = await response.json();
 
     if (!response.ok) {
-      console.error(`[RetryQueue] Call failed for ${practitioner.name}:`, data);
+      console.error(
+        `[RetryQueue] Call failed for ${redactName(practitioner.name)}: status=${response.status} msg=${data?.message ?? "unknown"}`,
+      );
       return {
         practitioner_id: practitioner.id,
         success: false,
@@ -187,14 +190,14 @@ async function initiateCall(practitioner: RetryQueueEntry): Promise<CallResult> 
       };
     }
 
-    console.log(`[RetryQueue] ✅ Call initiated for ${practitioner.name}, call_id: ${data.call_id}`);
+    console.log(`[RetryQueue] ✅ Call initiated for ${redactName(practitioner.name)}, call_id: ${data.call_id}`);
     return {
       practitioner_id: practitioner.id,
       success: true,
       call_id: data.call_id,
     };
   } catch (error) {
-    console.error(`[RetryQueue] Error initiating call for ${practitioner.name}:`, error);
+    console.error(`[RetryQueue] Error initiating call for ${redactName(practitioner.name)}:`, error instanceof Error ? error.message : String(error));
     return {
       practitioner_id: practitioner.id,
       success: false,

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiAuth } from "@/lib/auth";
+import { sanitizeApiError } from "@/lib/api-errors";
 import { CreateNoteSchema, UpdateNoteSchema, validateBody } from "@/lib/validation";
 import {
   getNotesForCall,
@@ -45,7 +46,7 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error("Failed to get notes:", error);
     return NextResponse.json(
-      { status: "error", message: String(error) },
+      sanitizeApiError(error, { code: "notes_get_failed" }),
       { status: 500 }
     );
   }
@@ -86,7 +87,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("Failed to create note:", error);
     return NextResponse.json(
-      { status: "error", message: String(error) },
+      sanitizeApiError(error, { code: "notes_create_failed" }),
       { status: 500 }
     );
   }
@@ -123,7 +124,7 @@ export async function PATCH(request: NextRequest) {
   } catch (error) {
     console.error("Failed to update note:", error);
     return NextResponse.json(
-      { status: "error", message: String(error) },
+      sanitizeApiError(error, { code: "notes_update_failed" }),
       { status: 500 }
     );
   }
@@ -161,7 +162,7 @@ export async function DELETE(request: NextRequest) {
   } catch (error) {
     console.error("Failed to delete note:", error);
     return NextResponse.json(
-      { status: "error", message: String(error) },
+      sanitizeApiError(error, { code: "notes_delete_failed" }),
       { status: 500 }
     );
   }

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiAuth } from "@/lib/auth";
+import { sanitizeApiError } from "@/lib/api-errors";
 import { MemoryActionSchema, validateBody } from "@/lib/validation";
 import { supabaseAdmin, isSupabaseConfigured } from "@/lib/supabase";
 import { sanitizeSearchInput } from "@/lib/security";
@@ -94,7 +95,7 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error("Memory API error:", error);
     return NextResponse.json(
-      { status: "error", message: String(error) },
+      sanitizeApiError(error, { code: "memory_query_failed" }),
       { status: 500 }
     );
   }
@@ -270,7 +271,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("Memory POST error:", error);
     return NextResponse.json(
-      { status: "error", message: String(error) },
+      sanitizeApiError(error, { code: "memory_action_failed" }),
       { status: 500 }
     );
   }

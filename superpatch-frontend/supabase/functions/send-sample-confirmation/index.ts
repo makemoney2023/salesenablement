@@ -4,6 +4,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { redactEmail, redactName } from "../_shared/redact.ts";
 
 function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 30000): Promise<Response> {
   const controller = new AbortController();
@@ -259,8 +260,8 @@ serve(async (req) => {
 
     console.log("📋 Confirmation request:", {
       sample_request_id: body.sample_request_id,
-      practitioner_name: body.practitioner_name,
-      email: body.email,
+      practitioner_name: redactName(body.practitioner_name),
+      email: redactEmail(body.email),
     });
 
     // Validate required fields
@@ -304,7 +305,15 @@ serve(async (req) => {
     // Send email
     const emailResult = await sendEmail(body.email, subject, html, text);
 
-    console.log("✅ Email sent:", emailResult);
+    // Log only the Resend message id; the rest of the result includes
+    // the recipient address and other metadata we don't want to ship to
+    // logs in cleartext.
+    console.log(
+      "✅ Email sent:",
+      emailResult && typeof emailResult === "object" && "id" in emailResult
+        ? { id: (emailResult as { id?: string }).id ?? "[no-id]" }
+        : "[no-result-shape]",
+    );
 
     // Update sample request
     await updateSampleRequest(supabase, body.sample_request_id);

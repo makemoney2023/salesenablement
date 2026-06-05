@@ -6,6 +6,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { createCalBooking, CalError, type CalBookingResult } from "../_shared/cal.ts";
 import { appendNoteLine } from "../_shared/notes.ts";
+import { redactName } from "../_shared/redact.ts";
 import { buildNotesUpdate } from "./notes.ts";
 import { buildBookingResponse } from "./response.ts";
 
@@ -73,7 +74,7 @@ async function bookCalComAppointment(data: BookingRequest): Promise<CalBookingRe
   console.log("📅 Cal.com v2 booking payload:", {
     eventTypeId: bookingPayload.eventTypeId,
     start: bookingPayload.start,
-    attendeeName: bookingPayload.attendee.name,
+    attendeeName: redactName(bookingPayload.attendee.name),
     attendeeTimeZone: bookingPayload.attendee.timeZone,
     metadataKeys: Object.keys(bookingPayload.metadata ?? {}),
   });
@@ -236,7 +237,7 @@ serve(async (req) => {
 
     console.log("📋 Booking request:", {
       call_record_id: body.call_record_id,
-      practitioner_name: body.practitioner_name,
+      practitioner_name: redactName(body.practitioner_name),
       appointment_time: body.appointment_time,
     });
 

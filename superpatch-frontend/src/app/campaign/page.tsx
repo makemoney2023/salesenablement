@@ -2369,6 +2369,25 @@ function CampaignPageContent() {
         open={detailDrawerOpen}
         onOpenChange={setDetailDrawerOpen}
         onCallStarted={handleCallStarted}
+        onQueued={() => {
+          loadCallRecords();
+          setQueueDrawerOpen(true);
+        }}
+        onPractitionerUpdated={(updated) => {
+          setPractitioners((prev) =>
+            prev.map((p) =>
+              p.id === updated.id ? ({ ...p, ...updated } as PractitionerData) : p
+            )
+          );
+          setSelectedPractitioner((prev) =>
+            prev && prev.id === updated.id
+              ? ({ ...prev, ...updated } as PractitionerData)
+              : prev
+          );
+        }}
+        onPractitionerDeleted={(id) => {
+          setPractitioners((prev) => prev.filter((p) => p.id !== id));
+        }}
       />
 
       {/* Global Command Search */}

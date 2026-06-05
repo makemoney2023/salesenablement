@@ -12,6 +12,8 @@ import { buildProductsRequested, classifySampleType } from "./sample-type.ts";
 import { verifyRequestAuth } from "./auth-gate.ts";
 import { dispatchEdgeFunction } from "./dispatch.ts";
 import { decideIdempotency } from "./idempotency.ts";
+import { redactName, redactPhone, redactPii } from "../_shared/redact.ts";
+import { sanitizeError } from "../_shared/sanitize-error.ts";
 
 // Environment variables
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
@@ -235,7 +237,7 @@ async function findPractitionerById(
       console.log(`📍 No practitioner found for ID: ${practitionerId}`);
       return null;
     }
-    console.log(`📍 Found practitioner by ID: ${data.name}`);
+    console.log(`📍 Found practitioner by ID: ${redactName(data.name)}`);
     return data as PractitionerLookup;
   } catch (error) {
     console.error("Error looking up practitioner by ID:", error);
@@ -258,7 +260,7 @@ async function findPractitionerByPhone(
       .single();
     
     if (!exactError && exactMatch) {
-      console.log(`📍 Found practitioner by exact phone: ${exactMatch.name}`);
+      console.log(`📍 Found practitioner by exact phone: ${redactName(exactMatch.name)}`);
       return exactMatch as PractitionerLookup;
     }
     
@@ -271,13 +273,13 @@ async function findPractitionerByPhone(
     if (partialMatches) {
       for (const p of partialMatches as PractitionerLookup[]) {
         if (p.phone && normalizePhone(p.phone) === normalizedPhone) {
-          console.log(`📍 Found practitioner by normalized phone: ${p.name}`);
+          console.log(`📍 Found practitioner by normalized phone: ${redactName(p.name)}`);
           return p;
         }
       }
     }
     
-    console.log(`📍 No practitioner found for phone: ${phone}`);
+    console.log(`📍 No practitioner found for phone: ${redactPhone(phone)}`);
     return null;
   } catch (error) {
     console.error("Error looking up practitioner by phone:", error);
@@ -926,7 +928,7 @@ serve(async (req) => {
     console.log("📞 Received Bland webhook:", {
       call_id: payload.call_id,
       status: payload.status,
-      to: payload.to,
+      to: redactPhone(payload.to),
       completed: payload.completed,
       call_length: payload.call_length,
       answered_by: payload.answered_by,
@@ -1042,9 +1044,10 @@ serve(async (req) => {
     const productsInterested = vars.products_interested || vars.sample_products || vars.products_requested || vars.products;
     const practitionerId = meta.practitioner_id || vars.practitioner_id;
 
-    // Extract qualification data
+    // Extract qualification data. Logged via redactPii so emails, contact
+    // names, callback strings, etc. don't ship to Supabase logs in cleartext.
     const qualificationData = extractQualificationData(vars, meta as Record<string, string | undefined>);
-    console.log("📊 Extracted qualification data:", qualificationData);
+    console.log("📊 Extracted qualification data:", redactPii(qualificationData));
 
     // Parse appointment time with LLM fallback for natural language dates
     let parsedAppointmentTime: string | null = null;
@@ -1060,9 +1063,11 @@ serve(async (req) => {
         // Will fall through to LLM parsing
       }
 
-      // If native parsing failed, try LLM parsing
+      // If native parsing failed, try LLM parsing. Don't log the raw
+      // appointmentTime string verbatim — it can contain caller names or
+      // free-form context from the transcript.
       if (!parsedAppointmentTime) {
-        console.log(`🔄 Attempting LLM date parsing for: "${appointmentTime}"`);
+        console.log(`🔄 Attempting LLM date parsing for string of length ${appointmentTime.length}`);
         parsedAppointmentTime = await parseNaturalLanguageDate(appointmentTime);
       }
     }
@@ -1089,7 +1094,7 @@ serve(async (req) => {
         resolvedAddress = resolvedAddress || knownPractitioner.address || undefined;
         resolvedCity = resolvedCity || knownPractitioner.city || undefined;
         resolvedProvince = resolvedProvince || knownPractitioner.province || undefined;
-        console.log(`✅ Resolved known practitioner: ${knownPractitioner.name} (email: ${resolvedEmail || "none"})`);
+        console.log(`✅ Resolved known practitioner: ${redactName(knownPractitioner.name)} (email: ${resolvedEmail ? "[present]" : "none"})`);
       } else {
         console.warn(`⚠️ Practitioner ID ${resolvedPractitionerId} from metadata not found in DB`);
       }
@@ -1104,7 +1109,7 @@ serve(async (req) => {
         resolvedCity = resolvedCity || foundPractitioner.city || undefined;
         resolvedProvince = resolvedProvince || foundPractitioner.province || undefined;
         resolvedEmail = getPractitionerEmail(foundPractitioner, vars.email || vars.practitioner_email, meta.clinic_email);
-        console.log(`✅ Linked call to practitioner: ${foundPractitioner.name}`);
+        console.log(`✅ Linked call to practitioner: ${redactName(foundPractitioner.name)}`);
       } else {
         // Path C: Unknown caller — use metadata and AI-extracted vars
         resolvedPractitionerId = undefined;
@@ -1128,7 +1133,7 @@ serve(async (req) => {
           || sanitizeTranscribedEmail(vars.email)
           || sanitizeTranscribedEmail(vars.practitioner_email)
           || undefined;
-        console.log(`📝 Recording call from unknown number: ${payload.to}`);
+        console.log(`📝 Recording call from unknown number: ${redactPhone(payload.to)}`);
       }
     }
 
@@ -1585,9 +1590,13 @@ serve(async (req) => {
       }
     );
   } catch (error) {
-    console.error("❌ Webhook error:", error);
+    // Log the full error server-side; ship only a sanitized
+    // {code, message} to the caller so we don't leak Postgres errors,
+    // stack traces, internal hostnames, or signature verification
+    // detail into a 500 response body.
+    console.error("❌ Webhook error:", error instanceof Error ? error.message : String(error));
     return new Response(
-      JSON.stringify({ status: "error", message: String(error) }),
+      JSON.stringify({ status: "error", ...sanitizeError(error, { code: "webhook_processing_failed" }) }),
       {
         status: 500,
         headers: {
