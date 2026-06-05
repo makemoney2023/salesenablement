@@ -3,8 +3,6 @@ import { requireApiAuth } from "@/lib/auth";
 import { ImportPractitionersSchema, validateBody } from "@/lib/validation";
 import { supabaseAdmin, isSupabaseConfigured } from "@/lib/supabase";
 
-const FIRECRAWL_API_KEY = process.env.FIRECRAWL_API_KEY || "";
-
 // Enrichment data structure (matches hook's EnrichmentData)
 interface EnrichmentData {
   practitioners: Array<{ name: string; credentials: string }>;
@@ -97,39 +95,51 @@ async function checkExisting(
   }
 }
 
-// Async enrichment helper - calls enrich API for each practitioner
-async function enrichPractitionersAsync(practitioners: SearchResultPractitioner[]): Promise<void> {
-  for (const practitioner of practitioners) {
-    if (!practitioner.website) continue;
+// Auto-enrichment helper — dispatches the enrich-practitioners-v2 Supabase
+// Edge Function with a service-role bearer. The previous implementation did a
+// server-side fetch to the cookie-protected /api/search/enrich route, which
+// had no session and returned 401, so enrichment silently never ran. The Edge
+// Function is the canonical enrichment path and owns the Firecrawl logic +
+// key, so we hand it the imported IDs and let it batch-enrich.
+async function enrichPractitionersAsync(practitionerIds: string[]): Promise<void> {
+  if (practitionerIds.length === 0) return;
 
-    try {
-      // Use internal fetch for local, or construct URL for deployed
-      const baseUrl = process.env.VERCEL_URL 
-        ? `https://${process.env.VERCEL_URL}`
-        : process.env.NEXT_PUBLIC_VERCEL_URL
-          ? `https://${process.env.NEXT_PUBLIC_VERCEL_URL}`
-          : "http://localhost:3000";
-      
-      const response = await fetch(`${baseUrl}/api/search/enrich`, {
+  const supabaseUrl =
+    process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+
+  if (!supabaseUrl || !serviceKey) {
+    console.warn(
+      "[Import API] Skipping auto-enrich: Supabase URL or service role key not configured"
+    );
+    return;
+  }
+
+  try {
+    const response = await fetch(
+      `${supabaseUrl}/functions/v1/enrich-practitioners-v2`,
+      {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          practitionerId: practitioner.id,
-          websiteUrl: practitioner.website,
-        }),
-      });
-
-      if (response.ok) {
-        console.log(`[Import API] Async enrichment completed for ${practitioner.name}`);
-      } else {
-        console.warn(`[Import API] Async enrichment failed for ${practitioner.name}: ${response.status}`);
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${serviceKey}`,
+          apikey: serviceKey,
+        },
+        body: JSON.stringify({ practitionerIds }),
       }
-    } catch (err) {
-      console.error(`[Import API] Async enrichment error for ${practitioner.name}:`, err);
-    }
+    );
 
-    // Small delay between requests to avoid rate limiting
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    if (response.ok) {
+      console.log(
+        `[Import API] Auto-enrichment dispatched for ${practitionerIds.length} practitioners`
+      );
+    } else {
+      console.warn(
+        `[Import API] Auto-enrichment Edge Function failed: ${response.status}`
+      );
+    }
+  } catch (err) {
+    console.error("[Import API] Auto-enrichment error:", err);
   }
 }
 
@@ -263,11 +273,11 @@ export async function POST(request: NextRequest) {
         (p) => p.website && !p.enrichmentData && result.importedIds.includes(p.id)
       );
 
-      if (needsEnrichment.length > 0 && FIRECRAWL_API_KEY) {
+      if (needsEnrichment.length > 0) {
         console.log(`[Import API] Auto-enriching ${needsEnrichment.length} practitioners with websites`);
-        
+
         // Fire async enrichment (non-blocking) - don't await
-        enrichPractitionersAsync(needsEnrichment).catch((err) => {
+        enrichPractitionersAsync(needsEnrichment.map((p) => p.id)).catch((err) => {
           console.error("[Import API] Async enrichment error:", err);
         });
       }
