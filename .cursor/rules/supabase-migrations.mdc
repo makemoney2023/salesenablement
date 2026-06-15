@@ -20,12 +20,14 @@ This rule covers the **migration command workflow only**. Complementary rules:
 - **Schema snapshot**: `superpatch-frontend/supabase/schema.sql`
 - **Types mirror**: `superpatch-frontend/src/lib/db/types.ts`
 
-File naming: `YYYYMMDD_short_description.sql` (date-prefixed, snake_case, single purpose). Example: `20260421_disable_book_appointment_trigger.sql`.
+File naming: `YYYYMMDDHHMMSS_short_description.sql` (full 14-digit UTC timestamp, snake_case, single purpose). Example: `20260601000002_tighten_rls_to_active_profiles.sql`.
+
+> **Use the full 14-digit timestamp, never a date-only (`YYYYMMDD`) prefix.** The remote `supabase_migrations.schema_migrations` table keys on the version (the numeric prefix). Two migrations authored on the same day with a date-only prefix produce the **same version** → `db push` fails with a duplicate primary-key error, and the CLI's positional history diff conflates the colliding prefixes (`Remote migration versions not found in local migrations directory`). The repo's older files use `YYYYMMDD`; do not add more. If you must apply a date-only file that collides, rename it to a unique 14-digit version before pushing. Generate a fresh timestamp with `date -u +%Y%m%d%H%M%S`.
 
 ## Quick Checklist
 
 1. Read the most recent 3-5 files in `superpatch-frontend/supabase/migrations/` before writing a new one — match their style and naming.
-2. Create `superpatch-frontend/supabase/migrations/YYYYMMDD_<name>.sql` with a single focused change, wrapped with `IF EXISTS` / `IF NOT EXISTS` where possible.
+2. Create `superpatch-frontend/supabase/migrations/<YYYYMMDDHHMMSS>_<name>.sql` (full 14-digit timestamp from `date -u +%Y%m%d%H%M%S`) with a single focused change, wrapped with `IF EXISTS` / `IF NOT EXISTS` where possible.
 3. Include a header comment: purpose, why, which Edge Function or frontend path depends on it, and rollback note.
 4. Apply with `supabase db push` from `superpatch-frontend/` (project is linked via `supabase/config.toml`).
 5. Update `superpatch-frontend/supabase/schema.sql` if the change is structural (tables, columns, indexes, constraints).
@@ -35,6 +37,7 @@ File naming: `YYYYMMDD_short_description.sql` (date-prefixed, snake_case, single
 
 ## Never do this
 
+- Never use a date-only (`YYYYMMDD`) version prefix; always use the full 14-digit timestamp so same-day migrations can't collide on the `schema_migrations` version key.
 - Never edit an already-applied migration file; write a new one that supersedes it.
 - Never commit auto-generated `supabase/migrations/` copies under the repo root; the canonical path is `superpatch-frontend/supabase/migrations/`.
 - Never bypass `db push` by running ad-hoc SQL in the Supabase Studio; migrations must be source-controlled.
