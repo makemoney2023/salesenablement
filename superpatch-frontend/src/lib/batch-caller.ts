@@ -8,9 +8,11 @@ import {
   createCallRecord,
   getCallRecord,
   updateCallStatus,
+  syncCallRecordToSupabase,
   getCampaignQueueState,
   saveCampaignQueueState,
   removeFromQueue,
+  type CampaignCallRecord,
 } from './campaign-storage';
 import {
   KB_ID,
@@ -166,6 +168,49 @@ export class BatchCaller {
   }
 
   /**
+   * Propagate a localStorage status change to Supabase so the campaign UI
+   * (which reads from Supabase via useSupabaseCallRecords) reflects live
+   * queue / active / completed state during a campaign.
+   *
+   * Uses PATCH (update by practitioner_id) to update the row that
+   * createCallRecord already synced, avoiding the duplicate rows a blind
+   * POST-upsert would create once a call_id is attached. Falls back to POST
+   * (create) if the row does not exist yet. Fire-and-forget: a sync failure
+   * must never abort the campaign.
+   */
+  private syncStatusToSupabase(record: CampaignCallRecord | null): void {
+    if (!record || typeof fetch === 'undefined') return;
+    void (async () => {
+      try {
+        const res = await fetch('/api/campaign/calls', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            practitioner_id: record.practitioner_id,
+            status: record.status,
+            call_id: record.call_id,
+            call_started_at: record.call_started_at,
+            call_ended_at: record.call_ended_at,
+            duration_seconds: record.duration_seconds,
+            transcript: record.transcript,
+          }),
+        });
+        if (!res.ok) {
+          // Row may not exist yet (createCallRecord sync still in flight) —
+          // create it so the status is not lost.
+          await syncCallRecordToSupabase(record);
+        }
+      } catch (err) {
+        console.error(
+          '[batch-caller] status sync to Supabase failed for',
+          record.practitioner_id,
+          err,
+        );
+      }
+    })();
+  }
+
+  /**
    * Set delay between calls (in milliseconds)
    */
   setDelayBetweenCalls(ms: number) {
@@ -177,6 +222,15 @@ export class BatchCaller {
    * Make a single call to a practitioner
    */
   async makeCall(practitioner: Practitioner): Promise<CallResult> {
+    // Never dial a practitioner on the Do Not Call list.
+    if (practitioner.do_not_call === true) {
+      return {
+        success: false,
+        error: 'do_not_call',
+        practitioner_id: practitioner.id,
+      };
+    }
+
     const phone = formatPhoneNumber(practitioner.phone || '');
 
     if (!phone) {
@@ -295,10 +349,11 @@ export class BatchCaller {
 
       if (result.status === 'success' && result.call_id) {
         // Update record with call_id and status
-        updateCallStatus(practitioner.id, 'in_progress', {
+        const updated = updateCallStatus(practitioner.id, 'in_progress', {
           call_id: result.call_id,
           call_started_at: new Date().toISOString(),
         });
+        this.syncStatusToSupabase(updated);
 
         return {
           success: true,
@@ -306,9 +361,10 @@ export class BatchCaller {
           practitioner_id: practitioner.id,
         };
       } else {
-        updateCallStatus(practitioner.id, 'failed', {
+        const updated = updateCallStatus(practitioner.id, 'failed', {
           notes: result.message || 'Call initiation failed',
         });
+        this.syncStatusToSupabase(updated);
 
         return {
           success: false,
@@ -319,9 +375,10 @@ export class BatchCaller {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       
-      updateCallStatus(practitioner.id, 'failed', {
+      const updated = updateCallStatus(practitioner.id, 'failed', {
         notes: errorMessage,
       });
+      this.syncStatusToSupabase(updated);
 
       return {
         success: false,
@@ -363,7 +420,8 @@ export class BatchCaller {
         });
       }
       if (record.status === 'not_called') {
-        updateCallStatus(practitioner.id, 'queued');
+        const updated = updateCallStatus(practitioner.id, 'queued');
+        this.syncStatusToSupabase(updated);
       }
     }
 
@@ -389,6 +447,18 @@ export class BatchCaller {
       }
 
       if (!practitioner.phone) {
+        continue;
+      }
+
+      // Never dial Do Not Call practitioners — skip without delaying.
+      if (practitioner.do_not_call === true) {
+        this.emit({
+          type: 'call_failed',
+          practitioner_id: practitioner.id,
+          error: 'do_not_call',
+          remaining: practitioners.length - i - 1,
+        });
+        removeFromQueue(practitioner.id);
         continue;
       }
 
@@ -500,11 +570,12 @@ export class BatchCaller {
               status = 'booked';
             }
 
-            updateCallStatus(record.practitioner_id, status, {
+            const updated = updateCallStatus(record.practitioner_id, status, {
               duration_seconds: callData.call_length,
               transcript: callData.concatenated_transcript,
               call_ended_at: new Date().toISOString(),
             });
+            this.syncStatusToSupabase(updated);
           }
           
           return;

@@ -10,8 +10,10 @@ import {
   DEFAULT_WEBHOOK_URL,
   getPathwayId,
 } from "../_shared/pathways.ts";
-import { incrementRetry, IncrementRetryError } from "./retry.ts";
+import { incrementRetry, IncrementRetryError, shouldProcessManualTrigger } from "./retry.ts";
 import { isWithinBusinessHours as isBizHours } from "./business-hours.ts";
+import { redactName, redactPhone } from "../_shared/redact.ts";
+import { sanitizeError } from "../_shared/sanitize-error.ts";
 
 function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 30000): Promise<Response> {
   const controller = new AbortController();
@@ -164,7 +166,7 @@ async function initiateCall(practitioner: RetryQueueEntry): Promise<CallResult> 
   }
 
   try {
-    console.log(`[RetryQueue] Initiating call to ${practitioner.name} (${practitioner.phone})`);
+    console.log(`[RetryQueue] Initiating call to ${redactName(practitioner.name)} (${redactPhone(practitioner.phone)})`);
     console.log(`   Retry #${practitioner.retry_count}, Reason: ${practitioner.retry_reason}`);
 
     const response = await fetchWithTimeout(`${BLAND_API_URL}/calls`, {
@@ -179,7 +181,9 @@ async function initiateCall(practitioner: RetryQueueEntry): Promise<CallResult> 
     const data = await response.json();
 
     if (!response.ok) {
-      console.error(`[RetryQueue] Call failed for ${practitioner.name}:`, data);
+      console.error(
+        `[RetryQueue] Call failed for ${redactName(practitioner.name)}: status=${response.status} msg=${data?.message ?? "unknown"}`,
+      );
       return {
         practitioner_id: practitioner.id,
         success: false,
@@ -187,14 +191,14 @@ async function initiateCall(practitioner: RetryQueueEntry): Promise<CallResult> 
       };
     }
 
-    console.log(`[RetryQueue] ✅ Call initiated for ${practitioner.name}, call_id: ${data.call_id}`);
+    console.log(`[RetryQueue] ✅ Call initiated for ${redactName(practitioner.name)}, call_id: ${data.call_id}`);
     return {
       practitioner_id: practitioner.id,
       success: true,
       call_id: data.call_id,
     };
   } catch (error) {
-    console.error(`[RetryQueue] Error initiating call for ${practitioner.name}:`, error);
+    console.error(`[RetryQueue] Error initiating call for ${redactName(practitioner.name)}:`, error instanceof Error ? error.message : String(error));
     return {
       practitioner_id: practitioner.id,
       success: false,
@@ -394,7 +398,7 @@ serve(async (req: Request) => {
 
   try {
     // Check if this is a manual trigger with specific IDs
-    let body: { practitionerIds?: string[] } = {};
+    let body: { practitionerIds?: string[]; force?: boolean } = {};
     if (req.method === "POST") {
       try {
         body = await req.json();
@@ -404,12 +408,30 @@ serve(async (req: Request) => {
     }
 
     if (body.practitionerIds && body.practitionerIds.length > 0) {
-      // Manual trigger for specific practitioners
+      // Manual trigger for specific practitioners.
+      // Enforce business hours like the cron path so a manual POST cannot dial
+      // after hours. An explicit { force: true } bypasses the guard for
+      // operator-initiated emergency calls.
+      if (!shouldProcessManualTrigger(body.force, isWithinBusinessHours())) {
+        console.log("[RetryQueue] Manual trigger rejected — outside business hours (pass force:true to override)");
+        return new Response(
+          JSON.stringify({
+            message: "Outside business hours",
+            skipped_reason: "outside_business_hours",
+            processed: 0,
+            successful: 0,
+            failed: 0,
+            results: [],
+          }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
       console.log(`[RetryQueue] Manual trigger for ${body.practitionerIds.length} practitioners`);
 
       const { data: practitioners, error } = await supabase
         .from("practitioners")
-        .select("id, name, phone, practitioner_type, retry_count, next_retry_at, retry_reason, city, province")
+        .select("id, name, phone, practitioner_type, retry_count, next_retry_at, retry_reason, city, province, address, rating, review_count, website")
         .in("id", body.practitionerIds)
         .eq("do_not_call", false)
         .not("phone", "is", null);
@@ -453,7 +475,7 @@ serve(async (req: Request) => {
   } catch (error) {
     console.error("[RetryQueue] Error:", error);
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
+      JSON.stringify(sanitizeError(error, { code: "retry_queue_failed" })),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }

@@ -70,6 +70,8 @@ import {
   getCallRecord,
   createCallRecord,
   saveCallRecord,
+  updateCallStatus,
+  syncCallRecordToSupabase,
 } from "@/lib/campaign-storage";
 import { CallStatus } from "@/lib/db/types";
 import { getBatchCaller, Practitioner } from "@/lib/batch-caller";
@@ -163,6 +165,12 @@ interface PractitionerDetailDrawerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCallStarted?: (callId: string) => void;
+  /** Called after a practitioner is queued so the parent can refresh records. */
+  onQueued?: () => void;
+  /** Called after a practitioner's editable fields are saved. */
+  onPractitionerUpdated?: (practitioner: PractitionerWithEnrichment) => void;
+  /** Called after a practitioner is deleted. */
+  onPractitionerDeleted?: (id: string) => void;
 }
 
 const STATUS_COLORS: Record<CallStatus, string> = {
@@ -192,6 +200,9 @@ export function PractitionerDetailDrawer({
   open,
   onOpenChange,
   onCallStarted,
+  onQueued,
+  onPractitionerUpdated,
+  onPractitionerDeleted,
 }: PractitionerDetailDrawerProps) {
   const [callRecord, setCallRecord] = useState<CampaignCallRecord | null>(null);
   const [notes, setNotes] = useState("");
@@ -226,6 +237,25 @@ export function PractitionerDetailDrawer({
   const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
   const [restoreConfirmed, setRestoreConfirmed] = useState(false);
   const [restoreLoading, setRestoreLoading] = useState(false);
+
+  // Add-to-queue state
+  const [queueLoading, setQueueLoading] = useState(false);
+
+  // Edit dialog state
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editLoading, setEditLoading] = useState(false);
+  const [editForm, setEditForm] = useState({
+    name: "",
+    phone: "",
+    address: "",
+    city: "",
+    province: "",
+    website: "",
+  });
+
+  // Delete dialog state
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
   // Helper to copy email to clipboard
   const copyEmail = async (email: string) => {
@@ -539,6 +569,116 @@ export function PractitionerDetailDrawer({
       toast.error("Failed to restore practitioner");
     }
     setRestoreLoading(false);
+  };
+
+  // Handle adding the practitioner to the call queue (status -> queued)
+  const handleAddToQueue = async () => {
+    if (!practitioner) return;
+    if (practitioner.do_not_call) {
+      toast.error("This practitioner is marked Do Not Call");
+      return;
+    }
+    setQueueLoading(true);
+    try {
+      let record = getCallRecord(practitioner.id);
+      if (!record) {
+        record = createCallRecord({
+          id: practitioner.id,
+          name: practitioner.name,
+          practitioner_type: practitioner.practitioner_type,
+          phone: practitioner.phone || "",
+          address: practitioner.address || "",
+          city: practitioner.city || "",
+          province: practitioner.province || "",
+        });
+      }
+      const queued = updateCallStatus(practitioner.id, "queued");
+      const synced = await syncCallRecordToSupabase(queued ?? record);
+      if (synced) {
+        toast.success(`${practitioner.name} added to queue`);
+        onQueued?.();
+      } else {
+        toast.error("Added locally but failed to sync to the queue");
+      }
+    } catch (error) {
+      console.error("Error adding to queue:", error);
+      toast.error("Failed to add to queue");
+    }
+    setQueueLoading(false);
+  };
+
+  // Open the edit dialog, prefilling the current values
+  const openEditDialog = () => {
+    if (!practitioner) return;
+    setEditForm({
+      name: practitioner.name ?? "",
+      phone: practitioner.phone ?? "",
+      address: practitioner.address ?? "",
+      city: practitioner.city ?? "",
+      province: practitioner.province ?? "",
+      website: practitioner.website ?? "",
+    });
+    setEditDialogOpen(true);
+  };
+
+  // Handle saving edited practitioner fields
+  const handleEditSave = async () => {
+    if (!practitioner) return;
+    if (!editForm.name.trim()) {
+      toast.error("Name is required");
+      return;
+    }
+    setEditLoading(true);
+    try {
+      const response = await fetch(`/api/practitioners/${practitioner.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: editForm.name.trim(),
+          phone: editForm.phone.trim() || null,
+          address: editForm.address.trim() || null,
+          city: editForm.city.trim() || null,
+          province: editForm.province.trim() || null,
+          website: editForm.website.trim() || null,
+        }),
+      });
+      const result = await response.json();
+      if (response.ok && result.status === "success") {
+        toast.success("Practitioner updated");
+        setEditDialogOpen(false);
+        onPractitionerUpdated?.({ ...practitioner, ...result.data });
+      } else {
+        toast.error(result.message || "Failed to update practitioner");
+      }
+    } catch (error) {
+      console.error("Error updating practitioner:", error);
+      toast.error("Failed to update practitioner");
+    }
+    setEditLoading(false);
+  };
+
+  // Handle deleting the practitioner
+  const handleDelete = async () => {
+    if (!practitioner) return;
+    setDeleteLoading(true);
+    try {
+      const response = await fetch(`/api/practitioners/${practitioner.id}`, {
+        method: "DELETE",
+      });
+      const result = await response.json();
+      if (response.ok && result.status === "success") {
+        toast.success("Practitioner deleted");
+        setDeleteDialogOpen(false);
+        onPractitionerDeleted?.(practitioner.id);
+        onOpenChange(false);
+      } else {
+        toast.error(result.message || "Failed to delete practitioner");
+      }
+    } catch (error) {
+      console.error("Error deleting practitioner:", error);
+      toast.error("Failed to delete practitioner");
+    }
+    setDeleteLoading(false);
   };
 
   if (!practitioner) return null;
@@ -1307,9 +1447,8 @@ export function PractitionerDetailDrawer({
                   <DropdownMenuSeparator />
                   
                   <DropdownMenuItem
-                    onClick={() => {
-                      toast.error("Feature not yet implemented");
-                    }}
+                    disabled={queueLoading}
+                    onClick={handleAddToQueue}
                   >
                     <UserPlus className="w-4 h-4 mr-2" />
                     Add to Queue
@@ -1338,11 +1477,7 @@ export function PractitionerDetailDrawer({
                   
                   <DropdownMenuSeparator />
                   
-                  <DropdownMenuItem
-                    onClick={() => {
-                      toast.error("Feature not yet implemented");
-                    }}
-                  >
+                  <DropdownMenuItem onClick={openEditDialog}>
                     <Edit className="w-4 h-4 mr-2" />
                     Edit Practitioner
                   </DropdownMenuItem>
@@ -1406,9 +1541,7 @@ export function PractitionerDetailDrawer({
 
                   <DropdownMenuItem
                     className="text-red-600 focus:text-red-600"
-                    onClick={() => {
-                      toast.error("Delete not yet implemented");
-                    }}
+                    onClick={() => setDeleteDialogOpen(true)}
                   >
                     <Trash2 className="w-4 h-4 mr-2" />
                     Delete Practitioner
@@ -1524,6 +1657,116 @@ export function PractitionerDetailDrawer({
                   </>
                 ) : (
                   "Restore to Active"
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Edit Practitioner Dialog */}
+        <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Edit Practitioner</DialogTitle>
+              <DialogDescription>
+                Update contact details for {practitioner.name}.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="py-4 space-y-3">
+              <div className="space-y-1">
+                <Label htmlFor="edit-name">Name</Label>
+                <Input
+                  id="edit-name"
+                  value={editForm.name}
+                  onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="edit-phone">Phone</Label>
+                <Input
+                  id="edit-phone"
+                  value={editForm.phone}
+                  onChange={(e) => setEditForm((f) => ({ ...f, phone: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="edit-address">Address</Label>
+                <Input
+                  id="edit-address"
+                  value={editForm.address}
+                  onChange={(e) => setEditForm((f) => ({ ...f, address: e.target.value }))}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label htmlFor="edit-city">City</Label>
+                  <Input
+                    id="edit-city"
+                    value={editForm.city}
+                    onChange={(e) => setEditForm((f) => ({ ...f, city: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="edit-province">Province</Label>
+                  <Input
+                    id="edit-province"
+                    value={editForm.province}
+                    onChange={(e) => setEditForm((f) => ({ ...f, province: e.target.value }))}
+                  />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="edit-website">Website</Label>
+                <Input
+                  id="edit-website"
+                  value={editForm.website}
+                  onChange={(e) => setEditForm((f) => ({ ...f, website: e.target.value }))}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setEditDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleEditSave} disabled={editLoading}>
+                {editLoading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  "Save Changes"
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Delete Practitioner Dialog */}
+        <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete Practitioner</DialogTitle>
+              <DialogDescription>
+                This permanently removes {practitioner.name} and cannot be undone.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={handleDelete}
+                disabled={deleteLoading}
+              >
+                {deleteLoading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  "Delete"
                 )}
               </Button>
             </DialogFooter>

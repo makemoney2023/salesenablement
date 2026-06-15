@@ -21,3 +21,29 @@ project_id = "gdwwppwaxyvudsecexuq"
 # pipeline (call_records, sample_requests, appointments, follow_up_queue).
 [functions.webhook-processor]
 verify_jwt = false
+
+# Every other function is invoked either by pg_cron / pg_net (which attaches the
+# service-role JWT) or by our Next.js API routes / Edge-to-Edge dispatch (which
+# send the service-role bearer). They have no in-code anonymous auth, so the
+# gateway must enforce a valid JWT. Pin verify_jwt = true explicitly so the
+# default can never silently flip and expose them to anonymous POSTs.
+[functions.book-appointment]
+verify_jwt = true
+
+[functions.process-retry-queue]
+verify_jwt = true
+
+[functions.send-sample-confirmation]
+verify_jwt = true
+
+[functions.analyze-call]
+verify_jwt = true
+
+[functions.sync-cal-bookings]
+verify_jwt = true
+
+[functions.enrich-practitioners-v2]
+verify_jwt = true
+
+[functions.generate-daily-report]
+verify_jwt = true

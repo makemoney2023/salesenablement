@@ -78,6 +78,29 @@ describe('BatchCaller', () => {
     expect(result.error).toContain('Invalid phone number');
   });
 
+  it('never dials a Do Not Call practitioner', async () => {
+    const mockFetch = vi.fn();
+    global.fetch = mockFetch;
+
+    const { getBatchCaller } = await import('@/lib/batch-caller');
+    const caller = getBatchCaller();
+
+    const result = await caller.makeCall({
+      id: 'dnc-id',
+      name: 'Dr. DNC',
+      practitioner_type: 'chiropractor',
+      address: '123 Main St',
+      city: 'Toronto',
+      province: 'ON',
+      phone: '4165551234',
+      do_not_call: true,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('do_not_call');
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
   it('rejects calls with null phone', async () => {
     const { getBatchCaller } = await import('@/lib/batch-caller');
     const caller = getBatchCaller();

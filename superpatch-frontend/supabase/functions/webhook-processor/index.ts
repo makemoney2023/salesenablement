@@ -12,6 +12,10 @@ import { buildProductsRequested, classifySampleType } from "./sample-type.ts";
 import { verifyRequestAuth } from "./auth-gate.ts";
 import { dispatchEdgeFunction } from "./dispatch.ts";
 import { decideIdempotency } from "./idempotency.ts";
+import { detectDNCRequest } from "./dnc.ts";
+import { shouldDispatchBooking, shouldInsertSample } from "./gating.ts";
+import { redactName, redactPhone, redactPii } from "../_shared/redact.ts";
+import { sanitizeError } from "../_shared/sanitize-error.ts";
 
 // Environment variables
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
@@ -124,12 +128,7 @@ const RETRY_POLICY: RetryPolicy = {
   businessHours: { start: 9, end: 17, timezone: Deno.env.get("BUSINESS_TIMEZONE") || "America/Toronto" },
 };
 
-// DNC phrases to detect
-const DNC_PHRASES = [
-  "don't call", "do not call", "stop calling", "remove me", "take me off",
-  "not interested", "never call again", "unsubscribe", "remove my number",
-  "don't contact", "do not contact", "no more calls", "quit calling",
-];
+// DNC phrase list + matcher live in ./dnc.ts (imported above).
 
 // Helper functions
 
@@ -235,7 +234,7 @@ async function findPractitionerById(
       console.log(`📍 No practitioner found for ID: ${practitionerId}`);
       return null;
     }
-    console.log(`📍 Found practitioner by ID: ${data.name}`);
+    console.log(`📍 Found practitioner by ID: ${redactName(data.name)}`);
     return data as PractitionerLookup;
   } catch (error) {
     console.error("Error looking up practitioner by ID:", error);
@@ -258,26 +257,46 @@ async function findPractitionerByPhone(
       .single();
     
     if (!exactError && exactMatch) {
-      console.log(`📍 Found practitioner by exact phone: ${exactMatch.name}`);
+      console.log(`📍 Found practitioner by exact phone: ${redactName(exactMatch.name)}`);
       return exactMatch as PractitionerLookup;
     }
-    
-    const { data: partialMatches } = await supabase
+
+    // DB-side normalized match. The practitioners table has a generated
+    // `phone_normalized` column (last 10 digits) with an index, so we match
+    // across all rows instead of client-scanning only the first 100.
+    const { data: normalizedMatch, error: normalizedError } = await supabase
       .from("practitioners")
       .select("id, name, practitioner_type, address, city, province, phone, contact_email, enrichment")
-      .not("phone", "is", null)
-      .limit(100);
-    
-    if (partialMatches) {
-      for (const p of partialMatches as PractitionerLookup[]) {
-        if (p.phone && normalizePhone(p.phone) === normalizedPhone) {
-          console.log(`📍 Found practitioner by normalized phone: ${p.name}`);
-          return p;
+      .eq("phone_normalized", normalizedPhone)
+      .limit(1)
+      .single();
+
+    if (!normalizedError && normalizedMatch) {
+      console.log(`📍 Found practitioner by normalized phone: ${redactName(normalizedMatch.name)}`);
+      return normalizedMatch as PractitionerLookup;
+    }
+
+    // Fallback for environments where the generated column has not been
+    // migrated yet: scan and normalize client-side (bounded). Skipped once
+    // the migration is applied (the query above will have matched).
+    if (normalizedError && normalizedError.code === "42703") {
+      const { data: partialMatches } = await supabase
+        .from("practitioners")
+        .select("id, name, practitioner_type, address, city, province, phone, contact_email, enrichment")
+        .not("phone", "is", null)
+        .limit(1000);
+
+      if (partialMatches) {
+        for (const p of partialMatches as PractitionerLookup[]) {
+          if (p.phone && normalizePhone(p.phone) === normalizedPhone) {
+            console.log(`📍 Found practitioner by normalized phone (fallback): ${redactName(p.name)}`);
+            return p;
+          }
         }
       }
     }
-    
-    console.log(`📍 No practitioner found for phone: ${phone}`);
+
+    console.log(`📍 No practitioner found for phone: ${redactPhone(phone)}`);
     return null;
   } catch (error) {
     console.error("Error looking up practitioner by phone:", error);
@@ -337,18 +356,6 @@ function calculateLeadScore(
   }
   
   return Math.max(0, Math.min(100, score));
-}
-
-function detectDNCRequest(transcript: string): { detected: boolean; matchedPhrase: string | null } {
-  if (!transcript) return { detected: false, matchedPhrase: null };
-  const lowerTranscript = transcript.toLowerCase();
-  for (const phrase of DNC_PHRASES) {
-    if (lowerTranscript.includes(phrase)) {
-      console.log(`🚫 DNC phrase detected: "${phrase}"`);
-      return { detected: true, matchedPhrase: phrase };
-    }
-  }
-  return { detected: false, matchedPhrase: null };
 }
 
 async function markPractitionerAsDNC(
@@ -926,7 +933,7 @@ serve(async (req) => {
     console.log("📞 Received Bland webhook:", {
       call_id: payload.call_id,
       status: payload.status,
-      to: payload.to,
+      to: redactPhone(payload.to),
       completed: payload.completed,
       call_length: payload.call_length,
       answered_by: payload.answered_by,
@@ -1042,9 +1049,10 @@ serve(async (req) => {
     const productsInterested = vars.products_interested || vars.sample_products || vars.products_requested || vars.products;
     const practitionerId = meta.practitioner_id || vars.practitioner_id;
 
-    // Extract qualification data
+    // Extract qualification data. Logged via redactPii so emails, contact
+    // names, callback strings, etc. don't ship to Supabase logs in cleartext.
     const qualificationData = extractQualificationData(vars, meta as Record<string, string | undefined>);
-    console.log("📊 Extracted qualification data:", qualificationData);
+    console.log("📊 Extracted qualification data:", redactPii(qualificationData));
 
     // Parse appointment time with LLM fallback for natural language dates
     let parsedAppointmentTime: string | null = null;
@@ -1060,9 +1068,11 @@ serve(async (req) => {
         // Will fall through to LLM parsing
       }
 
-      // If native parsing failed, try LLM parsing
+      // If native parsing failed, try LLM parsing. Don't log the raw
+      // appointmentTime string verbatim — it can contain caller names or
+      // free-form context from the transcript.
       if (!parsedAppointmentTime) {
-        console.log(`🔄 Attempting LLM date parsing for: "${appointmentTime}"`);
+        console.log(`🔄 Attempting LLM date parsing for string of length ${appointmentTime.length}`);
         parsedAppointmentTime = await parseNaturalLanguageDate(appointmentTime);
       }
     }
@@ -1089,7 +1099,7 @@ serve(async (req) => {
         resolvedAddress = resolvedAddress || knownPractitioner.address || undefined;
         resolvedCity = resolvedCity || knownPractitioner.city || undefined;
         resolvedProvince = resolvedProvince || knownPractitioner.province || undefined;
-        console.log(`✅ Resolved known practitioner: ${knownPractitioner.name} (email: ${resolvedEmail || "none"})`);
+        console.log(`✅ Resolved known practitioner: ${redactName(knownPractitioner.name)} (email: ${resolvedEmail ? "[present]" : "none"})`);
       } else {
         console.warn(`⚠️ Practitioner ID ${resolvedPractitionerId} from metadata not found in DB`);
       }
@@ -1104,7 +1114,7 @@ serve(async (req) => {
         resolvedCity = resolvedCity || foundPractitioner.city || undefined;
         resolvedProvince = resolvedProvince || foundPractitioner.province || undefined;
         resolvedEmail = getPractitionerEmail(foundPractitioner, vars.email || vars.practitioner_email, meta.clinic_email);
-        console.log(`✅ Linked call to practitioner: ${foundPractitioner.name}`);
+        console.log(`✅ Linked call to practitioner: ${redactName(foundPractitioner.name)}`);
       } else {
         // Path C: Unknown caller — use metadata and AI-extracted vars
         resolvedPractitionerId = undefined;
@@ -1128,7 +1138,7 @@ serve(async (req) => {
           || sanitizeTranscribedEmail(vars.email)
           || sanitizeTranscribedEmail(vars.practitioner_email)
           || undefined;
-        console.log(`📝 Recording call from unknown number: ${payload.to}`);
+        console.log(`📝 Recording call from unknown number: ${redactPhone(payload.to)}`);
       }
     }
 
@@ -1301,6 +1311,15 @@ serve(async (req) => {
       }
     }
 
+    // Check for a DNC request EARLY — before any fulfilment side effects.
+    // A caller who asked to be removed must not receive samples or a booking,
+    // so we compute this up front and gate the sample insert + booking below.
+    const dncResult = detectDNCRequest(payload.concatenated_transcript || "");
+    if (dncResult.detected && resolvedPractitionerId) {
+      console.log(`🚫 DNC request detected - marking as Do Not Call`);
+      await markPractitionerAsDNC(supabase, resolvedPractitionerId, `AI detected phrase: "${dncResult.matchedPhrase}"`, "ai_detected");
+    }
+
     // Track downstream Edge Function dispatch outcomes. Populated by the
     // `dispatchEdgeFunction(...)` calls below (sample email, booking).
     // Surfaced in the final response so partial-pipeline failures are visible
@@ -1316,7 +1335,10 @@ serve(async (req) => {
 
     // Handle sample request (handle both string and boolean values from Bland)
     const wantsSample = toBool(vars.wants_sample) || toBool(vars.sample_requested);
-    if (wantsSample) {
+    if (wantsSample && !shouldInsertSample(wantsSample, dncResult.detected)) {
+      console.log("🚫 Sample request suppressed — caller is on the Do Not Call list.");
+    }
+    if (shouldInsertSample(wantsSample, dncResult.detected)) {
       console.log("📦 Sample request detected...");
       const productsRaw =
         vars.products_interested ||
@@ -1357,13 +1379,41 @@ serve(async (req) => {
         updated_at: new Date().toISOString(),
       };
 
-      const { data: sampleData, error: sampleError } = await supabase
-        .from("sample_requests")
-        .insert(sampleRequest)
-        .select()
-        .single();
+      // Dedup guard: a redelivered webhook (before processed_at is set) or a
+      // concurrent delivery could otherwise create duplicate sample rows.
+      // Skip if a sample already exists for this call record. Backed by a
+      // partial unique index on sample_requests(call_record_id).
+      let existingSampleId: string | null = null;
+      if (savedRecord?.id) {
+        const { data: existingSample } = await supabase
+          .from("sample_requests")
+          .select("id")
+          .eq("call_record_id", savedRecord.id)
+          .limit(1);
+        if (existingSample && existingSample.length > 0) {
+          existingSampleId = existingSample[0].id;
+        }
+      }
 
-      if (sampleError) {
+      let sampleData: { id?: string } | null = null;
+      let sampleError: { message?: string; code?: string } | null = null;
+      if (!existingSampleId) {
+        const inserted = await supabase
+          .from("sample_requests")
+          .insert(sampleRequest)
+          .select()
+          .single();
+        sampleData = inserted.data;
+        sampleError = inserted.error;
+      }
+
+      if (existingSampleId) {
+        console.log("⚠️ Sample request already exists for this call record, skipping duplicate:", existingSampleId);
+      } else if (sampleError?.code === "23505") {
+        // Lost the race against a concurrent delivery — the partial unique
+        // index on sample_requests(call_record_id) did its job. Benign.
+        console.log("⚠️ Sample request already created by a concurrent delivery (unique index), skipping duplicate.");
+      } else if (sampleError) {
         console.error("❌ Failed to create sample request:", sampleError);
       } else {
         console.log("✅ Sample request created:", sampleData?.id);
@@ -1399,27 +1449,30 @@ serve(async (req) => {
           } else {
             console.error(`❌ ${sampleDispatch.reason}`);
             if (sampleData?.id) {
+              // Append, don't overwrite: notes may carry the $200
+              // demo-booking incentive tag that fulfillment relies on.
               await supabase.from("sample_requests").update({
-                notes: sampleDispatch.reason,
+                notes: [sampleRequest.notes, sampleDispatch.reason]
+                  .filter(Boolean)
+                  .join(" | "),
               }).eq("id", sampleData.id);
             }
           }
         } else if (sampleData?.id) {
           // No valid email survived pickSampleEmail — record that we
-          // can't auto-send so ops can follow up manually.
+          // can't auto-send so ops can follow up manually. Preserve any
+          // existing incentive tag in notes.
           await supabase.from("sample_requests").update({
-            notes: "No valid email captured — sample confirmation not auto-sent.",
+            notes: [
+              sampleRequest.notes,
+              "No valid email captured — sample confirmation not auto-sent.",
+            ]
+              .filter(Boolean)
+              .join(" | "),
           }).eq("id", sampleData.id);
           console.log("⚠️ Sample request saved but no valid email available; manual follow-up required.");
         }
       }
-    }
-
-    // Check for DNC request
-    const dncResult = detectDNCRequest(payload.concatenated_transcript || "");
-    if (dncResult.detected && resolvedPractitionerId) {
-      console.log(`🚫 DNC request detected - marking as Do Not Call`);
-      await markPractitionerAsDNC(supabase, resolvedPractitionerId, `AI detected phrase: "${dncResult.matchedPhrase}"`, "ai_detected");
     }
 
     // Update practitioner qualification
@@ -1511,9 +1564,21 @@ serve(async (req) => {
         .select("id")
         .eq("call_record_id", savedRecord.id)
         .limit(1);
-      
-      if (existingAppt && existingAppt.length > 0) {
-        console.log("⚠️ Appointment already exists for this call record, skipping duplicate booking");
+
+      const canBook = shouldDispatchBooking({
+        wantsDemo: true,
+        hasParsedAppointmentTime: true,
+        hasPractitionerName: true,
+        hasEmail: true,
+        completed: true,
+        hasSavedRecord: true,
+        dncDetected: dncResult.detected,
+        existingBookingId: savedRecord?.booking_id,
+        existingAppointment: Boolean(existingAppt && existingAppt.length > 0),
+      });
+
+      if (!canBook) {
+        console.log("⚠️ Appointment booking skipped (existing booking/appointment or DNC).");
       } else {
         console.log("🗓️ Triggering appointment booking with parsed time:", parsedAppointmentTime);
         const bookingDispatch = await dispatchEdgeFunction({
@@ -1585,9 +1650,13 @@ serve(async (req) => {
       }
     );
   } catch (error) {
-    console.error("❌ Webhook error:", error);
+    // Log the full error server-side; ship only a sanitized
+    // {code, message} to the caller so we don't leak Postgres errors,
+    // stack traces, internal hostnames, or signature verification
+    // detail into a 500 response body.
+    console.error("❌ Webhook error:", error instanceof Error ? error.message : String(error));
     return new Response(
-      JSON.stringify({ status: "error", message: String(error) }),
+      JSON.stringify({ status: "error", ...sanitizeError(error, { code: "webhook_processing_failed" }) }),
       {
         status: 500,
         headers: {

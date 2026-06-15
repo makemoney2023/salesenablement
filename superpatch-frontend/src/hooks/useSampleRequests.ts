@@ -235,7 +235,9 @@ export function useSampleRequests(
       const response = await fetch("/api/samples", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, updates }),
+        // Flat body: the /api/samples route (UpdateSampleSchema) expects update
+        // fields at the top level, not nested under `updates`.
+        body: JSON.stringify({ id, ...updates }),
       });
 
       const data = await response.json();
@@ -267,7 +269,8 @@ export function useSampleRequests(
       const response = await fetch("/api/samples", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids, updates }),
+        // Flat body: see updateSample above.
+        body: JSON.stringify({ ids, ...updates }),
       });
 
       const data = await response.json();

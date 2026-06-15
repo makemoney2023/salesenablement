@@ -38,6 +38,7 @@ Every `*_contextual.json` file is a production-scale pathway with `data.prompt` 
 | `publish_pathways_production.py` | Creates a new pathway version from the local `_contextual.json` and promotes it to production. Loads IDs from `canonical_ids.json`. |
 | `deploy_updated_pathways.py` | Legacy — prefer `publish_pathways_production.py`. |
 | `bland_ai_pathway_generator.py` | Generates a starting pathway JSON skeleton from templates. |
+| `add_booking_incentive.py` | Idempotent, additive transform that makes "book a demo" the primary goal and adds the "$200 free samples for booking" incentive across all 6 pathways. Writes timestamped backups; never adds/removes nodes or edges. Run with `--check` for a dry run. |
 
 All scripts require `BLAND_API_KEY` in the environment.
 
@@ -58,6 +59,30 @@ python3 publish_pathways_production.py
 
 # 5. Append a delta to docs/dev/changelog.md.
 ```
+
+## Booking goal + $200 sample incentive
+
+Every pathway's primary goal is to **book a 20-30 minute demo**. The headline conversion lever is: **book a demo and we ship $200 worth of free SuperPatch samples** to try before the visit. This is implemented additively (the existing sample-only, order, affiliate, and callback paths are untouched):
+
+- A `## PRIMARY GOAL — BOOK A DEMO` block is injected before the `## ROUTING PRIORITY` marker in each routing node.
+- `Offer Sample` upsells to the $200 demo kit before sending a single free sample (falls back to the single sample if declined).
+- `Check Availability` reinforces the $200 reward while capturing the four required fields.
+- `Schedule Appointment` sets `staticVars.wants_sample = "true"` and `sample_notes = "$200 demo-booking incentive ..."`, so booking **auto-fulfils** the $200 sample: `webhook-processor` creates the `sample_requests` row and sends the confirmation email (`shouldInsertSample`), deduped one-per-call. No Edge Function or schema change is needed.
+
+Re-apply or update this behavior with the idempotent transform:
+
+```bash
+python3 add_booking_incentive.py --check   # dry run
+python3 add_booking_incentive.py           # apply (writes backups/)
+python3 -m pytest test_booking_incentive.py
+```
+
+### Safe deploy (don't-destroy) procedure
+
+1. **Pre-flight sync** — confirm the local files still match live production before publishing (the publisher prefers the local file, so unsynced dashboard edits would be reverted). Compare node/edge counts + node names against a `GET /v1/pathway/{id}` for each pathway.
+2. Publish **one** pathway first and test-call it (see below) to confirm it loads and that booking + $200 sample fire end-to-end.
+3. Publish the rest with `publish_pathways_production.py`.
+4. **Rollback** — every publish creates a new numbered version; to roll back, re-publish a prior `version_id`: `POST /v1/pathway/{id}/publish` with `{ "version_id": <n>, "environment": "production" }`.
 
 ## Updating Cal.com custom tools
 

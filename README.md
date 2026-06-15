@@ -583,12 +583,14 @@ Conversation Flow (36-38 Nodes with Global Routing):
 
 | Practitioner | Pathway ID |
 |--------------|------------|
-| Chiropractors | `cf2233ef-7fb2-49ff-af29-0eee47204e9f` |
-| Massage Therapists | `d202aad7-bcb6-478c-a211-b00877545e05` |
-| Naturopaths | `1d07d635-147e-4f69-a4cd-c124b33b073d` |
-| Integrative Medicine | `1c958dd7-e1ff-4f6d-b9a3-f80a369c26aa` |
-| Functional Medicine | `236dbd85-c74d-4774-a7af-4b5812015c68` |
-| Acupuncturists | `154f93f4-54a5-4900-92e8-0fa217508127` |
+| Chiropractors | `9aa760af-6f9a-430f-8d0c-25bf84afd8fb` |
+| Massage Therapists | `1fee31b1-8179-48c6-b6fa-12fcd434ed2b` |
+| Naturopaths | `db955b59-d278-410e-981e-5728dfa2dafd` |
+| Integrative Medicine | `b6240419-3b24-4415-9541-804994cce425` |
+| Functional Medicine | `70f3a50a-9055-4f41-bc0d-81964dfae19a` |
+| Acupuncturists | `084673ec-84d6-4c3a-bedb-ba9d72bd7e3b` |
+
+> Source of truth: `b2b_sales_enablement/bland_ai_pathways/canonical_ids.json`.
 
 ---
 
@@ -923,7 +925,7 @@ npm run dev
 cd b2b_sales_enablement/bland_ai_pathways
 
 # Make a call
-python bland_cli.py call +1234567890 --pathway cf2233ef-7fb2-49ff-af29-0eee47204e9f
+python bland_cli.py call +1234567890 --pathway 9aa760af-6f9a-430f-8d0c-25bf84afd8fb
 
 # Check call status
 python bland_cli.py status <call_id>
@@ -937,7 +939,7 @@ python bland_cli.py list
 ## 🔧 Technical Stack
 
 ### Frontend
-- **Next.js 14** + TypeScript
+- **Next.js 16** + TypeScript
 - **Tailwind CSS** + shadcn/ui components
 - **Framer Motion** for animations
 - **Recharts** for data visualization

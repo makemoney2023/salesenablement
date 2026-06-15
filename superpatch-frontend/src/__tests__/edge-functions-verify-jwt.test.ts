@@ -28,6 +28,20 @@ const CONFIG_PATH = resolve(
 
 const PUBLIC_FUNCTIONS_REQUIRING_NO_JWT = ["webhook-processor"] as const;
 
+// Every other function is invoked with a service-role JWT (pg_cron/pg_net or
+// our API routes / Edge-to-Edge dispatch) and has no in-code anonymous auth,
+// so the gateway must enforce a valid JWT. Pin them explicitly so the default
+// can never silently flip and expose them to anonymous POSTs.
+const FUNCTIONS_REQUIRING_JWT = [
+  "book-appointment",
+  "process-retry-queue",
+  "send-sample-confirmation",
+  "analyze-call",
+  "sync-cal-bookings",
+  "enrich-practitioners-v2",
+  "generate-daily-report",
+] as const;
+
 describe("supabase/config.toml — verify_jwt for public Edge Functions", () => {
   it("config.toml exists", () => {
     expect(existsSync(CONFIG_PATH)).toBe(true);
@@ -38,6 +52,17 @@ describe("supabase/config.toml — verify_jwt for public Edge Functions", () => 
       const text = readFileSync(CONFIG_PATH, "utf8");
       const section = new RegExp(
         `\\[functions\\.${fn}\\][\\s\\S]*?verify_jwt\\s*=\\s*false`,
+        "m",
+      );
+      expect(text).toMatch(section);
+    });
+  }
+
+  for (const fn of FUNCTIONS_REQUIRING_JWT) {
+    it(`declares [functions.${fn}] verify_jwt = true`, () => {
+      const text = readFileSync(CONFIG_PATH, "utf8");
+      const section = new RegExp(
+        `\\[functions\\.${fn}\\][\\s\\S]*?verify_jwt\\s*=\\s*true`,
         "m",
       );
       expect(text).toMatch(section);

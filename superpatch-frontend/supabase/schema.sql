@@ -117,6 +117,10 @@ CREATE TABLE IF NOT EXISTS practitioners (
   city TEXT,
   province TEXT,
   phone TEXT,
+  -- Generated last-10-digit phone for DB-side normalized lookup (webhook-processor)
+  phone_normalized TEXT GENERATED ALWAYS AS (
+    RIGHT(REGEXP_REPLACE(COALESCE(phone, ''), '\D', '', 'g'), 10)
+  ) STORED,
   website TEXT,
   rating DECIMAL(2,1),
   review_count INTEGER,
@@ -143,6 +147,7 @@ CREATE INDEX IF NOT EXISTS idx_practitioners_province ON practitioners(province)
 CREATE INDEX IF NOT EXISTS idx_practitioners_city ON practitioners(city);
 CREATE INDEX IF NOT EXISTS idx_practitioners_type ON practitioners(practitioner_type);
 CREATE INDEX IF NOT EXISTS idx_practitioners_phone ON practitioners(phone);
+CREATE INDEX IF NOT EXISTS idx_practitioners_phone_normalized ON practitioners(phone_normalized);
 CREATE INDEX IF NOT EXISTS idx_practitioners_rating ON practitioners(rating DESC NULLS LAST);
 CREATE INDEX IF NOT EXISTS idx_practitioners_enrichment_status ON practitioners(enrichment_status);
 

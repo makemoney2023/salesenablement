@@ -78,10 +78,33 @@ export const CreatePractitionerSchema = z.object({
   city: z.string().max(200).optional(),
   province: z.string().max(200).optional(),
   country: z.string().max(20).optional(),
-  contact_email: z.string().email().optional().or(z.literal("")).or(z.literal(null)),
-  website: z.string().url().optional().or(z.literal("")).or(z.literal(null)),
+  // Trim first so a stray space (e.g. "info@x.com ") or a whitespace-only
+  // value never trips ".email()" and aborts an otherwise-valid call.
+  contact_email: z.preprocess(
+    (v) => (typeof v === "string" ? v.trim() : v),
+    z.string().email().optional().or(z.literal("")).or(z.literal(null))
+  ),
+  website: z.preprocess(
+    (v) => (typeof v === "string" ? v.trim() : v),
+    z.string().url().optional().or(z.literal("")).or(z.literal(null))
+  ),
   notes: z.string().max(5000).optional(),
 });
+
+// Editable practitioner fields for the detail-drawer Edit action. Only these
+// fields may be updated via PATCH /api/practitioners/[id]; nulls clear a value.
+export const UpdatePractitionerSchema = z
+  .object({
+    name: z.string().min(1).max(500).optional(),
+    phone: z.string().max(20).nullable().optional(),
+    address: z.string().max(500).nullable().optional(),
+    city: z.string().max(200).nullable().optional(),
+    province: z.string().max(200).nullable().optional(),
+    website: z.string().max(500).nullable().optional(),
+  })
+  .refine((data) => Object.keys(data).length > 0, {
+    message: "At least one field is required",
+  });
 
 // ---- DNC Schemas ----
 

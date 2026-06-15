@@ -84,7 +84,7 @@ Pathway selection uses `getPathwayId()` from `supabase/functions/_shared/pathway
 
 ### 5. Fulfillment
 
-- **Samples**: `send-sample-confirmation` sends the Resend email and fills `sample_requests.email_sent_at`.
+- **Samples**: `send-sample-confirmation` sends the Resend email and fills `sample_requests.confirmation_sent_at`.
 - **Appointments**: `book-appointment` creates the Cal.com booking, stores the returned `uid` as `call_records.booking_id`, and Cal.com sends the invite.
 
 ### 6. Reconciliation & analytics
