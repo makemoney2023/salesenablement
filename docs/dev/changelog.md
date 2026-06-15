@@ -4,6 +4,31 @@ Backend, system, infrastructure, pathway, Edge Function, migration, and Python s
 
 ---
 
+## 2026-06-15 — Applied 4 pending migrations to production (RLS tighten, phone-normalized, sample dedup, retry RPC)
+
+Pushed the remaining unapplied migrations to the live Supabase DB via `supabase db push`. All four are idempotent and applied cleanly (the `NOTICE ... does not exist, skipping` lines are the `DROP ... IF EXISTS` / `DROP FUNCTION IF EXISTS` guards firing on first apply).
+
+- **What changed**:
+  - **Applied to remote** (now recorded in `supabase_migrations.schema_migrations`):
+    - `is_active_user()` helper + active-user RLS on `call_records`, `call_notes`, `campaign_analytics`, `practitioners`, `sample_requests`, `appointments`, `follow_up_queue`, `pathway_suggestions` (tightened from `auth.uid() IS NOT NULL`; also drops the out-of-band wide-open dashboard policies that were silently negating the lock-down).
+    - `practitioners.phone_normalized` generated column + `idx_practitioners_phone_normalized`.
+    - `sample_requests` duplicate collapse + partial unique index `uq_sample_requests_call_record_id`.
+    - `increment_retry_count(uuid)` RPC (`CREATE OR REPLACE`).
+  - **Migration filename renames (required, committed)**: the repo used date-only migration versions, so multiple same-day files collided on the `schema_migrations` version primary key and the CLI's positional history diff conflated `20260514xxxxxx` with the already-applied `20260514` row. Renamed the four pending files to unambiguous, unique 14-digit versions so `db push` reconciled cleanly:
+    - `20260514_fix_increment_retry_count_rpc.sql` → `20260601000001_fix_increment_retry_count_rpc.sql`
+    - `20260514_tighten_rls_to_active_profiles.sql` → `20260601000002_tighten_rls_to_active_profiles.sql`
+    - `20260605_practitioners_phone_normalized.sql` → `20260605000001_practitioners_phone_normalized.sql`
+    - `20260605_sample_requests_dedup.sql` → `20260605000002_sample_requests_dedup.sql`
+- **Why it changed**: the migrations were authored in prior sweeps but never applied to prod; the user requested they be pushed.
+- **Code touchpoints**: `superpatch-frontend/supabase/migrations/2026060100000{1,2}_*.sql`, `superpatch-frontend/supabase/migrations/2026060500000{1,2}_*.sql`.
+- **Data-flow impact**: DB-layer only — RLS hardening (auth surface), phone-lookup index (dialer/dedup), sample dedup backstop (webhook-processor sample insert), retry RPC (process-retry-queue).
+- **ID / contract changes**: none.
+- **API / schema impact**: applied the schema changes above. `src/lib/db/types.ts` and the `phone_normalized` column/index in `schema.sql` already reflect this; `schema.sql` remains a loose partial snapshot (omits `sample_requests`/`appointments`/`follow_up_queue`/`pathway_suggestions` and still shows pre-RLS policies for `practitioners`) — `migrations/` is the source of truth, full snapshot reconciliation tracked separately.
+- **Verification**: `supabase db push` → "Finished" with no errors; `supabase migration list` confirms `20260601000001`, `20260601000002`, `20260605000001`, `20260605000002` recorded on remote (Local + Remote + Time populated).
+- **Follow-up recommendation**: adopt full 14-digit timestamp migration versions going forward (date-only versions break `db push` whenever two migrations share a day).
+
+---
+
 ## 2026-06-09 — Booking-goal reframe + $200 sample incentive (all 6 pathways)
 
 Made booking a demo the primary goal of every practitioner pathway, with "$200 in free samples for booking" as the headline incentive, auto-fulfilled when the booking is saved. Purely additive — no node/edge removed, no existing prompt rewritten, no ID/schema change.
