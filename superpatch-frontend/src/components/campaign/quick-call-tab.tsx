@@ -313,6 +313,20 @@ export function QuickCallTab({
         .filter(Boolean)
         .join(", ");
 
+      // Email is optional for a call. Trim it, and if the operator typed
+      // something that isn't a valid address, tell them clearly instead of
+      // letting the practitioner save fail with a cryptic 400 that aborts
+      // the whole dial. They can fix it or clear the field to proceed.
+      const emailTrimmed = state.email.trim();
+      if (emailTrimmed && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrimmed)) {
+        toast.error(
+          "That email address looks invalid. Correct it or clear the field to place the call."
+        );
+        dispatch({ type: "SET_MAKING", value: false });
+        return;
+      }
+      const contactEmail = emailTrimmed || null;
+
       // Step 1: Save practitioner to DB BEFORE making the call
       // This ensures the webhook can find the practitioner and we have the ID for metadata
       let practitionerId: string | null = null;
@@ -333,7 +347,7 @@ export function QuickCallTab({
               ? "Canada"
               : "United States"
             : null,
-          contact_email: state.email || null,
+          contact_email: contactEmail,
           notes: state.contactName ? `Contact: ${state.contactName}` : null,
         };
 
@@ -382,7 +396,7 @@ export function QuickCallTab({
         practice_name: state.practiceName || "your practice",
         contact_name: state.contactName || "",
         practitioner_type: pathwayLabels[state.type] || state.type,
-        practice_email: state.email || "",
+        practice_email: contactEmail || "",
         practice_phone: formattedPhone,
         practice_address: state.address || "",
         practice_city: state.city || "",
@@ -412,7 +426,7 @@ export function QuickCallTab({
           practice_name: state.practiceName || undefined,
           contact_name: state.contactName || undefined,
           practitioner_type: pathwayLabels[state.type] || state.type,
-          clinic_email: state.email || undefined,
+          clinic_email: contactEmail || undefined,
           address: state.address || undefined,
           city: state.city || undefined,
           province: state.province || undefined,

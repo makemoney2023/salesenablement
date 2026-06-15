@@ -6,6 +6,21 @@
 // deno-lint-ignore no-explicit-any
 type RpcCapable = { rpc(fn: string, args: Record<string, unknown>): Promise<{ data: any; error: any }> };
 
+/**
+ * Decide whether a manual retry trigger (POST with practitionerIds) is allowed
+ * to dial. Manual triggers respect business hours just like the cron path,
+ * unless the caller explicitly passes { force: true }.
+ *
+ * Pure so it can be unit-tested without standing up the full handler.
+ */
+export function shouldProcessManualTrigger(
+  force: boolean | undefined,
+  withinBusinessHours: boolean,
+): boolean {
+  if (force === true) return true;
+  return withinBusinessHours;
+}
+
 export class IncrementRetryError extends Error {
   constructor(message: string, public override cause?: unknown) {
     super(message);

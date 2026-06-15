@@ -14,9 +14,13 @@ const { adminClient, anonClient } = vi.hoisted(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const builder: any = {};
     builder.select = vi.fn(() => builder);
-    builder.order = vi.fn(() => Promise.resolve({ data: rows, error: null }));
+    builder.order = vi.fn(() => builder);
     builder.eq = vi.fn(() => builder);
     builder.limit = vi.fn(() => builder);
+    // Builder is thenable so `await query` (e.g. getAllCallRecords) resolves
+    // to the row list, while explicit terminators still work below.
+    builder.then = (resolve: (v: unknown) => unknown) =>
+      resolve({ data: rows, error: null });
     builder.maybeSingle = vi.fn(() =>
       Promise.resolve({ data: rows[0] ?? null, error: null })
     );
@@ -59,5 +63,18 @@ describe("call-records DB layer client selection", () => {
 
     expect(adminClient.from).toHaveBeenCalledWith("call_records");
     expect(anonClient.from).not.toHaveBeenCalled();
+  });
+
+  it("getCallRecord is multi-row safe (orders, limits 1, maybeSingle) and returns the latest", async () => {
+    const { getCallRecord } = await import("@/lib/db/call-records");
+    const record = await getCallRecord("p1");
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const builder: any = adminClient.from.mock.results[0].value;
+    expect(builder.order).toHaveBeenCalledWith("created_at", { ascending: false });
+    expect(builder.limit).toHaveBeenCalledWith(1);
+    expect(builder.maybeSingle).toHaveBeenCalled();
+    expect(builder.single).not.toHaveBeenCalled();
+    expect(record?.id).toBe("r1");
   });
 });

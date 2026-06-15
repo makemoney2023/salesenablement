@@ -61,6 +61,11 @@ export async function PATCH(
       );
     }
 
+    // Supabase-js infers the .update() arg as `never` against this repo's
+    // hand-written Database type (same reason call-records.ts casts its
+    // .insert/.upsert payloads), and `any` is not assignable to `never`, so
+    // the cast must be on the client itself.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await (supabaseAdmin as any)
       .from("practitioners")
       .update(updates)

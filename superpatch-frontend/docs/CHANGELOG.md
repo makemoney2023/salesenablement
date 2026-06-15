@@ -4,6 +4,42 @@ Frontend app deltas (Next.js app, API routes, client components, frontend deps).
 
 ---
 
+## 2026-06-15 — Quick-call aborted by optional email validation
+
+- **What changed**:
+  - `src/lib/validation.ts` — `CreatePractitionerSchema.contact_email` (and `website`) now `z.preprocess`-trim their input before `.email()`/`.url()`. A stray trailing space or whitespace-only value no longer fails validation; the trimmed value is what gets stored. A genuinely malformed email is still rejected.
+  - `src/components/campaign/quick-call-tab.tsx` — `handleManualCall` now trims the email once (`contactEmail`), and if the operator typed an invalid address it shows a clear, actionable toast ("Correct it or clear the field to place the call.") and stops *before* the practitioner save, instead of letting a cryptic `400 (contact_email: Invalid email address)` abort the dial. The trimmed value is reused for `contact_email`, `practice_email`, and `clinic_email`.
+- **Why it changed**: one-off calls were failing with `Failed to save practitioner (400)… Call aborted to prevent untracked record. {"error":"Validation failed: contact_email: Invalid email address"}` whenever the optional email field held a typo or trailing space — even though email is not required to place a call.
+- **Code touchpoints**: `src/lib/validation.ts`, `src/components/campaign/quick-call-tab.tsx`, `src/__tests__/validation.test.ts`.
+- **Data-flow impact**: dialer (Quick Call) → `POST /api/practitioners` save → call placement. No schema/DB change.
+- **ID / contract changes**: none.
+- **API / schema impact**: `CreatePractitionerSchema` now trims `contact_email`/`website` (more lenient inputs, same stored shape).
+- **Verification**: `npm test` 264/264 (7 new `CreatePractitionerSchema` email/website cases); `tsc --noEmit` clean; lint clean.
+
+---
+
+## 2026-06-05 — Call-center wiring bug-fix sweep (frontend slice)
+
+End-to-end review remediation. Closes silent-failure and RLS gaps across the dialer → UI → API data flow. Backend/Edge/migration slice is in `docs/dev/changelog.md`.
+
+- **What changed**:
+  - `src/hooks/useSampleRequests.ts` — sample PATCH now sends a flattened body (`{ id, ...updates }` / `{ ids, ...updates }`). The route's `UpdateSampleSchema` has no `updates` key, so the previous nested payload was stripped by Zod and wrote `{}`. `src/__tests__/samples-update.test.ts` added.
+  - `src/lib/db/call-records.ts` + `src/lib/db/call-notes.ts` — both modules now select the DB client via `getDb()` = `supabaseAdmin ?? supabase`. These run server-side from API routes that already enforce `requireApiAuth()`; the anon client carried no JWT so `is_active_user()` RLS returned empty/failed. localStorage fallback preserved when neither client is configured. `src/__tests__/call-records-admin-client.test.ts` added.
+  - `src/lib/db/call-records.ts` — `getCallRecord` is now multi-row safe (`order created_at desc` + `.limit(1).maybeSingle()`); `.single()` threw when a practitioner had >1 record.
+  - `src/lib/batch-caller.ts` — status transitions now sync to Supabase (`syncStatusToSupabase`, PATCH then POST fallback) after every `updateCallStatus`, so the queue/KPIs/badges (driven by `useSupabaseCallRecords`) no longer stay stale during a campaign. Added a `do_not_call` guard in `makeCall` and a skip+`call_failed` emit in `processQueue`. Tests: `src/__tests__/batch-caller-sync.test.ts`, extended `batch-caller.test.ts`.
+  - `src/components/campaign/practitioner-detail-drawer.tsx` — implemented "Add to Queue", "Edit Practitioner" (dialog + PATCH), and "Delete Practitioner" (confirm dialog + DELETE); added `onQueued`/`onPractitionerUpdated`/`onPractitionerDeleted` callbacks.
+  - `src/app/api/practitioners/[id]/route.ts` (new) — `PATCH` (whitelist fields via `UpdatePractitionerSchema`) and `DELETE`, both `requireApiAuth()` + `supabaseAdmin`. `src/lib/validation.ts` gained `UpdatePractitionerSchema`. `src/__tests__/practitioners-id-route.test.ts` added.
+  - `src/app/campaign/page.tsx` — wired the new drawer callbacks; applied `hasWebsiteOnly` + `callStatusFilter` via the new pure `src/lib/campaign-filters.ts` (`applyListFilters` / `matchesCallStatus`, tested in `campaign-filters.test.ts`); wired `useRealtimePractitioners` enrichment callbacks to patch row `enrichment_status` live; removed dead imports/hooks (`Separator`, `FunnelView`, `ActivityFeedCompact`, `GaugeChart`/`RadialProgressChart`/`StatCard`/`KPIGrid`, `DEFAULT_COLUMNS`, `SortState`, unused lucide icons, `resetColumns`); added `country`/`enrichment_status` to `PractitionerData` and made the sort comparator type-safe (removed `any`).
+  - `src/app/api/search/import/route.ts` — post-import auto-enrich now invokes the `enrich-practitioners-v2` Edge Function with the service-role bearer instead of a cookieless internal `fetch('/api/search/enrich')` that 401'd. `src/__tests__/search-import-enrich.test.ts` added.
+- **Why it changed**: Call-center end-to-end review found silent failures (sample PATCH no-op, stale dialer UI, 401'd enrichment) and RLS-blocked server reads/writes.
+- **Code touchpoints**: see above.
+- **Data-flow impact**: dialer → call_records sync, sample fulfilment update, lead enrichment after import, drawer practitioner CRUD, list filtering.
+- **ID / contract changes**: None.
+- **API / schema impact**: New `PATCH`/`DELETE /api/practitioners/[id]`. Sample PATCH body shape corrected (flat fields).
+- **Verification**: `npx vitest run` (touched suites green), `npx tsc --noEmit` clean, `npx eslint src/app/campaign/page.tsx` → 0 errors (3 pre-existing exhaustive-deps warnings).
+
+---
+
 ## 2026-05-14 — Production-hardening sweep: HTTP contract honesty + UI truth alignment
 
 Frontend slice of the cross-stack deep-dive (full report in `docs/dev/changelog.md`). Fixes silent-failure modes in API DELETE handlers, the quick-call dialer, the practitioner detail drawer, the campaign storage helper, and the batch caller's concurrency model.

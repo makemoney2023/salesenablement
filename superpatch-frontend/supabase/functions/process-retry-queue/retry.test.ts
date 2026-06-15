@@ -1,5 +1,19 @@
 import { assertEquals, assertRejects } from "https://deno.land/std@0.208.0/assert/mod.ts";
-import { incrementRetry, IncrementRetryError } from "./retry.ts";
+import { incrementRetry, IncrementRetryError, shouldProcessManualTrigger } from "./retry.ts";
+
+Deno.test("shouldProcessManualTrigger blocks outside business hours without force", () => {
+  assertEquals(shouldProcessManualTrigger(undefined, false), false);
+  assertEquals(shouldProcessManualTrigger(false, false), false);
+});
+
+Deno.test("shouldProcessManualTrigger allows within business hours", () => {
+  assertEquals(shouldProcessManualTrigger(undefined, true), true);
+});
+
+Deno.test("shouldProcessManualTrigger force overrides business hours", () => {
+  assertEquals(shouldProcessManualTrigger(true, false), true);
+  assertEquals(shouldProcessManualTrigger(true, true), true);
+});
 
 Deno.test("incrementRetry calls increment_retry_count with the p_id argument", async () => {
   const calls: Array<{ fn: string; args: Record<string, unknown> }> = [];

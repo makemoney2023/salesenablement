@@ -4,6 +4,52 @@ Backend, system, infrastructure, pathway, Edge Function, migration, and Python s
 
 ---
 
+## 2026-06-09 — Booking-goal reframe + $200 sample incentive (all 6 pathways)
+
+Made booking a demo the primary goal of every practitioner pathway, with "$200 in free samples for booking" as the headline incentive, auto-fulfilled when the booking is saved. Purely additive — no node/edge removed, no existing prompt rewritten, no ID/schema change.
+
+- **What changed**:
+  - **Pathways** (all 6 `*_contextual.json`): a new idempotent transform `add_booking_incentive.py` injects a `## PRIMARY GOAL — BOOK A DEMO` + "$200 free samples" block before the existing `## ROUTING PRIORITY` marker in every routing node (27-29 per file), adds an upsell bridge to `Offer Sample`, a reward lead to `Check Availability`, and a $200 confirmation line to `Schedule Appointment`. The `Schedule Appointment` node now also force-sets `staticVars.wants_sample = "true"` and `sample_notes = "$200 demo-booking incentive - ship $200 sample kit"` (existing `wants_demo`/`schedule_demo` preserved).
+  - **Auto-fulfillment**: no new Edge Function logic or schema change. `webhook-processor` already creates a `sample_requests` row and fires `send-sample-confirmation` via `shouldInsertSample(wants_sample, !dnc)`; the booking node's `wants_sample` staticVar makes a booking auto-create the $200 sample (one per call, protected by `uq_sample_requests_call_record_id`). `sample_notes` flows to `sample_requests.notes`.
+  - **webhook-processor hardening** (`index.ts`): the two sample-error branches (email dispatch failed / no valid email) now **append** their status to `sample_requests.notes` instead of overwriting it, so the `$200` incentive tag survives failure paths now that `notes` is the incentive's carrier.
+  - **Non-destructive safeguards**: pre-flight production sync confirmed local == live for all 6 (node/edge counts + names); transform writes timestamped backups to `backups/`; smoke test pins exact node/edge counts.
+  - **Tests**: new `b2b_sales_enablement/bland_ai_pathways/test_booking_incentive.py` (30 cases — count parity, sentinel coverage, booking staticVars, $200 mentions); extended `webhook-processor/gating.test.ts` with the booking-triggers-sample contract (booking + sample fire together; DNC suppresses both).
+- **Why it changed**: shift the campaign goal toward booked demos and use a concrete $200 sample reward as the conversion lever, without disturbing the existing sophisticated flows (sample-only, order, affiliate, callback).
+- **Code touchpoints**: `b2b_sales_enablement/bland_ai_pathways/{*_contextual.json, add_booking_incentive.py, test_booking_incentive.py}`; `superpatch-frontend/supabase/functions/webhook-processor/{index.ts, gating.test.ts}`.
+- **Data-flow impact**: dialer → Bland pathway (goal/incentive prompts + booking node) → webhook-processor (booking dispatch + auto sample insert) → sample fulfillment + Cal.com booking.
+- **ID / contract changes**: None (`canonical_ids.json` unchanged).
+- **API / schema impact**: None (incentive tagged via existing `sample_requests.notes`).
+- **Verification**: pytest 30/30; Deno webhook-processor 44/44; Vitest 257/257 (incl. `canonical-ids-sync`); `tsc --noEmit` clean. Deploy via `publish_pathways_production.py` (manual, `BLAND_API_KEY`); rollback = re-publish prior `version_id`.
+
+---
+
+## 2026-06-05 — Call-center wiring bug-fix sweep (backend / Edge / migration slice)
+
+End-to-end review remediation for Edge Functions, migrations, config, and docs. Frontend slice is in `superpatch-frontend/docs/CHANGELOG.md`.
+
+- **What changed**:
+  - **webhook-processor**:
+    - Extracted `webhook-processor/dnc.ts` (+`dnc.test.ts`) and `webhook-processor/gating.ts` (+`gating.test.ts`). DNC detection now runs EARLY (before sample insert / booking dispatch) and gates both side-effects via `shouldInsertSample` / `shouldDispatchBooking`.
+    - Tightened the DNC phrase list — removed `"not interested"` (a normal sales objection, not a legal DNC request).
+    - Sample insert is now dedup-guarded (check existing `sample_requests` by `call_record_id` before insert).
+    - Booking dispatch is additionally gated on `savedRecord.booking_id` and any existing `appointments` row (via `shouldDispatchBooking`).
+    - `findPractitionerByPhone` now matches DB-side on the new `practitioners.phone_normalized` generated column (with a bounded client-scan fallback when the column hasn't been migrated yet) instead of scanning only the first 100 rows.
+  - **process-retry-queue**: manual POST trigger now respects business hours (rejects outside hours unless `{ force: true }`) via the new pure `shouldProcessManualTrigger` helper in `retry.ts` (+tests); manual select now pulls the same columns as the cron path. 500 responses now use `sanitizeError`.
+  - **sanitizeError adoption**: `book-appointment` and `send-sample-confirmation` 500 handlers now return `sanitizeError(...)` instead of raw `error.message`.
+  - **config.toml**: pinned explicit `verify_jwt = true` for `book-appointment`, `process-retry-queue`, `send-sample-confirmation`, `analyze-call`, `sync-cal-bookings`, `enrich-practitioners-v2`, `generate-daily-report` (webhook-processor stays `false` — HMAC-authenticated).
+  - **Migrations**:
+    - `20260605_sample_requests_dedup.sql` — collapses existing duplicates then adds a partial unique index `uq_sample_requests_call_record_id` (`WHERE call_record_id IS NOT NULL`).
+    - `20260605_practitioners_phone_normalized.sql` — adds the generated `phone_normalized` column (last 10 digits) + `idx_practitioners_phone_normalized`. Mirrored in `schema.sql` and `src/lib/db/types.ts`.
+  - **Docs**: README pathway IDs corrected to match `canonical_ids.json`; README "Next.js 14" → 16; `ARCHITECTURE.md` `email_sent_at` → `confirmation_sent_at`.
+- **Why it changed**: Call-center end-to-end review surfaced ordering bugs (DNC after side-effects), duplicate sample/booking risk on webhook redelivery, a phone-lookup blind spot beyond 100 rows, an after-hours manual-retry gap, error-detail leakage, and stale docs.
+- **Code touchpoints**: see above.
+- **Data-flow impact**: webhook-processor (DNC, sample, booking, phone lookup), retry queue, sample/appointment confirmation error handling.
+- **ID / contract changes**: None (`canonical_ids.json` unchanged; README now matches it).
+- **API / schema impact**: new `phone_normalized` column + index; new unique index on `sample_requests(call_record_id)`. `schema.sql` + `types.ts` updated.
+- **Verification**: `npx tsc --noEmit` clean; Deno modules unit-tested (`dnc`, `gating`, `retry` helpers). Migrations require `supabase db push` at deploy time.
+
+---
+
 ## 2026-05-14 — Production-hardening sweep: schema repair, fail-closed auth, downstream error surfacing, concurrency guards
 
 A second deep-dive after the `verify_jwt` fix uncovered 15 silent-failure modes spread across schema, Edge Functions, and frontend. All P0/P1 items remediated in one task-master plan; P2/P3 hygiene fixes included. A post-plan code-reviewer pass then caught 4 follow-up issues (analyze-call dispatch, dead `_sync_failed_at`, schema/types drift, misleading idempotency comment) which were all fixed in this same commit. Test count grew from 178 → 192 Vitest+Deno.

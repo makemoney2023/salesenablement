@@ -459,6 +459,8 @@ export interface Database {
           province: string | null;
           country: string | null;
           phone: string | null;
+          // Generated column (last 10 digits) — read-only, used for DB-side phone lookup
+          phone_normalized: string | null;
           website: string | null;
           rating: number | null;
           review_count: number | null;

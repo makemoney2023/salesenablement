@@ -78,8 +78,16 @@ export const CreatePractitionerSchema = z.object({
   city: z.string().max(200).optional(),
   province: z.string().max(200).optional(),
   country: z.string().max(20).optional(),
-  contact_email: z.string().email().optional().or(z.literal("")).or(z.literal(null)),
-  website: z.string().url().optional().or(z.literal("")).or(z.literal(null)),
+  // Trim first so a stray space (e.g. "info@x.com ") or a whitespace-only
+  // value never trips ".email()" and aborts an otherwise-valid call.
+  contact_email: z.preprocess(
+    (v) => (typeof v === "string" ? v.trim() : v),
+    z.string().email().optional().or(z.literal("")).or(z.literal(null))
+  ),
+  website: z.preprocess(
+    (v) => (typeof v === "string" ? v.trim() : v),
+    z.string().url().optional().or(z.literal("")).or(z.literal(null))
+  ),
   notes: z.string().max(5000).optional(),
 });
 

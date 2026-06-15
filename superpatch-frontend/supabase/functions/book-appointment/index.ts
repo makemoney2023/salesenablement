@@ -9,6 +9,7 @@ import { appendNoteLine } from "../_shared/notes.ts";
 import { redactName } from "../_shared/redact.ts";
 import { buildNotesUpdate } from "./notes.ts";
 import { buildBookingResponse } from "./response.ts";
+import { sanitizeError } from "../_shared/sanitize-error.ts";
 
 const CAL_API_KEY = Deno.env.get("CAL_API_KEY") ?? "";
 const CAL_API_VERSION = Deno.env.get("CAL_API_VERSION");
@@ -374,7 +375,7 @@ serve(async (req) => {
     return new Response(
       JSON.stringify({
         success: false,
-        error: error instanceof Error ? error.message : "Unknown error"
+        ...sanitizeError(error, { code: "book_appointment_failed" }),
       }),
       {
         status: 500,

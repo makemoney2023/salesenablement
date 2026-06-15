@@ -103,6 +103,17 @@ These are already being captured in the current pathways:
 | `wants_sample` | Whether they want samples |
 | `sample_products` | Which products they want |
 
+### Booking goal + $200 sample incentive (2026-06-09)
+
+Booking a demo is the primary goal of every pathway, and booking earns the practitioner $200 worth of free samples. This is wired through node `staticVars`, not new extractVars:
+
+| Variable | Where set | Effect |
+|----------|-----------|--------|
+| `wants_sample` | `Schedule Appointment` node `staticVars` (force-set to `"true"`) | Makes a booked demo auto-create a `sample_requests` row + confirmation email via `webhook-processor` `shouldInsertSample`. Still also captured organically by the `Offer Sample` / close nodes. |
+| `sample_notes` | `Schedule Appointment` node `staticVars` (`"$200 demo-booking incentive ..."`) | Flows to `sample_requests.notes` so ops can identify incentive-driven sample kits. |
+
+No schema or Edge Function change accompanies this — `wants_sample` already drives sample insertion. The booking dispatch (`shouldDispatchBooking`) and the sample insertion (`shouldInsertSample`) fire independently from the same completed booking call; a Do Not Call request suppresses both.
+
 ### Variable Type Handling
 
 **Important:** Bland.ai may return boolean variables in different formats depending on the pathway configuration:

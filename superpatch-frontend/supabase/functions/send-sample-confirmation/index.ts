@@ -5,6 +5,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { redactEmail, redactName } from "../_shared/redact.ts";
+import { sanitizeError } from "../_shared/sanitize-error.ts";
 
 function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 30000): Promise<Response> {
   const controller = new AbortController();
@@ -337,7 +338,7 @@ serve(async (req) => {
     return new Response(
       JSON.stringify({
         success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
+        ...sanitizeError(error, { code: "send_sample_confirmation_failed" }),
       }),
       {
         status: 500,

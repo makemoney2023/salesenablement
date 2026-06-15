@@ -62,11 +62,16 @@ export async function getCallRecord(practitionerId: string): Promise<CallRecord 
     return record ? convertLocalStorageRecord(record) : null;
   }
 
+  // A practitioner can have more than one call_records row (re-dials,
+  // multiple campaigns). .single() throws when >1 row exists, so order by
+  // recency and take the latest with .maybeSingle().
   const { data, error } = await db
     .from('call_records')
     .select('*')
     .eq('practitioner_id', practitionerId)
-    .single();
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
   if (error) {
     if (error.code !== 'PGRST116') { // Not found error
@@ -75,7 +80,7 @@ export async function getCallRecord(practitionerId: string): Promise<CallRecord 
     return null;
   }
 
-  return data as CallRecord;
+  return data as CallRecord | null;
 }
 
 /**

@@ -282,6 +282,75 @@ describe('CreatePractitionerSchema', () => {
     expect(result.success).toBe(true);
   });
 
+  it('accepts null contact_email', () => {
+    const result = CreatePractitionerSchema.safeParse({
+      name: 'Dr. Smith',
+      phone: '4165551234',
+      contact_email: null,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts empty string contact_email', () => {
+    const result = CreatePractitionerSchema.safeParse({
+      name: 'Dr. Smith',
+      phone: '4165551234',
+      contact_email: '',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a valid contact_email', () => {
+    const result = CreatePractitionerSchema.safeParse({
+      name: 'Dr. Smith',
+      phone: '4165551234',
+      contact_email: 'info@abcwellness.com',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('trims surrounding whitespace from contact_email', () => {
+    const result = CreatePractitionerSchema.safeParse({
+      name: 'Dr. Smith',
+      phone: '4165551234',
+      contact_email: '  info@abcwellness.com  ',
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.contact_email).toBe('info@abcwellness.com');
+    }
+  });
+
+  it('treats whitespace-only contact_email as empty (does not block the call)', () => {
+    const result = CreatePractitionerSchema.safeParse({
+      name: 'Dr. Smith',
+      phone: '4165551234',
+      contact_email: '   ',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('still rejects a genuinely malformed contact_email', () => {
+    const result = CreatePractitionerSchema.safeParse({
+      name: 'Dr. Smith',
+      phone: '4165551234',
+      contact_email: 'not-an-email',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('trims surrounding whitespace from website', () => {
+    const result = CreatePractitionerSchema.safeParse({
+      name: 'Dr. Smith',
+      phone: '4165551234',
+      website: '  https://abcwellness.com  ',
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.website).toBe('https://abcwellness.com');
+    }
+  });
+
   it('accepts empty string website', () => {
     const result = CreatePractitionerSchema.safeParse({
       name: 'Dr. Smith',

@@ -21,15 +21,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { 
   PhoneCall, Users, Star,
   Search, Play, Pause, Square,
   Clock, Loader2, Download, RefreshCw,
-  ListChecks, BarChart3, Phone, Zap,
-  PanelLeftClose, PanelLeft, Filter, Kanban, MapPin, History, Package,
-  Smile, Meh, Frown, TrendingUp, Globe2, Sparkles, Radio, RotateCcw
+  ListChecks, BarChart3, Zap,
+  PanelLeftClose, PanelLeft, Kanban, MapPin, History,
+  Smile, Meh, Frown, Globe2, Sparkles, Radio, RotateCcw
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -45,16 +44,14 @@ import { useRealtimePractitioners } from "@/hooks/useRealtimePractitioners";
 import { useRealtimeRetryQueue } from "@/hooks/useRealtimeRetryQueue";
 import { KPICards } from "@/components/campaign/kpi-cards";
 import { FilterPanel, FilterState, FilterSheet, FilterSheetTrigger } from "@/components/campaign/filter-panel";
-import { PipelineBoard, FunnelView } from "@/components/campaign/pipeline-board";
+import { PipelineBoard } from "@/components/campaign/pipeline-board";
 import { AnalyticsDashboard } from "@/components/campaign/analytics-dashboard";
-import { ActivityFeed, ActivityFeedCompact } from "@/components/campaign/activity-feed";
+import { ActivityFeed } from "@/components/campaign/activity-feed";
 import { 
   ColumnVisibilityMenu, 
   SortableHeader,
   RowActionsMenu,
   useTableState,
-  DEFAULT_COLUMNS,
-  SortState,
 } from "@/components/campaign/data-table-toolbar";
 import { CommandSearch, useCommandSearch, CommandSearchTrigger } from "@/components/campaign/command-search";
 import { callNotifications } from "@/components/campaign/call-notifications";
@@ -70,12 +67,6 @@ import {
   NoMapData,
   QueueEmpty 
 } from "@/components/campaign/empty-states";
-import { 
-  GaugeChart, 
-  RadialProgressChart, 
-  StatCard, 
-  KPIGrid 
-} from "@/components/campaign/enhanced-charts";
 import { PractitionerSearchTab } from "@/components/campaign/practitioner-search-tab";
 import { ActiveCallsMonitor } from "@/components/campaign/active-calls-monitor";
 import { RetryQueuePanel } from "@/components/campaign/retry-queue-panel";
@@ -116,6 +107,8 @@ interface PractitionerData extends Practitioner {
   website: string | null;
   rating: number | null;
   review_count: number | null;
+  country?: string | null;
+  enrichment_status?: string | null;
   business_status: string;
   google_maps_uri: string;
   latitude: number;
@@ -225,7 +218,7 @@ function CampaignPageContent() {
   const [showDNCOnly, setShowDNCOnly] = useState(false);
 
   // Table state - column visibility and sorting
-  const { columns, sortState, toggleColumn, resetColumns, handleSort, visibleColumns } = useTableState();
+  const { columns, sortState, toggleColumn, handleSort, visibleColumns } = useTableState();
   
   // Command search state
   const commandSearch = useCommandSearch();
@@ -255,17 +248,25 @@ function CampaignPageContent() {
   // Tab state
   const [activeTab, setActiveTab] = useState("practitioners");
 
-  // Real-time practitioners hook for enrichment status
-  const {
-    stats: enrichmentStats,
-    isConnected: practitionersConnected,
-    refresh: refreshEnrichmentStats,
-  } = useRealtimePractitioners({
+  // Real-time practitioners hook for enrichment status. The callbacks patch the
+  // matching row's enrichment_status in local state so badges update live as
+  // background enrichment completes/fails (no manual refresh needed).
+  const patchEnrichmentStatus = useCallback(
+    (id: string, status: string | null) => {
+      setPractitioners((prev) =>
+        prev.map((p) =>
+          p.id === id ? ({ ...p, enrichment_status: status } as PractitionerData) : p
+        )
+      );
+    },
+    []
+  );
+  useRealtimePractitioners({
     onEnrichmentComplete: (practitioner) => {
-      console.log(`✅ Enrichment complete: ${practitioner.name}`);
+      patchEnrichmentStatus(practitioner.id, practitioner.enrichment_status);
     },
     onEnrichmentFailed: (practitioner) => {
-      console.log(`❌ Enrichment failed: ${practitioner.name}`);
+      patchEnrichmentStatus(practitioner.id, practitioner.enrichment_status);
     },
   });
 
@@ -493,8 +494,8 @@ function CampaignPageContent() {
       }
       
       // Count US vs CA practitioners
-      const usCount = allPractitioners.filter((p: any) => p.country === 'US').length;
-      const caCount = allPractitioners.filter((p: any) => p.country === 'CA').length;
+      const usCount = allPractitioners.filter((p: PractitionerData) => p.country === 'US').length;
+      const caCount = allPractitioners.filter((p: PractitionerData) => p.country === 'CA').length;
       console.log('[Map] Loaded all practitioners - Total:', allPractitioners.length, 'US:', usCount, 'CA:', caCount);
       
       setPractitioners(allPractitioners);
@@ -554,8 +555,8 @@ function CampaignPageContent() {
     // Apply sorting
     if (sortState.column && sortState.direction) {
       result.sort((a, b) => {
-        let aValue: any;
-        let bValue: any;
+        let aValue: string | number;
+        let bValue: string | number;
         
         switch (sortState.column) {
           case "name":
@@ -637,9 +638,14 @@ function CampaignPageContent() {
             return 0;
         }
         
-        // Compare values
-        if (aValue < bValue) return sortState.direction === "asc" ? -1 : 1;
-        if (aValue > bValue) return sortState.direction === "asc" ? 1 : -1;
+        // Compare values (string vs numeric handled separately so the
+        // union-typed accumulators stay type-safe).
+        const cmp =
+          typeof aValue === "string" && typeof bValue === "string"
+            ? aValue.localeCompare(bValue)
+            : Number(aValue) - Number(bValue);
+        if (cmp < 0) return sortState.direction === "asc" ? -1 : 1;
+        if (cmp > 0) return sortState.direction === "asc" ? 1 : -1;
         return 0;
       });
     }
