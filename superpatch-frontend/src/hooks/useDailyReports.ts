@@ -10,7 +10,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import { getBrowserSupabase, isBrowserSupabaseConfigured } from "@/lib/supabase/browser";
 import type { CallRecord, CampaignAnalytics } from "@/lib/db/types";
 import {
   aggregateCallRecordsByDate,
@@ -65,6 +65,8 @@ export function useDailyReports(
     limit = 90,
   } = options;
 
+  const supabase = getBrowserSupabase();
+
   const [storedReports, setStoredReports] = useState<CampaignAnalytics[]>([]);
   const [liveCallRecords, setLiveCallRecords] = useState<
     Pick<CallRecord, "created_at" | "status" | "duration_seconds" | "appointment_booked">[]
@@ -88,20 +90,26 @@ export function useDailyReports(
     return mergeDailyReports(storedReports, liveByDate, todayDateKey);
   }, [storedReports, liveCallRecords, todayDateKey]);
 
-  // Fetch stored reports + live call records (dashboard uses call_records directly;
-  // campaign_analytics is only populated nightly by generate-daily-report).
+  // Fetch stored reports + live call records.
+  //
+  // Live call records are sourced from the authenticated `/api/campaign/calls`
+  // route — the same source the campaign dashboard uses — NOT a direct browser
+  // query. `campaign_analytics` is read via the session-aware browser Supabase
+  // client (`getBrowserSupabase`), so the SELECT runs as the logged-in user and
+  // passes `is_active_user()` RLS. If the read still fails for any reason we fall
+  // back to rendering correct numbers from the live call-record aggregation.
   const fetchReports = useCallback(async () => {
-    if (!isSupabaseConfigured || !supabase) {
+    if (!isBrowserSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       setLoading(false);
       return;
     }
 
-    const startIso = startDate.toISOString();
-    const endIso = endDate.toISOString();
+    const startMs = startDate.getTime();
+    const endMs = endDate.getTime();
 
     try {
-      const [analyticsResult, callRecordsResult] = await Promise.all([
+      const [analyticsResult, callsResponse] = await Promise.all([
         supabase
           .from("campaign_analytics")
           .select("*")
@@ -109,26 +117,36 @@ export function useDailyReports(
           .lte("date", endDate.toISOString().split("T")[0])
           .order("date", { ascending: false })
           .limit(limit),
-        supabase
-          .from("call_records")
-          .select("created_at, status, duration_seconds, appointment_booked")
-          .gte("created_at", startIso)
-          .lte("created_at", endIso),
+        fetch("/api/campaign/calls", { credentials: "same-origin" }),
       ]);
 
       if (!isMountedRef.current) return;
 
-      const fetchError = analyticsResult.error ?? callRecordsResult.error;
-      if (fetchError) {
-        if (fetchError.message?.includes("AbortError") || fetchError.message?.includes("aborted")) {
-          return;
+      if (analyticsResult.error) {
+        const msg = analyticsResult.error.message ?? "";
+        if (!msg.includes("AbortError") && !msg.includes("aborted")) {
+          // Reads are now authenticated via the session client; an error here is
+          // unexpected. Live aggregation still renders correct numbers as a fallback.
+          console.warn("[Reports] campaign_analytics read failed:", msg);
         }
-        setError(fetchError.message);
-      } else {
-        setStoredReports(analyticsResult.data || []);
-        setLiveCallRecords(callRecordsResult.data || []);
-        setError(null);
       }
+
+      if (!callsResponse.ok) {
+        throw new Error(`Failed to fetch call records: ${callsResponse.status}`);
+      }
+
+      const callsData = await callsResponse.json();
+      const recordsMap = (callsData?.records ?? {}) as Record<string, CallRecord>;
+      const liveRecords = Object.values(recordsMap).filter((record) => {
+        const created = new Date(record.created_at).getTime();
+        return created >= startMs && created <= endMs;
+      });
+
+      if (!isMountedRef.current) return;
+
+      setStoredReports(analyticsResult.data || []);
+      setLiveCallRecords(liveRecords);
+      setError(null);
     } catch (err) {
       if (err instanceof Error && (err.name === "AbortError" || err.message?.includes("aborted"))) {
         return;
@@ -302,7 +320,7 @@ export function useDailyReports(
   useEffect(() => {
     isMountedRef.current = true;
     
-    if (!isSupabaseConfigured || !supabase) {
+    if (!isBrowserSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       setLoading(false);
       return;
@@ -347,23 +365,6 @@ export function useDailyReports(
         }
       });
 
-    const callRecordsChannel = supabase
-      .channel("call_records_reports_changes")
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "call_records",
-        },
-        () => {
-          if (isMountedRef.current && fetchReportsRef.current) {
-            fetchReportsRef.current();
-          }
-        },
-      )
-      .subscribe();
-
     channelRef.current = channel;
 
     // Cleanup
@@ -374,15 +375,21 @@ export function useDailyReports(
         supabase.removeChannel(channelRef.current);
         channelRef.current = null;
       }
-      if (supabase) {
-        supabase.removeChannel(callRecordsChannel);
-      }
     };
   }, [handleChange, scheduleRetry]);
 
-  // Fetch data when filters change - separate from subscription
+  // Fetch data when filters change, then poll every 15s. The analytics realtime
+  // channel only covers nightly campaign_analytics rows; live call records come
+  // from `/api/campaign/calls`, so we poll to keep today's counts fresh (mirrors
+  // the dashboard's polling fallback).
   useEffect(() => {
     fetchReports();
+    const intervalId = setInterval(() => {
+      if (isMountedRef.current && fetchReportsRef.current) {
+        fetchReportsRef.current();
+      }
+    }, 15000);
+    return () => clearInterval(intervalId);
   }, [fetchReports]);
 
   return {

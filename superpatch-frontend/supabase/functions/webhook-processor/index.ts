@@ -6,7 +6,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { canonicalPractitionerType } from "../_shared/practitioner-type.ts";
-import { toBool } from "../_shared/coerce.ts";
+import { toBool, toStr } from "../_shared/coerce.ts";
 import { pickSampleEmail } from "./email.ts";
 import { buildProductsRequested, classifySampleType } from "./sample-type.ts";
 import { verifyRequestAuth } from "./auth-gate.ts";
@@ -14,6 +14,8 @@ import { dispatchEdgeFunction } from "./dispatch.ts";
 import { decideIdempotency } from "./idempotency.ts";
 import { detectDNCRequest } from "./dnc.ts";
 import { shouldDispatchBooking, shouldInsertSample } from "./gating.ts";
+import { deriveCallStatus } from "./_shared/derive-call-status.ts";
+import { needsPostCallBooking } from "./_shared/booking-gate.ts";
 import { redactName, redactPhone, redactPii } from "../_shared/redact.ts";
 import { sanitizeError } from "../_shared/sanitize-error.ts";
 
@@ -1159,16 +1161,29 @@ serve(async (req) => {
     // experiment-version suffixes.
     resolvedPractitionerType = canonicalPractitionerType(resolvedPractitionerType);
 
-    // Determine call status
-    let callStatus: CallStatus = "completed";
+    // Determine call status. A booking only counts when the prospect actually
+    // wanted a demo/appointment — an appointment_time alone (callback
+    // scheduling) must NOT be treated as a booked demo and inflate KPIs.
     const wentToVoicemail = payload.voicemail_detected === true || payload.answered_by === "voicemail" ||
       payload.status === "voicemail" || vars.went_to_voicemail === "true" || vars.voicemail_left === "true";
-
-    if (payload.status === "failed" || payload.status === "no-answer" || !payload.completed) {
-      callStatus = "failed";
-    } else if (wentToVoicemail) {
-      callStatus = "voicemail" as CallStatus;
-    } else if (wantsDemo || appointmentTime) {
+    const callCompleted = payload.status !== "failed" && payload.status !== "no-answer" && payload.completed === true;
+    // If the in-call book_cal_appointment tool already booked on Cal.com it
+    // returns the booking uid as the {{booking_uid}} pathway variable. A real
+    // booking exists even when the transcript never yielded a clear demo
+    // intent or appointment_time, so fold it into the call status below to
+    // avoid undercounting booked demos in KPIs. Declared here (before the
+    // status computation) and reused by the post-call dedup gate further down.
+    const inCallBookingUid = toStr(vars.booking_uid);
+    let callStatus: CallStatus = deriveCallStatus({
+      completed: callCompleted,
+      // `wantsDemo` already folds in `vars.schedule_demo`; pass it as the demo
+      // intent signal and leave `scheduleDemo` false to avoid double-counting.
+      wantsDemo,
+      scheduleDemo: false,
+      appointmentTime: appointmentTime ?? null,
+      wentToVoicemail,
+    });
+    if (inCallBookingUid && callStatus === "completed") {
       callStatus = "booked";
     }
 
@@ -1195,7 +1210,7 @@ serve(async (req) => {
       duration_seconds: payload.call_length ? Math.round(payload.call_length) : null,
       transcript: payload.concatenated_transcript,
       summary: payload.analysis?.summary,
-      appointment_booked: callStatus === "booked" || callStatus === "calendar_sent",
+      appointment_booked: callStatus === "booked" || !!inCallBookingUid,
       appointment_time: parsedAppointmentTime,
       calendar_invite_sent: false,
       practitioner_email: resolvedEmail || null,
@@ -1555,9 +1570,28 @@ serve(async (req) => {
       }
     }
 
+    // If the in-call Bland tool (book_cal_appointment) already booked on
+    // Cal.com, it returns the booking uid as the {{booking_uid}} pathway
+    // variable. Record it so we both surface the booking and skip a duplicate
+    // post-call booking below. (inCallBookingUid is declared earlier, near the
+    // call-status computation, and reused here so it folds into KPIs too.)
+    if (inCallBookingUid && savedRecord?.id && !savedRecord.booking_id) {
+      await supabase.from("call_records")
+        .update({ booking_id: inCallBookingUid })
+        .eq("id", savedRecord.id);
+      savedRecord.booking_id = inCallBookingUid;
+    }
+    // Only dispatch the post-call book-appointment when no in-call booking
+    // exists (fallback for tool timeouts). The existing dedup checks
+    // (shouldDispatchBooking) still apply on top of this.
+    const postCallBookingNeeded = needsPostCallBooking({
+      inCallBookingUid,
+      existingBookingId: savedRecord?.booking_id ?? null,
+    });
+
     // Trigger appointment booking if needed (decoupled via edge function)
     // This will create both Cal.com booking AND appointment record in our table
-    if (wantsDemo && parsedAppointmentTime && resolvedPractitionerName && resolvedEmail && payload.completed && savedRecord?.id) {
+    if (postCallBookingNeeded && wantsDemo && parsedAppointmentTime && resolvedPractitionerName && resolvedEmail && payload.completed && savedRecord?.id) {
       // Check for existing appointment to prevent duplicates
       const { data: existingAppt } = await supabase
         .from("appointments")

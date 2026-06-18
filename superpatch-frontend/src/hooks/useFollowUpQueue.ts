@@ -12,7 +12,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import { getBrowserSupabase, isBrowserSupabaseConfigured } from "@/lib/supabase/browser";
 import { useRetryTimeouts } from "@/hooks/useRetryTimeout";
 
 // Follow-up queue types
@@ -75,6 +75,8 @@ export function useFollowUpQueue(
 ): UseFollowUpQueueResult {
   const { statusFilter = "all", typeFilter = "all", limit = 50 } = options;
 
+  const supabase = getBrowserSupabase();
+
   const [items, setItems] = useState<FollowUpItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -99,7 +101,7 @@ export function useFollowUpQueue(
 
   // Fetch status counts
   const fetchStatusCounts = useCallback(async () => {
-    if (!isSupabaseConfigured || !supabase) return;
+    if (!isBrowserSupabaseConfigured || !supabase) return;
 
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -184,7 +186,7 @@ export function useFollowUpQueue(
 
   // Fetch follow-up items with retry logic
   const fetchItems = useCallback(async (isRetry = false) => {
-    if (!isSupabaseConfigured || !supabase) {
+    if (!isBrowserSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       setLoading(false);
       return;
@@ -344,7 +346,7 @@ export function useFollowUpQueue(
 
   // Update item status with retry logic
   const updateStatus = useCallback(async (id: string, newStatus: FollowUpStatus): Promise<boolean> => {
-    if (!isSupabaseConfigured || !supabase) {
+    if (!isBrowserSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       return false;
     }
@@ -452,7 +454,7 @@ export function useFollowUpQueue(
 
   // Delete item with retry logic
   const deleteItem = useCallback(async (id: string): Promise<boolean> => {
-    if (!isSupabaseConfigured || !supabase) {
+    if (!isBrowserSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       return false;
     }
@@ -597,7 +599,7 @@ export function useFollowUpQueue(
   useEffect(() => {
     isMountedRef.current = true;
     
-    if (!isSupabaseConfigured || !supabase) {
+    if (!isBrowserSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       setLoading(false);
       return;

@@ -525,8 +525,17 @@ export function PractitionerDetailDrawer({
       const result = await response.json();
       
       if (result.success) {
+        const reason = dncReason.trim();
         setDncDialogOpen(false);
         setDncReason("");
+        // Update the list badges before closing so they don't go stale.
+        onPractitionerUpdated?.({
+          ...practitioner,
+          do_not_call: true,
+          dnc_reason: reason,
+          dnc_source: "manual",
+          dnc_detected_at: new Date().toISOString(),
+        });
         // Close the drawer and let parent refresh
         onOpenChange(false);
       } else {
@@ -559,6 +568,14 @@ export function PractitionerDetailDrawer({
       if (result.success) {
         setRestoreDialogOpen(false);
         setRestoreConfirmed(false);
+        // Update the list badges before closing so they don't go stale.
+        onPractitionerUpdated?.({
+          ...practitioner,
+          do_not_call: false,
+          dnc_reason: null,
+          dnc_source: null,
+          dnc_detected_at: null,
+        });
         // Close the drawer and let parent refresh
         onOpenChange(false);
       } else {
@@ -686,6 +703,7 @@ export function PractitionerDetailDrawer({
   const hasPhone = !!practitioner.phone;
   const canCall =
     hasPhone &&
+    !practitioner.do_not_call &&
     (!callRecord ||
       ["not_called", "failed", "completed"].includes(callRecord.status));
 
@@ -1365,6 +1383,7 @@ export function PractitionerDetailDrawer({
               <Button
                 onClick={handleCallNow}
                 disabled={!canCall || isCalling}
+                title={practitioner.do_not_call ? "Marked Do Not Call" : undefined}
                 className="flex-1"
                 size="lg"
               >
@@ -1554,6 +1573,12 @@ export function PractitionerDetailDrawer({
           {!hasPhone && (
             <p className="text-xs text-muted-foreground text-center mt-2">
               Cannot call - no phone number available
+            </p>
+          )}
+
+          {hasPhone && practitioner.do_not_call && (
+            <p className="text-xs text-muted-foreground text-center mt-2">
+              Marked Do Not Call
             </p>
           )}
         </div>

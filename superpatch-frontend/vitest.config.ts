@@ -8,7 +8,7 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./src/__tests__/setup.ts'],
-    include: ['src/**/*.test.{ts,tsx}'],
+    include: ['src/**/*.test.{ts,tsx}', 'supabase/functions/**/_tests/**/*.test.ts'],
     coverage: {
       reporter: ['text', 'lcov'],
       include: ['src/lib/**', 'src/hooks/**', 'src/components/**'],

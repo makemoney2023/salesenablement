@@ -210,6 +210,11 @@ export function QuickCallTab({
   const handleCallWithPathway = useCallback(async () => {
     if (!state.result || !state.result.phone) return;
 
+    if (state.result.do_not_call) {
+      toast.error("Practitioner is marked Do Not Call.");
+      return;
+    }
+
     dispatch({ type: "SET_MAKING", value: true });
 
     try {

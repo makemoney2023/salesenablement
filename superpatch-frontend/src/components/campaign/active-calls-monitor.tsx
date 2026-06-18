@@ -26,8 +26,10 @@ import {
   Wifi,
   WifiOff,
   Square,
+  PhoneOff,
   AlertCircle,
 } from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useRealtimeCallStatus, ActiveCall } from "@/hooks/useRealtimeCallStatus";
 import { callNotifications } from "@/components/campaign/call-notifications";
@@ -98,10 +100,14 @@ function ActiveCallCard({
   call,
   onListen,
   isListening,
+  onStop,
+  isStopping = false,
 }: {
   call: ActiveCall;
   onListen?: () => void;
   isListening: boolean;
+  onStop?: () => void;
+  isStopping?: boolean;
 }) {
   const statusColors: Record<string, string> = {
     in_progress: "bg-green-500",
@@ -155,6 +161,23 @@ function ActiveCallCard({
                   Listen
                 </>
               )}
+            </Button>
+          )}
+
+          {call.status === "in_progress" && onStop && call.call_id && (
+            <Button
+              size="sm"
+              variant="destructive"
+              className="h-7 text-xs gap-1"
+              onClick={onStop}
+              disabled={isStopping}
+            >
+              {isStopping ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <PhoneOff className="h-3 w-3" />
+              )}
+              Stop call
             </Button>
           )}
         </div>
@@ -415,6 +438,7 @@ interface ActiveCallsMonitorProps {
 export function ActiveCallsMonitor({ className, collapsed = false }: ActiveCallsMonitorProps) {
   const [listeningCallId, setListeningCallId] = useState<string | null>(null);
   const [selectedCall, setSelectedCall] = useState<ActiveCall | null>(null);
+  const [stoppingCallId, setStoppingCallId] = useState<string | null>(null);
 
   const { activeCalls, isConnected, error, refresh } = useRealtimeCallStatus({
     onCallStarted: (call) => {
@@ -443,6 +467,27 @@ export function ActiveCallsMonitor({ className, collapsed = false }: ActiveCalls
     } else {
       setSelectedCall(call);
       setListeningCallId(call.id);
+    }
+  };
+
+  const handleStop = async (call: ActiveCall) => {
+    if (!call.call_id || stoppingCallId) return;
+    setStoppingCallId(call.id);
+    try {
+      const res = await fetch(`/api/bland/calls/${call.call_id}/stop`, {
+        method: "POST",
+        credentials: "same-origin",
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.message || `Failed to stop call (${res.status})`);
+      }
+      toast.success("Call stopped");
+      await refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to stop call");
+    } finally {
+      setStoppingCallId(null);
     }
   };
 
@@ -527,6 +572,8 @@ export function ActiveCallsMonitor({ className, collapsed = false }: ActiveCalls
                     call={call}
                     onListen={() => handleListen(call)}
                     isListening={listeningCallId === call.id}
+                    onStop={() => handleStop(call)}
+                    isStopping={stoppingCallId === call.id}
                   />
                 ))}
 

@@ -213,24 +213,6 @@ export function KPICards({
     return "neutral";
   };
 
-  // Generate deterministic sparkline data if not provided
-  // Uses a simple pattern based on total calls (no randomness to avoid hydration mismatch)
-  const generateSparklineData = () => {
-    if (recentCallCounts.length > 0) return recentCallCounts;
-    // Use deterministic placeholder data based on total calls
-    const base = Math.max(1, Math.floor(stats.total_calls / 7));
-    // Create a simple ascending/descending pattern
-    return [
-      base * 0.6,
-      base * 0.8,
-      base * 0.7,
-      base * 1.0,
-      base * 0.9,
-      base * 1.1,
-      base * 1.0,
-    ];
-  };
-
   const todayTrend = calculateTrend(callsToday, callsYesterday);
 
   return (
@@ -241,7 +223,7 @@ export function KPICards({
         value={stats.total_calls.toLocaleString()}
         icon={PhoneCall}
         subtitle={`${stats.in_progress} active, ${stats.queued} queued`}
-        sparklineData={generateSparklineData()}
+        sparklineData={recentCallCounts}
         status={stats.total_calls > 0 ? "neutral" : "neutral"}
         trend={previousStats ? calculateTrend(stats.total_calls, previousStats.total_calls) : undefined}
       />

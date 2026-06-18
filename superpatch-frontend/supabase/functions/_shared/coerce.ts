@@ -28,3 +28,21 @@ export function toBool(value: unknown): boolean {
   }
   return false;
 }
+
+/**
+ * Coerces an unknown webhook value to a non-empty trimmed string, or `null`.
+ *
+ * Bland forwards response/extract variables as strings, but absent values can
+ * arrive as `null`, `undefined`, or the empty string. Returning `null` for all
+ * of those lets callers treat "no value" uniformly (e.g. the booking-uid gate
+ * checks `if (uid)` and must not see a stray `""`).
+ */
+export function toStr(value: unknown): string | null {
+  if (value == null) return null;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed === "" ? null : trimmed;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return null;
+}

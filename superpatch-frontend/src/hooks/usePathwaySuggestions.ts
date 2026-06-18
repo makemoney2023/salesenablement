@@ -11,7 +11,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import { getBrowserSupabase, isBrowserSupabaseConfigured } from "@/lib/supabase/browser";
 import type { 
   PathwaySuggestion, 
   PathwaySuggestionStatus,
@@ -69,6 +69,8 @@ export function usePathwaySuggestions(
     search = "",
   } = filters;
 
+  const supabase = getBrowserSupabase();
+
   const [suggestions, setSuggestions] = useState<PathwaySuggestion[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -95,7 +97,7 @@ export function usePathwaySuggestions(
 
   // Fetch status counts
   const fetchStatusCounts = useCallback(async () => {
-    if (!isSupabaseConfigured || !supabase) return;
+    if (!isBrowserSupabaseConfigured || !supabase) return;
 
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -140,7 +142,7 @@ export function usePathwaySuggestions(
 
   // Fetch pending suggestions grouped by practitioner type
   const fetchPendingByPractitioner = useCallback(async () => {
-    if (!isSupabaseConfigured || !supabase) return;
+    if (!isBrowserSupabaseConfigured || !supabase) return;
 
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -235,7 +237,7 @@ export function usePathwaySuggestions(
 
   // Fetch suggestions from database with retry logic
   const fetchSuggestions = useCallback(async (isRetry = false) => {
-    if (!isSupabaseConfigured || !supabase) {
+    if (!isBrowserSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       setLoading(false);
       return;
@@ -419,7 +421,7 @@ export function usePathwaySuggestions(
 
   // Update suggestion status with retry logic
   const updateStatus = useCallback(async (id: string, newStatus: PathwaySuggestionStatus): Promise<boolean> => {
-    if (!isSupabaseConfigured || !supabase) {
+    if (!isBrowserSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       return false;
     }
@@ -548,7 +550,7 @@ export function usePathwaySuggestions(
 
   // Mark all approved suggestions for a practitioner type as implemented with retry logic
   const markAllImplemented = useCallback(async (type: string): Promise<boolean> => {
-    if (!isSupabaseConfigured || !supabase) {
+    if (!isBrowserSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       return false;
     }
@@ -688,7 +690,7 @@ export function usePathwaySuggestions(
   useEffect(() => {
     isMountedRef.current = true;
     
-    if (!isSupabaseConfigured || !supabase) {
+    if (!isBrowserSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       setLoading(false);
       return;

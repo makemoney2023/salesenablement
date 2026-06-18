@@ -10,7 +10,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import { getBrowserSupabase, isBrowserSupabaseConfigured } from "@/lib/supabase/browser";
 import type { Appointment, AppointmentStatus, AppointmentInsert, AppointmentUpdate } from "@/lib/db/types";
 import { useRetryTimeouts } from "@/hooks/useRetryTimeout";
 
@@ -67,6 +67,8 @@ export function useAppointments(
     limit = 100,
   } = options;
 
+  const supabase = getBrowserSupabase();
+
   const [appointments, setAppointments] = useState<AppointmentWithPractitioner[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -91,7 +93,7 @@ export function useAppointments(
 
   // Fetch status counts
   const fetchStatusCounts = useCallback(async () => {
-    if (!isSupabaseConfigured || !supabase) return;
+    if (!isBrowserSupabaseConfigured || !supabase) return;
 
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -183,7 +185,7 @@ export function useAppointments(
 
   // Fetch appointments with retry logic
   const fetchAppointments = useCallback(async (isRetry = false) => {
-    if (!isSupabaseConfigured || !supabase) {
+    if (!isBrowserSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       setLoading(false);
       return;
@@ -341,7 +343,7 @@ export function useAppointments(
     newStatus: AppointmentStatus,
     additionalData?: Partial<AppointmentUpdate>
   ): Promise<boolean> => {
-    if (!isSupabaseConfigured || !supabase) {
+    if (!isBrowserSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       return false;
     }
@@ -457,7 +459,7 @@ export function useAppointments(
 
   // Create new appointment with retry logic
   const createAppointment = useCallback(async (data: AppointmentInsert): Promise<Appointment | null> => {
-    if (!isSupabaseConfigured || !supabase) {
+    if (!isBrowserSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       return null;
     }
@@ -540,7 +542,7 @@ export function useAppointments(
 
   // Delete appointment with retry logic
   const deleteAppointment = useCallback(async (id: string): Promise<boolean> => {
-    if (!isSupabaseConfigured || !supabase) {
+    if (!isBrowserSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       return false;
     }
@@ -654,7 +656,7 @@ export function useAppointments(
   useEffect(() => {
     isMountedRef.current = true;
     
-    if (!isSupabaseConfigured || !supabase) {
+    if (!isBrowserSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       setLoading(false);
       return;

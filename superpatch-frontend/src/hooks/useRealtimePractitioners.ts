@@ -10,7 +10,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import { getBrowserSupabase, isBrowserSupabaseConfigured } from "@/lib/supabase/browser";
 import { useRetryTimeouts } from "@/hooks/useRetryTimeout";
 
 interface Practitioner {
@@ -68,6 +68,8 @@ export function useRealtimePractitioners(
     onEnrichmentFailed,
     limit = 100,
   } = options;
+
+  const supabase = getBrowserSupabase();
 
   const [practitioners, setPractitioners] = useState<Practitioner[]>([]);
   const [loading, setLoading] = useState(true);
@@ -174,7 +176,7 @@ export function useRealtimePractitioners(
 
   // Fetch practitioners from database with retry logic
   const fetchPractitioners = useCallback(async (isRetry = false) => {
-    if (!isSupabaseConfigured || !supabase) {
+    if (!isBrowserSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       setLoading(false);
       return;
@@ -402,7 +404,7 @@ export function useRealtimePractitioners(
   useEffect(() => {
     isMountedRef.current = true;
     
-    if (!isSupabaseConfigured || !supabase) {
+    if (!isBrowserSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       setLoading(false);
       return;

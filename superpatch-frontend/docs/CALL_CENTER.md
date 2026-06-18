@@ -44,8 +44,11 @@ Enriched practitioners display a purple "Enriched" badge and compact indicators 
 |--------|-------------|
 | `pending` | Website not yet scraped |
 | `in_progress` | Scraping currently running |
-| `completed` | Successfully enriched |
+| `enriched` | Successfully enriched — **canonical success value** |
 | `failed` | Scraping failed (will retry) |
+| `skipped` | No website / nothing to enrich |
+
+> **Canonical value is `enriched`, not `completed`.** Migration `20260513_normalize_enrichment_status.sql` backfilled all legacy `completed`/`success` rows to `enriched` and added a CHECK constraint allowing only `pending`, `in_progress`, `enriched`, `failed`, `skipped` (or NULL). `enrich-practitioners-v2` writes `enriched`, and the dashboard enrichment-stats RPC counts `enriched` rows under its `completed` output column.
 
 #### Enrichment Improvements
 
