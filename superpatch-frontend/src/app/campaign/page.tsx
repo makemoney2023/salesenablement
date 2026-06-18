@@ -33,6 +33,8 @@ import {
 import { toast } from "sonner";
 import {
   createCallRecord,
+  getCallRecord,
+  updateCallStatus,
   syncCallRecordToSupabase,
   reconcileStaleInProgressRecords,
   exportRecords,
@@ -2415,17 +2417,38 @@ function CampaignPageContent() {
           } else if (action === "call") {
             handleQuickCall(practitioner as PractitionerData);
           } else if (action === "queue") {
-            if (!callRecords[practitioner.id]) {
-              createCallRecord({
-                id: practitioner.id,
-                name: practitioner.name,
-                practitioner_type: practitioner.practitioner_type,
-                phone: practitioner.phone || "",
-                address: practitioner.address,
-                city: practitioner.city,
-                province: practitioner.province,
-              });
+            const p = practitioner as PractitionerData;
+            if (p.do_not_call) {
+              toast.error("This practitioner is marked Do Not Call");
+              return;
             }
+            void (async () => {
+              try {
+                let record = getCallRecord(p.id);
+                if (!record) {
+                  record = createCallRecord({
+                    id: p.id,
+                    name: p.name,
+                    practitioner_type: p.practitioner_type,
+                    phone: p.phone || "",
+                    address: p.address || "",
+                    city: p.city || "",
+                    province: p.province || "",
+                  });
+                }
+                const queued = updateCallStatus(p.id, "queued");
+                const synced = await syncCallRecordToSupabase(queued ?? record);
+                loadCallRecords();
+                if (synced) {
+                  toast.success(`${p.name} added to queue`);
+                } else {
+                  toast.error("Added locally but failed to sync to the queue");
+                }
+              } catch (error) {
+                console.error("Error adding to queue:", error);
+                toast.error("Failed to add to queue");
+              }
+            })();
           }
         }}
       />
