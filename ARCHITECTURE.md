@@ -78,9 +78,10 @@ Pathway selection uses `getPathwayId()` from `supabase/functions/_shared/pathway
 `superpatch-frontend/supabase/functions/webhook-processor/index.ts`:
 
 - Verifies origin.
-- Writes the call to `call_records` (transcript, outcomes, extracted_vars).
-- If `wants_samples === true`: inserts a `sample_requests` row and invokes `send-sample-confirmation`.
-- If `appointment_booked === true && call_records.booking_id IS NULL`: invokes `book-appointment` (with dedup check). The previous pg_net trigger (`20260116_book_appointment_trigger.sql`) was removed on 2026-04-21 to eliminate a duplicate path; this explicit fetch is now canonical.
+- Writes the call to `call_records` (transcript, outcomes, extracted_vars). The call status is derived by `deriveCallStatus` (`webhook-processor/_shared/derive-call-status.ts`): an `appointment_time` alone (e.g. a scheduled callback time) does NOT count as a booked demo — a booking requires demo intent (`wants_demo`/`schedule_demo`) plus a parsed appointment time. `call_records.appointment_booked` is set from `callStatus === "booked" || callStatus === "calendar_sent"`.
+- If `wants_sample === true` (and the call is not flagged DNC): inserts a `sample_requests` row (dedup-guarded by the partial unique index `uq_sample_requests_call_record_id`) and invokes `send-sample-confirmation`.
+- **In-call booking reconciliation**: the in-call Bland tool `book_cal_appointment` books on Cal.com DURING the call and returns a `booking_uid` (Bland response var, extracted by the `Schedule Appointment` node). When present, `webhook-processor` writes it to `call_records.booking_id`.
+- The post-call `book-appointment` Edge Function dispatches **only** when there is demo intent (`wantsDemo`) **and** a parsed appointment time **and** a resolved practitioner email **and** the call completed **and** no existing `booking_id`/appointment row **and** no in-call `booking_uid` (gate helpers `needsPostCallBooking` then `shouldDispatchBooking`). This skips the redundant post-call booking whenever the in-call tool already booked, preventing double-booking. The previous pg_net trigger (`20260116_book_appointment_trigger.sql`) was removed on 2026-04-21 to eliminate a duplicate path; this explicit, gated fetch is now canonical.
 
 ### 5. Fulfillment
 

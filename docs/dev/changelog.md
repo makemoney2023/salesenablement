@@ -4,6 +4,22 @@ Backend, system, infrastructure, pathway, Edge Function, migration, and Python s
 
 ---
 
+## 2026-06-18 — Callback time no longer counts as a booked demo; canonical-ids test hardening
+
+Two correctness fixes on the call-center wiring branch. (1) A scheduled callback time was being misread as a booked demo. (2) The canonical-ids sync test only covered pathway/KB/voice IDs, leaving the webhook URL, Cal.com config, and Bland tool IDs unguarded against drift.
+
+- **What changed**:
+  - **webhook-processor** (`index.ts` + new `_shared/derive-call-status.ts`): a new pure helper `deriveCallStatus({ completed, wantsDemo, scheduleDemo, appointmentTime, wentToVoicemail })` decides the call status. An `appointment_time` **alone** (e.g. a scheduled callback) no longer counts as a booked demo — a `"booked"` status now requires demo intent (`wants_demo`/`schedule_demo`) **plus** an appointment time. `call_records.appointment_booked` now derives from `callStatus === "booked" || callStatus === "calendar_sent"` instead of the bare presence of an appointment time. Covered by `webhook-processor/_tests/booking-status.test.ts`.
+  - **Canonical-ids sync test** (`src/__tests__/canonical-ids-sync.test.ts`): extended to assert the frontend `WEBHOOK_URL` matches `canonical_ids.json.webhooks.primary` (and the Edge `_shared/pathways.ts` mirror contains it), that `cal_com.event_type_id` is present/non-empty, and that the Bland `tools` map (incl. `check_availability` + `book_appointment`) has non-empty IDs. Per the testing-tdd rule's "never weaken canonical-ids-sync" guidance, this only adds coverage.
+- **Why it changed**: prevent callback scheduling from inflating booked-demo counts and KPIs; widen the drift guard so a stale webhook URL / Cal.com event type / tool ID is caught by the test suite rather than in production.
+- **Code touchpoints**: `webhook-processor/index.ts`, `webhook-processor/_shared/derive-call-status.ts`, `webhook-processor/_tests/booking-status.test.ts`, `src/__tests__/canonical-ids-sync.test.ts`.
+- **Data-flow impact**: webhook-processor (call status / `appointment_booked` derivation) → analytics / KPIs (booked-demo counts).
+- **ID / contract changes**: none (canonical IDs unchanged; test coverage widened only).
+- **API / schema impact**: none.
+- **Verification**: `npm test -- --run supabase/functions/webhook-processor` (booking-status + booking-gate green); `npm test src/__tests__/canonical-ids-sync.test.ts` green; `npx tsc --noEmit` clean. Edge deploy deferred to a controlled deploy step.
+
+---
+
 ## 2026-06-18 — Reconcile in-call Cal.com booking uid; skip duplicate post-call booking
 
 The in-call `book_cal_appointment` tool books on Cal.com DURING the call, while `webhook-processor` ALSO dispatched the `book-appointment` Edge Function AFTER the call — with no `booking_uid` handoff, the same prospect could be double-booked. Now the in-call booking uid is captured as a pathway variable and used to gate the post-call dispatch.

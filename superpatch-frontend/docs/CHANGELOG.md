@@ -4,15 +4,34 @@ Frontend app deltas (Next.js app, API routes, client components, frontend deps).
 
 ---
 
+## 2026-06-18 — Call-center wiring E2E fixes (session client, queue persistence, KPI sparkline, DNC, route cleanup)
+
+- **What changed**:
+  - **Session-aware reads**: all call-center read hooks and `RetryQueuePanel` now use a session-aware `@supabase/ssr` browser client (`src/lib/supabase/browser.ts` `getBrowserSupabase`) instead of the anon `@/lib/supabase` singleton, so `is_active_user()` RLS-gated SELECTs return rows for the signed-in operator (the anon singleton carried no user JWT and returned zero rows).
+  - **Command-palette Queue**: queuing a practitioner from the command palette now persists `queued` status to Supabase (no longer in-memory only).
+  - **KPI Total Calls sparkline**: now renders real per-day counts via `computeRecentCallCounts`; the previous synthetic/placeholder series was removed. (KPI trend arrows remain gated on `previousStats` — deferred until a prior-period source is wired.)
+  - **Retries tab**: the main Retries tab now reuses `RetryQueuePanel`, exposing the Retry-Now / Cancel actions instead of a read-only list.
+  - **DNC in the dialer**: Do-Not-Call is enforced in Quick Call and the practitioner detail drawer; the list refreshes after a DNC mark/restore so suppressed practitioners drop out (or return) immediately.
+  - **Stop-call wiring**: `active-calls-monitor.tsx` Stop button is wired to `POST /api/bland/calls/[id]/stop`.
+  - **Route + dead-code cleanup**: deleted the unused `/api/bland/calls/[id]/analyze` and `/api/memory` routes; removed dead code (`addToQueue`, `clearQueue`, `max_concurrent_calls`, batch-caller `pollingInterval`, debug logs, the duplicate `useCallRecords` hook).
+- **Why it changed**: close the call-center end-to-end wiring gaps surfaced in review — RLS-blocked browser reads showing empty panels, a non-persisting palette queue, a fake KPI sparkline, a read-only retries tab, missing DNC enforcement at the dialer, an unwired Stop button, and orphaned routes / dead code.
+- **Code touchpoints**: `src/lib/supabase/browser.ts`, call-center read hooks + `src/components/campaign/retry-queue-panel.tsx`, command-palette queue handler, KPI sparkline (`computeRecentCallCounts`), Retries tab, `quick-call-tab.tsx` + `practitioner-detail-drawer.tsx` (DNC), `active-calls-monitor.tsx`, removed `src/app/api/bland/calls/[id]/analyze/`, `src/app/api/memory/`.
+- **Data-flow impact**: dialer → `call_records` / retry queue → session-aware browser reads → UI (queue, KPIs, retries, active calls); DNC suppression at Quick Call + drawer; in-call stop via Bland API route.
+- **ID / contract changes**: none.
+- **API / schema impact**: removed unused `GET /api/bland/calls/[id]/analyze` and `/api/memory` routes. No schema change.
+- **Verification**: `npm test` (touched suites green); `npm run` `tsc --noEmit` clean; lint clean on changed files. Backend/Edge/pathway slice of this branch is in `docs/dev/changelog.md`.
+
+---
+
 ## 2026-06-18 — Reports show live call counts (match dashboard)
 
-- **What changed**: `/campaign/reports` now merges nightly `campaign_analytics` rows with live aggregation from `call_records`. Today's calls (and any day missing a stored report) appear immediately instead of waiting for the 8 AM UTC `generate-daily-report` cron.
-- **Why it changed**: The campaign dashboard reads `call_records` directly, but Reports only read `campaign_analytics` — populated once daily for *yesterday* — so operators saw calls on the dashboard but zero in Reports.
+- **What changed**: `/campaign/reports` now merges nightly `campaign_analytics` rows with a live, per-day aggregation of `call_records`. The hook sources live calls from the authenticated `/api/campaign/calls` route (admin client) — the exact source the dashboard uses — and polls every 15s, instead of querying `call_records` from the browser. Today's calls (and any day missing a stored report) appear immediately rather than waiting for the 8 AM UTC `generate-daily-report` cron.
+- **Why it changed**: The dashboard reads calls through `/api/campaign/calls` (server-side admin client, bypasses RLS), but Reports read only `campaign_analytics` — populated once daily for *yesterday*. An initial fix queried `call_records` directly via the browser Supabase singleton, which is an anon client with no user JWT; under `is_active_user()` RLS that SELECT returns zero rows, so Reports still showed nothing. Routing through the API matches the dashboard and respects RLS.
 - **Code touchpoints**: `src/lib/db/campaign-analytics.ts`, `src/hooks/useDailyReports.ts`, `src/app/campaign/reports/page.tsx`, `src/__tests__/campaign-analytics.test.ts`.
-- **Data-flow impact**: dialer → `call_records` → Reports UI (live); cron → `campaign_analytics` → Reports UI (historical enrichment).
+- **Data-flow impact**: dialer → `call_records` → `GET /api/campaign/calls` (admin client) → Reports UI (live, 15s poll); cron → `campaign_analytics` → Reports UI (historical/enrichment, best-effort).
 - **ID / contract changes**: none.
-- **API / schema impact**: none.
-- **Verification**: `npm test src/__tests__/campaign-analytics.test.ts`; `tsc --noEmit`.
+- **API / schema impact**: none. Reuses existing `GET /api/campaign/calls` (`{ records: { [practitioner_id]: CallRecord }, total }`).
+- **Verification**: `npm test src/__tests__/campaign-analytics.test.ts` (5/5); `tsc --noEmit` clean; lint clean.
 
 ---
 
