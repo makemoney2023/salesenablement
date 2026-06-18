@@ -273,13 +273,10 @@ function CampaignPageContent() {
     },
   });
 
-  // Real-time retry queue hook
+  // Real-time retry queue hook (stats power the Retries tab badge; the
+  // Retries tab itself renders RetryQueuePanel which self-fetches).
   const {
-    queue: retryQueue,
-    loading: retryQueueLoading,
     stats: retryStats,
-    isConnected: retryQueueConnected,
-    refresh: refreshRetryQueue,
   } = useRealtimeRetryQueue({
     hoursAhead: 24,
     limit: 50,
@@ -2253,119 +2250,7 @@ function CampaignPageContent() {
 
         {/* Retry Queue Tab */}
         <TabsContent value="retries" className="flex-1 flex flex-col overflow-hidden m-0 p-6">
-          <div className="flex-1 flex flex-col overflow-hidden bg-background rounded-lg border">
-            {/* Header */}
-            <div className="border-b px-6 py-4 shrink-0">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <h2 className="text-lg font-semibold">Retry Queue</h2>
-                  <Badge variant="outline">{retryStats.total} scheduled</Badge>
-                  {retryQueueConnected && (
-                    <Badge variant="secondary" className="gap-1">
-                      <Radio className="w-3 h-3 text-green-500" />
-                      Live
-                    </Badge>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button size="sm" variant="ghost" onClick={() => refreshRetryQueue()}>
-                    <RefreshCw className={`w-4 h-4 ${retryQueueLoading ? 'animate-spin' : ''}`} />
-                  </Button>
-                </div>
-              </div>
-              
-              {/* Stats cards */}
-              <div className="grid grid-cols-3 gap-4 mt-4">
-                <Card>
-                  <CardContent className="pt-4">
-                    <div className="text-2xl font-bold text-red-600">{retryStats.dueNow}</div>
-                    <div className="text-sm text-muted-foreground">Due Now</div>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="pt-4">
-                    <div className="text-2xl font-bold text-yellow-600">{retryStats.nextHour}</div>
-                    <div className="text-sm text-muted-foreground">Next Hour</div>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="pt-4">
-                    <div className="text-2xl font-bold">{retryStats.next24Hours}</div>
-                    <div className="text-sm text-muted-foreground">Next 24 Hours</div>
-                  </CardContent>
-                </Card>
-              </div>
-            </div>
-
-            {/* Queue List */}
-            {retryQueueLoading ? (
-              <div className="flex-1 flex items-center justify-center">
-                <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
-              </div>
-            ) : retryQueue.length === 0 ? (
-              <div className="flex-1 flex items-center justify-center">
-                <div className="text-center py-12">
-                  <RotateCcw className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                  <h3 className="font-semibold text-lg mb-1">No Pending Retries</h3>
-                  <p className="text-muted-foreground">All calls are up to date</p>
-                </div>
-              </div>
-            ) : (
-              <ScrollArea className="flex-1">
-                <div className="divide-y">
-                  {retryQueue.map((item) => {
-                    const retryTime = item.next_retry_at ? new Date(item.next_retry_at) : null;
-                    const now = new Date();
-                    const isDue = retryTime && retryTime <= now;
-                    const timeUntil = retryTime ? Math.max(0, retryTime.getTime() - now.getTime()) : 0;
-                    const minutesUntil = Math.floor(timeUntil / 60000);
-                    const hoursUntil = Math.floor(minutesUntil / 60);
-
-                    return (
-                      <div
-                        key={item.id}
-                        className={`px-6 py-4 hover:bg-muted/50 transition-colors ${isDue ? 'bg-red-50 dark:bg-red-900/10' : ''}`}
-                      >
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-4">
-                            <div className={`w-2 h-2 rounded-full ${isDue ? 'bg-red-500 animate-pulse' : 'bg-yellow-500'}`} />
-                            <div>
-                              <div className="font-medium">{item.name}</div>
-                              <div className="text-sm text-muted-foreground flex items-center gap-2">
-                                <span>{item.phone}</span>
-                                {item.city && <span className="text-muted-foreground/60">• {item.city}, {item.province}</span>}
-                              </div>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-4">
-                            <div className="text-right">
-                              <div className="text-sm font-medium">
-                                {isDue ? (
-                                  <span className="text-red-600">Due Now</span>
-                                ) : hoursUntil > 0 ? (
-                                  <span>In {hoursUntil}h {minutesUntil % 60}m</span>
-                                ) : (
-                                  <span>In {minutesUntil}m</span>
-                                )}
-                              </div>
-                              <div className="text-xs text-muted-foreground">
-                                Retry #{item.retry_count + 1}
-                              </div>
-                            </div>
-                            {item.retry_reason && (
-                              <Badge variant="outline" className="text-xs">
-                                {item.retry_reason}
-                              </Badge>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </ScrollArea>
-            )}
-          </div>
+          <RetryQueuePanel />
         </TabsContent>
 
         {/* Search New Practitioners Tab */}
