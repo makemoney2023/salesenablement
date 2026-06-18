@@ -12,7 +12,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { usePathname } from "next/navigation";
-import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import { getBrowserSupabase, isBrowserSupabaseConfigured } from "@/lib/supabase/browser";
 import { useRetryTimeouts } from "@/hooks/useRetryTimeout";
 
 interface BadgeCounts {
@@ -46,6 +46,7 @@ const BADGE_ROUTES = {
 
 export function useSidebarBadges(): UseSidebarBadgesResult {
   const pathname = usePathname();
+  const supabase = getBrowserSupabase();
   const [counts, setCounts] = useState<BadgeCounts>({
     samples: 0,
     appointments: 0,
@@ -150,7 +151,7 @@ export function useSidebarBadges(): UseSidebarBadgesResult {
 
   // Fetch badge counts with retry logic
   const fetchCounts = useCallback(async (isRetry = false) => {
-    if (!isSupabaseConfigured || !supabase) {
+    if (!isBrowserSupabaseConfigured || !supabase) {
       if (isMountedRef.current) setLoading(false);
       return;
     }
@@ -263,7 +264,7 @@ export function useSidebarBadges(): UseSidebarBadgesResult {
   useEffect(() => {
     isMountedRef.current = true;
     
-    if (!isSupabaseConfigured || !supabase) {
+    if (!isBrowserSupabaseConfigured || !supabase) {
       setLoading(false);
       return;
     }
