@@ -525,8 +525,17 @@ export function PractitionerDetailDrawer({
       const result = await response.json();
       
       if (result.success) {
+        const reason = dncReason.trim();
         setDncDialogOpen(false);
         setDncReason("");
+        // Update the list badges before closing so they don't go stale.
+        onPractitionerUpdated?.({
+          ...practitioner,
+          do_not_call: true,
+          dnc_reason: reason,
+          dnc_source: "manual",
+          dnc_detected_at: new Date().toISOString(),
+        });
         // Close the drawer and let parent refresh
         onOpenChange(false);
       } else {
@@ -559,6 +568,14 @@ export function PractitionerDetailDrawer({
       if (result.success) {
         setRestoreDialogOpen(false);
         setRestoreConfirmed(false);
+        // Update the list badges before closing so they don't go stale.
+        onPractitionerUpdated?.({
+          ...practitioner,
+          do_not_call: false,
+          dnc_reason: null,
+          dnc_source: null,
+          dnc_detected_at: null,
+        });
         // Close the drawer and let parent refresh
         onOpenChange(false);
       } else {
