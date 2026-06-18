@@ -45,6 +45,7 @@ import { useSupabaseCallRecords } from "@/hooks/useSupabaseCallRecords";
 import { useRealtimePractitioners } from "@/hooks/useRealtimePractitioners";
 import { useRealtimeRetryQueue } from "@/hooks/useRealtimeRetryQueue";
 import { KPICards } from "@/components/campaign/kpi-cards";
+import { computeRecentCallCounts } from "@/components/campaign/kpi-utils";
 import { FilterPanel, FilterState, FilterSheet, FilterSheetTrigger } from "@/components/campaign/filter-panel";
 import { PipelineBoard } from "@/components/campaign/pipeline-board";
 import { AnalyticsDashboard } from "@/components/campaign/analytics-dashboard";
@@ -1298,6 +1299,7 @@ function CampaignPageContent() {
             yesterday.setDate(yesterday.getDate() - 1);
             return new Date(r.created_at).toDateString() === yesterday.toDateString();
           }).length}
+          recentCallCounts={computeRecentCallCounts(Object.values(callRecords), 7)}
         />
       </div>
 
