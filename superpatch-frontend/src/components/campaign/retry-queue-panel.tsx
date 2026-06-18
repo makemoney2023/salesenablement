@@ -39,7 +39,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import { getBrowserSupabase, isBrowserSupabaseConfigured } from "@/lib/supabase/browser";
 import type { RetryQueueEntry, RetryReason } from "@/lib/db/types";
 
 // Format time until retry
@@ -219,6 +219,7 @@ interface RetryQueuePanelProps {
 }
 
 export function RetryQueuePanel({ className }: RetryQueuePanelProps) {
+  const supabase = getBrowserSupabase();
   const [entries, setEntries] = useState<RetryQueueEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -228,7 +229,7 @@ export function RetryQueuePanel({ className }: RetryQueuePanelProps) {
 
   // Fetch upcoming retries
   const fetchRetries = useCallback(async () => {
-    if (!isSupabaseConfigured || !supabase) {
+    if (!isBrowserSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       setIsLoading(false);
       return;
@@ -261,7 +262,7 @@ export function RetryQueuePanel({ className }: RetryQueuePanelProps) {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [supabase]);
 
   // Initial fetch
   useEffect(() => {
