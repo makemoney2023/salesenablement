@@ -17,6 +17,7 @@ import {
   DEFAULT_PATHWAY_ID,
   KB_ID,
   VOICE_ID,
+  WEBHOOK_URL,
 } from "@/lib/config/pathways";
 
 const REPO_ROOT = resolve(__dirname, "../../..");
@@ -38,6 +39,8 @@ interface CanonicalIds {
   knowledge_base: { id: string };
   voice: { id: string };
   tools: Record<string, { id: string }>;
+  cal_com: { username: string; event_type_id: string; event_type_slug: string };
+  webhooks: { primary: string; env_override: string };
 }
 
 function loadCanonical(): CanonicalIds {
@@ -111,6 +114,67 @@ describe("Canonical IDs sync", () => {
       if (!edgeContent) return;
       expect(edgeContent).toContain(canonical.knowledge_base.id);
       expect(edgeContent).toContain(canonical.voice.id);
+    });
+  });
+
+  describe("webhook URL matches canonical_ids.json", () => {
+    const edgeContent = existsSync(EDGE_SHARED_PATH)
+      ? readFileSync(EDGE_SHARED_PATH, "utf-8")
+      : null;
+
+    it("frontend WEBHOOK_URL matches canonical webhooks.primary", () => {
+      // The frontend WEBHOOK_URL is env-overridable (NEXT_PUBLIC_BLAND_WEBHOOK_URL)
+      // but defaults to canonical_ids.json.webhooks.primary when the env var is unset.
+      expect(WEBHOOK_URL).toBe(canonical.webhooks.primary);
+    });
+
+    it("Edge _shared/pathways.ts contains canonical webhooks.primary URL", () => {
+      // The Edge mirror exports DEFAULT_WEBHOOK_URL; this file is validated by text
+      // parsing because tsconfig excludes supabase/functions from the Next.js build.
+      if (!edgeContent) return;
+      expect(
+        edgeContent.includes(canonical.webhooks.primary),
+        `Edge _shared/pathways.ts missing canonical webhook URL ${canonical.webhooks.primary}`
+      ).toBe(true);
+    });
+  });
+
+  describe("Cal.com config is present in canonical_ids.json", () => {
+    it("cal_com.event_type_id exists and is non-empty", () => {
+      // book-appointment Edge Function reads this value via the CAL_EVENT_TYPE_ID env
+      // var (env-coupling, not a direct import), so the test guards the canonical
+      // value's presence rather than importing the Deno function.
+      expect(canonical.cal_com).toBeDefined();
+      expect(typeof canonical.cal_com.event_type_id).toBe("string");
+      expect(canonical.cal_com.event_type_id.trim().length).toBeGreaterThan(0);
+    });
+  });
+
+  describe("Bland tool IDs are present in canonical_ids.json", () => {
+    // Tool IDs are JSON-only by design (not mirrored in the TS modules).
+    it("tools object is non-empty", () => {
+      expect(canonical.tools).toBeDefined();
+      expect(Object.keys(canonical.tools).length).toBeGreaterThan(0);
+    });
+
+    it.each(["check_availability", "book_appointment"])(
+      "tool %s has a non-empty id",
+      (toolKey) => {
+        const tool = canonical.tools[toolKey];
+        expect(tool, `canonical_ids.json missing tool key: ${toolKey}`).toBeDefined();
+        expect(typeof tool.id).toBe("string");
+        expect(tool.id.trim().length).toBeGreaterThan(0);
+      }
+    );
+
+    it("every canonical tool id is a non-empty string", () => {
+      for (const [key, tool] of Object.entries(canonical.tools)) {
+        expect(typeof tool.id, `tool ${key} id is not a string`).toBe("string");
+        expect(
+          tool.id.trim().length,
+          `tool ${key} id is empty`
+        ).toBeGreaterThan(0);
+      }
     });
   });
 });
