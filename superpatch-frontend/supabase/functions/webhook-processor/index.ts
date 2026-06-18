@@ -1167,7 +1167,14 @@ serve(async (req) => {
     const wentToVoicemail = payload.voicemail_detected === true || payload.answered_by === "voicemail" ||
       payload.status === "voicemail" || vars.went_to_voicemail === "true" || vars.voicemail_left === "true";
     const callCompleted = payload.status !== "failed" && payload.status !== "no-answer" && payload.completed === true;
-    const callStatus: CallStatus = deriveCallStatus({
+    // If the in-call book_cal_appointment tool already booked on Cal.com it
+    // returns the booking uid as the {{booking_uid}} pathway variable. A real
+    // booking exists even when the transcript never yielded a clear demo
+    // intent or appointment_time, so fold it into the call status below to
+    // avoid undercounting booked demos in KPIs. Declared here (before the
+    // status computation) and reused by the post-call dedup gate further down.
+    const inCallBookingUid = toStr(vars.booking_uid);
+    let callStatus: CallStatus = deriveCallStatus({
       completed: callCompleted,
       // `wantsDemo` already folds in `vars.schedule_demo`; pass it as the demo
       // intent signal and leave `scheduleDemo` false to avoid double-counting.
@@ -1176,6 +1183,9 @@ serve(async (req) => {
       appointmentTime: appointmentTime ?? null,
       wentToVoicemail,
     });
+    if (inCallBookingUid && callStatus === "completed") {
+      callStatus = "booked";
+    }
 
     // Extract sentiment
     const sentimentLabel = payload.analysis?.sentiment?.toLowerCase() || null;
@@ -1200,7 +1210,7 @@ serve(async (req) => {
       duration_seconds: payload.call_length ? Math.round(payload.call_length) : null,
       transcript: payload.concatenated_transcript,
       summary: payload.analysis?.summary,
-      appointment_booked: callStatus === "booked" || callStatus === "calendar_sent",
+      appointment_booked: callStatus === "booked" || !!inCallBookingUid,
       appointment_time: parsedAppointmentTime,
       calendar_invite_sent: false,
       practitioner_email: resolvedEmail || null,
@@ -1563,8 +1573,8 @@ serve(async (req) => {
     // If the in-call Bland tool (book_cal_appointment) already booked on
     // Cal.com, it returns the booking uid as the {{booking_uid}} pathway
     // variable. Record it so we both surface the booking and skip a duplicate
-    // post-call booking below.
-    const inCallBookingUid = toStr(vars.booking_uid);
+    // post-call booking below. (inCallBookingUid is declared earlier, near the
+    // call-status computation, and reused here so it folds into KPIs too.)
     if (inCallBookingUid && savedRecord?.id && !savedRecord.booking_id) {
       await supabase.from("call_records")
         .update({ booking_id: inCallBookingUid })

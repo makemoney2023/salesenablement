@@ -794,11 +794,6 @@
             "wants_sample",
             "string",
             "Whether they want product samples - true or false"
-          ],
-          [
-            "booking_uid",
-            "string",
-            "Cal.com booking uid returned by the in-call book_cal_appointment tool (used to skip duplicate post-call booking)"
           ]
         ]
       },
