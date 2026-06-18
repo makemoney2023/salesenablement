@@ -135,7 +135,6 @@ export class BatchCaller {
   private currentPractitionerId: string | null = null;
   private delayBetweenCalls = 60000; // 1 minute default
   private listeners: EventListener[] = [];
-  private pollingInterval: NodeJS.Timeout | null = null;
   // Per-practitioner in-flight guard. Prevents the same practitioner from
   // being dialed twice in parallel (e.g., double-click on the drawer's
   // "Call Now" button, or one operator dialing on two tabs). Without this,
@@ -630,11 +629,6 @@ export class BatchCaller {
     this.isPaused = false;
     this.currentCallId = null;
     this.currentPractitionerId = null;
-
-    if (this.pollingInterval) {
-      clearInterval(this.pollingInterval);
-      this.pollingInterval = null;
-    }
 
     saveCampaignQueueState({
       is_running: false,

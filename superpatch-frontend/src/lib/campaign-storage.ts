@@ -564,7 +564,6 @@ export interface CampaignQueueState {
   current_practitioner_id?: string;
   queued_practitioner_ids: string[];
   delay_between_calls_ms: number;
-  max_concurrent_calls: number;
   started_at?: string;
   paused_at?: string;
 }
@@ -573,7 +572,6 @@ const DEFAULT_QUEUE_STATE: CampaignQueueState = {
   is_running: false,
   queued_practitioner_ids: [],
   delay_between_calls_ms: 60000, // 1 minute
-  max_concurrent_calls: 1,
 };
 
 export function getCampaignQueueState(): CampaignQueueState {
@@ -600,45 +598,9 @@ export function saveCampaignQueueState(state: Partial<CampaignQueueState>): void
   }
 }
 
-export function addToQueue(practitionerIds: string[]): void {
-  const state = getCampaignQueueState();
-  const newIds = practitionerIds.filter(id => !state.queued_practitioner_ids.includes(id));
-  
-  saveCampaignQueueState({
-    queued_practitioner_ids: [...state.queued_practitioner_ids, ...newIds],
-  });
-  
-  // Update status for queued practitioners
-  for (const id of newIds) {
-    const record = getCallRecord(id);
-    if (record && record.status === 'not_called') {
-      updateCallStatus(id, 'queued');
-    }
-  }
-}
-
 export function removeFromQueue(practitionerId: string): void {
   const state = getCampaignQueueState();
   saveCampaignQueueState({
     queued_practitioner_ids: state.queued_practitioner_ids.filter(id => id !== practitionerId),
-  });
-}
-
-export function clearQueue(): void {
-  const state = getCampaignQueueState();
-  
-  // Reset status for queued practitioners
-  for (const id of state.queued_practitioner_ids) {
-    const record = getCallRecord(id);
-    if (record && record.status === 'queued') {
-      updateCallStatus(id, 'not_called');
-    }
-  }
-  
-  saveCampaignQueueState({
-    is_running: false,
-    queued_practitioner_ids: [],
-    current_call_id: undefined,
-    current_practitioner_id: undefined,
   });
 }
