@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import { getBrowserSupabase, isBrowserSupabaseConfigured } from "@/lib/supabase/browser";
 import type { CallRecord, CallStatus } from "@/lib/db/types";
 import type { RealtimeChannel, RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 
@@ -63,6 +63,8 @@ export function useRealtimeCallStatus(
     onCallCompleted,
   } = options;
 
+  const supabase = getBrowserSupabase();
+
   const [activeCalls, setActiveCalls] = useState<ActiveCall[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -80,7 +82,7 @@ export function useRealtimeCallStatus(
 
   // Fetch active calls from database with AbortError handling
   const fetchActiveCalls = useCallback(async () => {
-    if (!isSupabaseConfigured || !supabase) {
+    if (!isBrowserSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       return;
     }
@@ -242,7 +244,7 @@ export function useRealtimeCallStatus(
   useEffect(() => {
     isMountedRef.current = true;
     
-    if (!isSupabaseConfigured || !supabase) {
+    if (!isBrowserSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       return;
     }
@@ -325,11 +327,12 @@ export function useRealtimeCallStatus(
  * Hook for tracking a single call's status in real-time
  */
 export function useCallStatusTracker(callId: string | null) {
+  const supabase = getBrowserSupabase();
   const [status, setStatus] = useState<CallStatus | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    if (!callId || !isSupabaseConfigured || !supabase) {
+    if (!callId || !isBrowserSupabaseConfigured || !supabase) {
       setIsLoading(false);
       return;
     }
