@@ -10,7 +10,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import { getBrowserSupabase, isBrowserSupabaseConfigured } from "@/lib/supabase/browser";
 import { useRetryTimeouts } from "@/hooks/useRetryTimeout";
 
 interface RetryQueueItem {
@@ -68,6 +68,8 @@ export function useRealtimeRetryQueue(
     onRetryScheduled,
     onRetryProcessed,
   } = options;
+
+  const supabase = getBrowserSupabase();
 
   const [queue, setQueue] = useState<RetryQueueItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -163,7 +165,7 @@ export function useRealtimeRetryQueue(
 
   // Fetch retry queue from database with retry logic
   const fetchQueue = useCallback(async (isRetry = false) => {
-    if (!isSupabaseConfigured || !supabase) {
+    if (!isBrowserSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       setLoading(false);
       return;
@@ -347,7 +349,7 @@ export function useRealtimeRetryQueue(
   useEffect(() => {
     isMountedRef.current = true;
     
-    if (!isSupabaseConfigured || !supabase) {
+    if (!isBrowserSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       setLoading(false);
       return;
