@@ -6,7 +6,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { canonicalPractitionerType } from "../_shared/practitioner-type.ts";
-import { toBool } from "../_shared/coerce.ts";
+import { toBool, toStr } from "../_shared/coerce.ts";
 import { pickSampleEmail } from "./email.ts";
 import { buildProductsRequested, classifySampleType } from "./sample-type.ts";
 import { verifyRequestAuth } from "./auth-gate.ts";
@@ -15,6 +15,7 @@ import { decideIdempotency } from "./idempotency.ts";
 import { detectDNCRequest } from "./dnc.ts";
 import { shouldDispatchBooking, shouldInsertSample } from "./gating.ts";
 import { deriveCallStatus } from "./_shared/derive-call-status.ts";
+import { needsPostCallBooking } from "./_shared/booking-gate.ts";
 import { redactName, redactPhone, redactPii } from "../_shared/redact.ts";
 import { sanitizeError } from "../_shared/sanitize-error.ts";
 
@@ -1559,9 +1560,28 @@ serve(async (req) => {
       }
     }
 
+    // If the in-call Bland tool (book_cal_appointment) already booked on
+    // Cal.com, it returns the booking uid as the {{booking_uid}} pathway
+    // variable. Record it so we both surface the booking and skip a duplicate
+    // post-call booking below.
+    const inCallBookingUid = toStr(vars.booking_uid);
+    if (inCallBookingUid && savedRecord?.id && !savedRecord.booking_id) {
+      await supabase.from("call_records")
+        .update({ booking_id: inCallBookingUid })
+        .eq("id", savedRecord.id);
+      savedRecord.booking_id = inCallBookingUid;
+    }
+    // Only dispatch the post-call book-appointment when no in-call booking
+    // exists (fallback for tool timeouts). The existing dedup checks
+    // (shouldDispatchBooking) still apply on top of this.
+    const postCallBookingNeeded = needsPostCallBooking({
+      inCallBookingUid,
+      existingBookingId: savedRecord?.booking_id ?? null,
+    });
+
     // Trigger appointment booking if needed (decoupled via edge function)
     // This will create both Cal.com booking AND appointment record in our table
-    if (wantsDemo && parsedAppointmentTime && resolvedPractitionerName && resolvedEmail && payload.completed && savedRecord?.id) {
+    if (postCallBookingNeeded && wantsDemo && parsedAppointmentTime && resolvedPractitionerName && resolvedEmail && payload.completed && savedRecord?.id) {
       // Check for existing appointment to prevent duplicates
       const { data: existingAppt } = await supabase
         .from("appointments")

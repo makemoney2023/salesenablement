@@ -114,6 +114,16 @@ Booking a demo is the primary goal of every pathway, and booking earns the pract
 
 No schema or Edge Function change accompanies this — `wants_sample` already drives sample insertion. The booking dispatch (`shouldDispatchBooking`) and the sample insertion (`shouldInsertSample`) fire independently from the same completed booking call; a Do Not Call request suppresses both.
 
+### In-call booking reconciliation — `booking_uid` (2026-06-18)
+
+The in-call `book_cal_appointment` Bland tool books on Cal.com DURING the call. Its HTTP response is mapped to pathway variables via the tool's `response` block (`update_bland_tools_calcom.py`), where `$.data.uid → booking_uid` and `$.data.status → booking_status`. To make `booking_uid` survive into the post-call webhook payload, the `Schedule Appointment` node now also lists it in `extractVars`:
+
+| Variable | Type | Source | Effect |
+|----------|------|--------|--------|
+| `booking_uid` | string | Cal.com `data.uid` via tool `response` + `Schedule Appointment` `extractVars` | `webhook-processor` records it as `call_records.booking_id` and **skips** the redundant post-call `book-appointment` dispatch (via `needsPostCallBooking`), preventing double-booking. |
+
+The booking request `metadata` also carries `call_record_id` and `call_id` (pathway-scoped `{{...}}` vars) as an orphan-linking fallback for `sync-cal-bookings`.
+
 ### Variable Type Handling
 
 **Important:** Bland.ai may return boolean variables in different formats depending on the pathway configuration:

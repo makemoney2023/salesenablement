@@ -152,6 +152,14 @@ def build_book_appointment_config(
                     "products_interested": "{{input.products_interested}}",
                     "practice_name": "{{input.practice_name}}",
                     "notes": "{{input.notes}}",
+                    # Orphan-linking fallback for sync-cal-bookings. These are
+                    # pathway-scoped variables (NOT input_schema fields), so
+                    # they use the bare `{{var}}` form rather than `{{input.*}}`.
+                    # `call_id` is the Bland built-in call id; `call_record_id`
+                    # is populated from request_data when available (empty
+                    # otherwise — sync-cal-bookings skips empty values).
+                    "call_record_id": "{{call_record_id}}",
+                    "call_id": "{{call_id}}",
                 },
             },
             "input_schema": {
@@ -217,10 +225,15 @@ def build_book_appointment_config(
                 },
                 "required": ["start_time", "name", "email"],
             },
-            # v2 envelope: { status, data: { id, uid, start, end, ... } }
+            # v2 envelope: { status, data: { id, uid, status, start, end, ... } }
+            # These response keys become Bland pathway variables that the
+            # post-call webhook forwards (e.g. {{booking_uid}}). The
+            # webhook-processor reads booking_uid to record the in-call
+            # booking and skip a duplicate post-call booking.
             "response": {
                 "booking_id": "$.data.id",
                 "booking_uid": "$.data.uid",
+                "booking_status": "$.data.status",
                 "confirmation_message": "$.data.title",
                 "start_time": "$.data.start",
                 "end_time": "$.data.end",
