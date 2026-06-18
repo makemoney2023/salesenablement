@@ -686,6 +686,7 @@ export function PractitionerDetailDrawer({
   const hasPhone = !!practitioner.phone;
   const canCall =
     hasPhone &&
+    !practitioner.do_not_call &&
     (!callRecord ||
       ["not_called", "failed", "completed"].includes(callRecord.status));
 
@@ -1365,6 +1366,7 @@ export function PractitionerDetailDrawer({
               <Button
                 onClick={handleCallNow}
                 disabled={!canCall || isCalling}
+                title={practitioner.do_not_call ? "Marked Do Not Call" : undefined}
                 className="flex-1"
                 size="lg"
               >
@@ -1554,6 +1556,12 @@ export function PractitionerDetailDrawer({
           {!hasPhone && (
             <p className="text-xs text-muted-foreground text-center mt-2">
               Cannot call - no phone number available
+            </p>
+          )}
+
+          {hasPhone && practitioner.do_not_call && (
+            <p className="text-xs text-muted-foreground text-center mt-2">
+              Marked Do Not Call
             </p>
           )}
         </div>
