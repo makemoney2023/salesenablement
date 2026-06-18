@@ -10,7 +10,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import { getBrowserSupabase, isBrowserSupabaseConfigured } from "@/lib/supabase/browser";
 import type { SampleRequest, SampleStatus, SampleRequestUpdate } from "@/lib/db/types";
 import { useRetryTimeouts } from "@/hooks/useRetryTimeout";
 
@@ -58,6 +58,8 @@ export function useSampleRequests(
     page: initialPage = 1,
     limit = 25,
   } = options;
+
+  const supabase = getBrowserSupabase();
 
   const [samples, setSamples] = useState<SampleRequest[]>([]);
   const [loading, setLoading] = useState(true);
@@ -107,7 +109,7 @@ export function useSampleRequests(
 
   // Fetch status counts with retry logic
   const fetchStatusCounts = useCallback(async (isRetry = false) => {
-    if (!isSupabaseConfigured || !supabase) return;
+    if (!isBrowserSupabaseConfigured || !supabase) return;
 
     if (!isRetry) {
       retryCountRef.current = 0;
@@ -328,7 +330,7 @@ export function useSampleRequests(
   useEffect(() => {
     isMountedRef.current = true;
     
-    if (!isSupabaseConfigured || !supabase) {
+    if (!isBrowserSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
       setLoading(false);
       return;

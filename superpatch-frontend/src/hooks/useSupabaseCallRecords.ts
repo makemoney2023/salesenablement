@@ -11,7 +11,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import { getBrowserSupabase, isBrowserSupabaseConfigured } from "@/lib/supabase/browser";
 import type { CallRecord, CallStatus, CampaignStats } from "@/lib/db/types";
 
 // Normalized call record type (no null values, for UI compatibility)
@@ -173,6 +173,7 @@ function calculateStats(records: NormalizedCallRecord[]): CampaignStats {
 }
 
 export function useSupabaseCallRecords(): UseSupabaseCallRecordsResult {
+  const supabase = getBrowserSupabase();
   const [records, setRecords] = useState<CallRecordsMap>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -233,7 +234,7 @@ export function useSupabaseCallRecords(): UseSupabaseCallRecordsResult {
 
   // Set up realtime subscription
   const setupRealtime = useCallback(() => {
-    if (!isSupabaseConfigured || !supabase) {
+    if (!isBrowserSupabaseConfigured || !supabase) {
       console.log("Supabase not configured, using polling");
       return false;
     }
