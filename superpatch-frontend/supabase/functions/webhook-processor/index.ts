@@ -14,6 +14,7 @@ import { dispatchEdgeFunction } from "./dispatch.ts";
 import { decideIdempotency } from "./idempotency.ts";
 import { detectDNCRequest } from "./dnc.ts";
 import { shouldDispatchBooking, shouldInsertSample } from "./gating.ts";
+import { deriveCallStatus } from "./_shared/derive-call-status.ts";
 import { redactName, redactPhone, redactPii } from "../_shared/redact.ts";
 import { sanitizeError } from "../_shared/sanitize-error.ts";
 
@@ -1159,18 +1160,21 @@ serve(async (req) => {
     // experiment-version suffixes.
     resolvedPractitionerType = canonicalPractitionerType(resolvedPractitionerType);
 
-    // Determine call status
-    let callStatus: CallStatus = "completed";
+    // Determine call status. A booking only counts when the prospect actually
+    // wanted a demo/appointment — an appointment_time alone (callback
+    // scheduling) must NOT be treated as a booked demo and inflate KPIs.
     const wentToVoicemail = payload.voicemail_detected === true || payload.answered_by === "voicemail" ||
       payload.status === "voicemail" || vars.went_to_voicemail === "true" || vars.voicemail_left === "true";
-
-    if (payload.status === "failed" || payload.status === "no-answer" || !payload.completed) {
-      callStatus = "failed";
-    } else if (wentToVoicemail) {
-      callStatus = "voicemail" as CallStatus;
-    } else if (wantsDemo || appointmentTime) {
-      callStatus = "booked";
-    }
+    const callCompleted = payload.status !== "failed" && payload.status !== "no-answer" && payload.completed === true;
+    const callStatus: CallStatus = deriveCallStatus({
+      completed: callCompleted,
+      // `wantsDemo` already folds in `vars.schedule_demo`; pass it as the demo
+      // intent signal and leave `scheduleDemo` false to avoid double-counting.
+      wantsDemo,
+      scheduleDemo: false,
+      appointmentTime: appointmentTime ?? null,
+      wentToVoicemail,
+    });
 
     // Extract sentiment
     const sentimentLabel = payload.analysis?.sentiment?.toLowerCase() || null;
