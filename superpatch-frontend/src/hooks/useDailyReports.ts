@@ -11,7 +11,12 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
-import type { CampaignAnalytics } from "@/lib/db/types";
+import type { CallRecord, CampaignAnalytics } from "@/lib/db/types";
+import {
+  aggregateCallRecordsByDate,
+  mergeDailyReports,
+  toLocalDateKey,
+} from "@/lib/db/campaign-analytics";
 import { useRetryTimeouts } from "@/hooks/useRetryTimeout";
 
 interface UseDailyReportsOptions {
@@ -60,7 +65,10 @@ export function useDailyReports(
     limit = 90,
   } = options;
 
-  const [reports, setReports] = useState<CampaignAnalytics[]>([]);
+  const [storedReports, setStoredReports] = useState<CampaignAnalytics[]>([]);
+  const [liveCallRecords, setLiveCallRecords] = useState<
+    Pick<CallRecord, "created_at" | "status" | "duration_seconds" | "appointment_booked">[]
+  >([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
@@ -73,7 +81,15 @@ export function useDailyReports(
   const startDateRef = useRef(startDate);
   const endDateRef = useRef(endDate);
 
-  // Fetch reports with AbortError handling
+  const todayDateKey = useMemo(() => toLocalDateKey(new Date().toISOString()), []);
+
+  const reports = useMemo(() => {
+    const liveByDate = aggregateCallRecordsByDate(liveCallRecords);
+    return mergeDailyReports(storedReports, liveByDate, todayDateKey);
+  }, [storedReports, liveCallRecords, todayDateKey]);
+
+  // Fetch stored reports + live call records (dashboard uses call_records directly;
+  // campaign_analytics is only populated nightly by generate-daily-report).
   const fetchReports = useCallback(async () => {
     if (!isSupabaseConfigured || !supabase) {
       setError("Supabase not configured");
@@ -81,29 +97,42 @@ export function useDailyReports(
       return;
     }
 
+    const startIso = startDate.toISOString();
+    const endIso = endDate.toISOString();
+
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error: fetchError } = await (supabase as any)
-        .from("campaign_analytics")
-        .select("*")
-        .gte("date", startDate.toISOString().split("T")[0])
-        .lte("date", endDate.toISOString().split("T")[0])
-        .order("date", { ascending: false })
-        .limit(limit);
+      const [analyticsResult, callRecordsResult] = await Promise.all([
+        supabase
+          .from("campaign_analytics")
+          .select("*")
+          .gte("date", startDate.toISOString().split("T")[0])
+          .lte("date", endDate.toISOString().split("T")[0])
+          .order("date", { ascending: false })
+          .limit(limit),
+        supabase
+          .from("call_records")
+          .select("created_at, status, duration_seconds, appointment_booked")
+          .gte("created_at", startIso)
+          .lte("created_at", endIso),
+      ]);
 
       if (!isMountedRef.current) return;
 
+      const fetchError = analyticsResult.error ?? callRecordsResult.error;
       if (fetchError) {
-        // Ignore abort errors
-        if (fetchError.message?.includes('AbortError') || fetchError.message?.includes('aborted')) return;
+        if (fetchError.message?.includes("AbortError") || fetchError.message?.includes("aborted")) {
+          return;
+        }
         setError(fetchError.message);
       } else {
-        setReports(data || []);
+        setStoredReports(analyticsResult.data || []);
+        setLiveCallRecords(callRecordsResult.data || []);
         setError(null);
       }
     } catch (err) {
-      // Ignore abort errors
-      if (err instanceof Error && (err.name === 'AbortError' || err.message?.includes('aborted'))) return;
+      if (err instanceof Error && (err.name === "AbortError" || err.message?.includes("aborted"))) {
+        return;
+      }
       if (!isMountedRef.current) return;
       setError(err instanceof Error ? err.message : "Failed to fetch");
     } finally {
@@ -220,29 +249,24 @@ export function useDailyReports(
       };
 
       if (eventType === "INSERT" && newRecord) {
-        // Only add if within date range
         if (isInDateRange(newRecord.date)) {
-          setReports((prev) => [newRecord, ...prev]);
+          setStoredReports((prev) => [newRecord, ...prev]);
         }
       }
 
       if (eventType === "UPDATE" && newRecord) {
-        setReports((prev) => {
+        setStoredReports((prev) => {
           const index = prev.findIndex((report) => report.id === newRecord.id);
           const matchesDateRange = isInDateRange(newRecord.date);
 
           if (index >= 0) {
             if (matchesDateRange) {
-              // Update existing record
               const updated = [...prev];
               updated[index] = newRecord;
               return updated;
-            } else {
-              // No longer in date range, remove it
-              return prev.filter((report) => report.id !== newRecord.id);
             }
+            return prev.filter((report) => report.id !== newRecord.id);
           } else if (matchesDateRange) {
-            // Newly matches date range, add it
             return [newRecord, ...prev];
           }
 
@@ -251,7 +275,7 @@ export function useDailyReports(
       }
 
       if (eventType === "DELETE" && oldRecord?.id) {
-        setReports((prev) => prev.filter((report) => report.id !== oldRecord.id));
+        setStoredReports((prev) => prev.filter((report) => report.id !== oldRecord.id));
       }
     },
     []
@@ -323,6 +347,23 @@ export function useDailyReports(
         }
       });
 
+    const callRecordsChannel = supabase
+      .channel("call_records_reports_changes")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "call_records",
+        },
+        () => {
+          if (isMountedRef.current && fetchReportsRef.current) {
+            fetchReportsRef.current();
+          }
+        },
+      )
+      .subscribe();
+
     channelRef.current = channel;
 
     // Cleanup
@@ -332,6 +373,9 @@ export function useDailyReports(
       if (channelRef.current && supabase) {
         supabase.removeChannel(channelRef.current);
         channelRef.current = null;
+      }
+      if (supabase) {
+        supabase.removeChannel(callRecordsChannel);
       }
     };
   }, [handleChange, scheduleRetry]);

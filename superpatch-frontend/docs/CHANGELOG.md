@@ -4,6 +4,18 @@ Frontend app deltas (Next.js app, API routes, client components, frontend deps).
 
 ---
 
+## 2026-06-18 — Reports show live call counts (match dashboard)
+
+- **What changed**: `/campaign/reports` now merges nightly `campaign_analytics` rows with live aggregation from `call_records`. Today's calls (and any day missing a stored report) appear immediately instead of waiting for the 8 AM UTC `generate-daily-report` cron.
+- **Why it changed**: The campaign dashboard reads `call_records` directly, but Reports only read `campaign_analytics` — populated once daily for *yesterday* — so operators saw calls on the dashboard but zero in Reports.
+- **Code touchpoints**: `src/lib/db/campaign-analytics.ts`, `src/hooks/useDailyReports.ts`, `src/app/campaign/reports/page.tsx`, `src/__tests__/campaign-analytics.test.ts`.
+- **Data-flow impact**: dialer → `call_records` → Reports UI (live); cron → `campaign_analytics` → Reports UI (historical enrichment).
+- **ID / contract changes**: none.
+- **API / schema impact**: none.
+- **Verification**: `npm test src/__tests__/campaign-analytics.test.ts`; `tsc --noEmit`.
+
+---
+
 ## 2026-06-15 — Quick-call aborted by optional email validation
 
 - **What changed**:
