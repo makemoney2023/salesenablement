@@ -11,8 +11,9 @@ Voice ID is not chosen. Placeholder: `TODO_CHRISTOPHER_BLAND_VOICE_ID`.
 | File | What it is |
 |---|---|
 | `abracadabra_knowledge_base.txt` | Facts the agent may say. Every service, offer, and number is taken from https://abra-ca-dabra.app (and the pages on its sitemap), fetched 2026-10-19. Gaps are `TODO_CHRISTOPHER_*`. |
-| `Abracadabra_SMB_Outbound.json` | One outbound pathway for small-business owners. Qualify, then book a thirty-minute working session with Christopher Buzny. |
-| `test_abracadabra_pathway_schema.py` | Checks the draft parses, keeps the source graph, and does not keep SuperPatch language. |
+| `Abracadabra_SMB_Outbound.json` | One outbound pathway for small-business owners. Qualify, then book a thirty-minute working session with Christopher Buzny. Per-call facts use Bland `{{variable}}` tags from `request_data`. |
+| `sample_request_data.json` | Fake Northwind Bakery payload. Not a real lead. Not a number to dial. |
+| `test_abracadabra_pathway_schema.py` | Checks the draft parses, keeps the source graph, does not keep SuperPatch language, and only uses documented `request_data` variables. |
 
 ## Graph compared with the source
 
@@ -136,11 +137,88 @@ Do not publish until these are real. The agent is instructed not to speak the to
 | `TODO_CHRISTOPHER_READINESS_PRICE` | KB | The check page does not say free or paid |
 | `TODO_CHRISTOPHER_LUNCH` | Team Working Session | Meal offer removed |
 | `TODO_CHRISTOPHER_SOCIAL_DETAIL` | KB | Homepage mentions social posts. No separate service URL was on the sitemap |
-| `TODO_CHRISTOPHER_LEAD_LIST_FIELDS` | KB | Call-list variables this pathway expects: `business_name`, `business_city`, `business_region`, `business_address`, `website`, `team_count`, `contact_email`, optional `google_rating` and `review_count`. `to` is the number Bland dialed |
+| `TODO_CHRISTOPHER_LEAD_LIST_FIELDS` | KB, this README | Per-call variables below. Several HQ columns do not exist yet (`schema_score_reasons`, `schema_report_pdf_url`, split city/region/address, `team_count`, ratings). |
 
 The only traffic figures in the prompts are pirx.ca, Google Search Console, Jul 18 to Oct 17, 2026: 398K search impressions, 1.94K clicks, average position 7.6, and 46.5K AI-feature impressions as a separate report. The agent is told results vary by site and that nobody can guarantee a mention.
 
 StrongFoam's public website stays in the KB because the site publishes it as a case study: visitors can start an estimate and book (https://abra-ca-dabra.app/portfolio/strongfoam-website/). Milrcorr's portfolio page also describes that business as StrongFoam's sister fit-out company. Renew Implants and the StrongFoam CRM placeholder were removed from this draft. The agent is not given a write-up of either.
+
+## Per-call request_data
+
+Bland `POST /v1/calls` `request_data` becomes pathway variables. The knowledge base stays generic. Empty, null, or blank means Ada uses the generic line already in that node. She does not say a blank, "null", or a placeholder.
+
+`company_summary` is at most two sentences. `pain_points` and `talking_points` are at most three. `pain_points` and `signals` are questions. `fit_reasons` is one paraphrased public reason. `talking_points` are only while she presents one service.
+
+`owner_name` is the meeting owner. For this campaign it is Christopher Buzny. If it is empty, she says Christopher Buzny. `contact_name` is the person on the phone. The extract slot named `owner_name` tells the model not to overwrite the meeting owner with the person who answered.
+
+The only score she says is `schema_score` (0–100, the website / AI-visibility score HQ stores as `deals.lead_score` / `schema_score`; lower means more room to improve). She says it as an opportunity, with `schema_public_finding` and the top one or two `schema_score_reasons` when those are present. She never says `bdr_fit_score`, `routing_status`, "C quality", sources, staff notes, "ready for outbound", "nurture", or `lead_score` as its own number. She does not speak the numeric Readiness Check scores. `readiness_summary`, when present, is one sentence with no number.
+
+`sample_request_data.json` is the fake Northwind example, including a fake PDF URL on `example.com`. Do not dial `+15555550123`.
+
+| Variable | Nodes | When it is empty |
+|---|---|---|
+| `business_name` | 1, 2, 41 | "the owner" / "someone there". No invented name. |
+| `contact_name` | 1, 32, 40 | Ask for the owner, or the title if that is set. Node 32 thanks them by name only when it is set. |
+| `contact_title` | 1, 38, 40 | Generic owner / decision-maker ask. |
+| `contact_email` | 1, 2, 8, 13, 26, 27, 28, 32, 37 | Ask for the email before the invite. On the report offer, name the address only when it is already known. |
+| `best_phone` | 27, 28 | Falls back to `to`, then "what's the best number?". Never speak a blank number. |
+| `website` | 1, 2, and the score line on 8, 13, 26 | Do not name a site. The score line drops "on {site}". |
+| `industry` | 2 | Skip the industry phrase. |
+| `business_city`, `location_note` | 1 | Drop the place. `business_region` and `business_address` are spoken only when set. |
+| `company_summary` | 2 | Generic thirty-second story. |
+| `pain_points` | 5 | "What's the biggest slowdown after that first contact?" |
+| `tech_stack` | 6, 15 | Generic tools question. "Already Have Someone" stays the generic compliment. |
+| `talking_points` | 8, 9, 10, 11, 12 | The written presentation for that service. At most three lines, and only if they match that service. |
+| `decision_makers` | 38, 40 | Generic "owner or manager" question. |
+| `fit_reasons` | 1, 2 | No invented reason for the call. |
+| `signals` | 5 | Generic slowdown question. Not a score. |
+| `schema_public_finding` | 2, 8, 13 | No invented finding about their site. |
+| `schema_score` | 2, 8, 13, 26 | Do not mention a score. |
+| `schema_score_reasons` | 2, 8, 13, 26, 37 | "The full breakdown is in the report." No invented reasons. |
+| `schema_report_pdf_url` | 2, 8, 13, 26, 37 | Fall back to `schema_report_url`, then the generic public page. She offers to email the PDF to `contact_email`. She does not send it. |
+| `schema_report_url` | 2, 8, 13, 26, 37 | Generic public page. Do not spell the URL unless asked. |
+| `survey_url` | 26 | Offer check.abra-ca-dabra.app. |
+| `readiness_summary` | 26 | Skip it. No numeric survey score. |
+| `owner_name` | 1, and the shared prompt on nodes 2–41 (every line that names the meeting owner, including 24, 30, and 32) | Say "Christopher Buzny". |
+| `to` | 27, 28 | Ask for the best number. `to` is the number Bland dialed, not an HQ column. |
+| `appointment_time` | 28, 32, and the other scheduling nodes that already confirm the time | Ask for a day and a time. Do not say a blank time. |
+| `team_count`, `business_languages`, `google_rating`, `review_count` | 1 | Leave them out. Do not invent a headcount or a rating. HQ does not export these. |
+
+### Where `schema_score_reasons` should come from
+
+Read-only check of `makemoney2023/abracadabra` main on 2026-10-19. This repo was not edited.
+
+The scan stores the number and the findings. It does not store a dialer-ready reasons list on the deal.
+
+- `readiness_scans.score_total` is the 0–100 score. `score_breakdown_json` holds five pillars (structured data, AI discovery files, AI crawlability, page coverage, answer readiness).
+- `readiness_scan_findings` stores `code`, `severity`, `passed`, `message`, `page_url`, and `evidence_json` (`readiness-check/migrations/0001_readiness_scans.sql`).
+- `buildPriorityFixes` in `readiness-check/src/lib/scoring/findings.ts` ranks failed, non-info findings and returns up to five `message` strings.
+- `buildPillarWhy` maps finding codes to short labels such as "Missing llms.txt" (`readiness-check/src/lib/scoring/pillar-why.ts`).
+- `deals.lead_score`, `scored_at`, and `routing_status` are the HQ columns (`handoff/migrations/0024_lead_scores.sql`). Pass the website number as `schema_score` only. Do not pass `routing_status`.
+- `presentSchemaLead` in `handoff/src/lib/schema-report.ts` builds `schema_report_url` as `https://check.abra-ca-dabra.app/scan/{publicToken}`. Its lines are pillar scores ("Structured data 20/35"), not plain-language reasons. `schema_check_sites.answer` is a staff review sentence, not this list.
+
+**Gap.** HQ has no `schema_score_reasons` field. The dialer should copy up to five failed findings from `readiness_scan_findings.message`, in `buildPriorityFixes` order, rewritten into "what's missing and why it matters" when the stored message is only a label. Do not pass `evidence_json`, finding codes, or pillar scores for Ada to read. Until that copy exists, send `schema_score_reasons` as an empty list.
+
+### Does a PDF exist today?
+
+A PDF can be rendered. A stable per-lead PDF URL does not exist. Live calls must pass `schema_report_pdf_url` as `""`. The sample file's `example.com` URL is only there to show the shape.
+
+What exists:
+
+- `GET /api/scans/{token}/pdf` (`readiness-check/src/app/api/scans/[token]/pdf/route.tsx`) renders a schema report with `@react-pdf/renderer` from the scan payload: score, summary, pillar scores, page matrix, and findings. The next-step line tells the reader to install a fix package. It does not invite them to book with Christopher. The route requires an unlock cookie and returns a download. It does not store the file.
+- `GET /api/assessments/{token}/pdf` is a different document, the questionnaire report, and only after the visitor leaves an email. It is not the schema scan PDF.
+- `schema_report_url` is the HTML page `/scan/{publicToken}`, not a PDF.
+- Handoff's Wrangler config binds R2 buckets named `handoff` and `handoff-skills`. The readiness-check worker config does not bind R2 for this report, and nothing writes the scan PDF into R2.
+- No `schema_report_pdf_url` column or export field was found.
+
+**Proposed HQ change. Needs Christopher's approval. Not built here.** After `scan_ready`, a Cloudflare Worker should generate the PDF (the existing renderer, or Browser Rendering), store it in R2, and write a stable `schema_report_pdf_url` onto the deal export. The PDF should contain the score, the plain-language reasons, the fixes, and a call to book the working session with Christopher Buzny. Ada offers to email that PDF to `contact_email`. The send happens after the call on the written-follow-up flag. Ada does not send it live and does not name Houdini.
+
+### Open questions for Christopher
+
+1. Approve copying `readiness_scan_findings.message` (failed rows, top five, plain language) into `schema_score_reasons` at dial time.
+2. Approve the stored PDF: Worker, R2, `schema_report_pdf_url`, with the score, reasons, fixes, and a booking link for Christopher.
+3. `team_count`, `business_languages`, `google_rating`, and `review_count` are still not in the HQ export. The prompts leave them empty.
+4. HQ location is one free-text string. Pass it as `business_city` only when it is a single city. Otherwise pass `location_note` and leave city, region, and address empty.
 
 ## Proposed rollout
 
