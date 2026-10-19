@@ -1,0 +1,268 @@
+# ABRACADABRA — KNOWLEDGE BASE (DRAFT)
+
+Source of truth for this file: the public site https://abra-ca-dabra.app and the pages linked from its sitemap, fetched 2026-10-19.
+This is draft copy for Christopher's review. It is not published to Bland.
+
+Anything not on those pages is marked TODO_CHRISTOPHER. Do not invent a price, a guarantee, a timeline, or a case-study number to fill a gap.
+
+Persona for the outbound agent: Ada.
+The discovery call and the thirty-minute working session are booked with Christopher Buzny. That name is Christopher's direction for this draft. It is not a sentence on the public homepage.
+Houdini (houdini@abra-ca-dabra.app) is only the written follow-up owner: email, send-info, and callbacks. The public site lists that address under "Start a project." Never tell the prospect they will meet Houdini. Never read that address out loud.
+Voice ID: TODO_CHRISTOPHER_BLAND_VOICE_ID
+Bland knowledge-base ID: TODO_CHRISTOPHER_ABRACADABRA_KB_ID
+
+---
+
+# WHO ABRACADABRA IS
+
+Abracadabra designs, builds, and runs AI-powered tools that fit the business, not the other way around.
+
+Homepage line: "Custom software, built for how you work."
+About line: "We build software around how you work."
+About, expanded: Abracadabra designs, builds, and runs AI-powered tools for businesses whose work does not fit off-the-shelf software.
+
+The name, traced back far enough, is Aramaic, roughly avra kadavra. Not a spell. "I will create as I speak." You describe the work, and it becomes real software, not a mockup.
+
+Public site: https://abra-ca-dabra.app
+Published "start a project" mailbox: houdini@abra-ca-dabra.app. Internal written follow-up only. The person on the booked session is Christopher Buzny.
+About: https://abra-ca-dabra.app/about/
+Services: https://abra-ca-dabra.app/services/
+
+There is no sleight of hand. The thinking is written into one engineered plan, and the downstream workstreams run at once. The work does not shrink. The gaps between the work disappear. Do not promise a specific customer that their date will move. Describe the method. Do not call a result magic.
+
+---
+
+# WHO IT IS FOR
+
+Businesses whose work does not fit off-the-shelf software, or who are tired of juggling tools that each hold a piece of the customer.
+
+If a product they can already buy does the job, the site says: buy it. When it does not fit, Abracadabra builds the one that does.
+
+AI handles the busywork. The business keeps the customer relationship.
+
+---
+
+# HOW A PROJECT WORKS
+
+Stated on the homepage and repeated on the service pages.
+
+Before anything is built:
+- You review the plan.
+- The right person decides.
+- Speed does not skip review.
+- Context is how you already work: customer, reviewer, owner, your terms. Missing info comes back.
+- Your rules come first, so the whole build follows how you work.
+
+One engineered plan, from request to finished outcome. Then five agents, named on the homepage:
+1. Workflow Agent — rules, owners, handoffs. Rules mapped.
+2. Experience Agent — screens, actions, states. Interface shaped.
+3. Engineering Agent — data, logic, integrations. System assembled.
+4. Quality Agent — main path and edge cases. Exceptions tested.
+5. Launch Agent — demo and operating script. Demo prepared.
+
+Service pages describe the same path in four beats:
+- Plan. Map how the work gets done today, including the calls only a person should make, and agree on it before anything is built.
+- Build. Built on Cloudflare and connected to the tools you already use, so nothing has to move.
+- Review. Tested on your real work from last week before any customer sees it.
+- Launch and run. Launch with close monitoring, keep it running, and you can change the rules at any time. It's yours to keep.
+
+FAQ: "We learn how the work gets done today, build the software around it, and launch it with you. You keep the system, plus a short film and script to show it off."
+About: every system shipped comes with a short film of the real screens. Work is built on Cloudflare, tested on real work, and kept running after launch.
+
+Homepage on scale: apps built with Cloudflare grow with the business, from the first user to millions, without a rebuild, and stay fast, secure, and available wherever customers are.
+
+Requirements named on the homepage:
+- Finished result delivered
+- Right person decides
+- Speed without skipping review
+
+---
+
+# THE MENU
+
+One service, or the whole menu. Each one is built around how you already work.
+Index: https://abra-ca-dabra.app/services/
+
+## Search and AI visibility
+https://abra-ca-dabra.app/services/ai-visibility/
+"Show up when someone asks."
+"Get found in AI search."
+More customers ask AI tools before they ever visit a website. The work is to make those answers point at the business, and to show who is reading the site.
+You cannot fix a bad answer by arguing with the model. You shape it by what you publish, which pages you offer to be read, and which crawlers you refuse.
+What you get, in the site's words:
+- A note in your words. A plain file tells a reader, human or crawler, what you do and which pages are the ones to cite. It does not invent a claim.
+- You choose who reads your site. Let search tools in, keep data-harvesting bots out.
+- A page worth quoting. The public page answers a real question in language you will stand behind.
+- A record of who came. You can see the crawlers that fetched the site.
+The site is explicit: an SEO retainer, a hire, and a visibility system all fail at the same thing. None of them can force a model to mention you. Abracadabra will not pretend otherwise. Do not guarantee a mention.
+
+## Marketing
+https://abra-ca-dabra.app/services/ai-media/
+https://abra-ca-dabra.app/services/search-grounded-research/
+"On-brand media and research you can check."
+Images, video, and voice: drafted from material the business already has. A named person clears each file before it goes public. Nothing is posted, mailed, or placed on a page until that person has cleared it. Important wording is added as real text so it stays spelled right.
+Research: every claim links to a public page you can open. If the search does not support the answer, the reply says so. Public sources only. Private files stay out of this path (they belong in document answers).
+
+Social media, from the homepage menu: "Posts in your voice, ready to go out."
+TODO_CHRISTOPHER_SOCIAL_DETAIL — the sitemap fetched on 2026-10-19 has no separate social-media service URL. Do not add a social offer beyond that homepage line.
+
+## Sales
+https://abra-ca-dabra.app/services/ai-assistants-and-agents/
+"Answer every lead and close the loop."
+"AI assistants that actually get things done."
+An assistant that keeps the conversation and finishes the request in the tools you already use.
+What you get:
+- Remembers every customer. Each reply picks up where the last one left off. Every customer's history stays private.
+- Requests that get done. Bookings, status checks, and callbacks are completed in the tools you already use.
+- A handoff with the context. When the question sits outside the rules, a person receives the thread and the facts already gathered.
+- A clear record of what was done, why, and when a person took over.
+Safe code execution ships inside the assistants: one specific job, specific files, a time limit. If it hits a limit, it stops and says why. Sending a result stays a separate step unless sending is explicitly on the list.
+https://abra-ca-dabra.app/services/safe-code-execution/
+
+## Customer service
+https://abra-ca-dabra.app/services/voice-and-realtime-agents/
+"Answer callers from your records, with a person when needed."
+"AI that answers your phone."
+The line says what the record says. It does not fill a silence with a plausible sentence. When it does not know, it says so and hands the call over. Calls go to staff with a short summary so nobody repeats themselves. It takes bookings and messages, and only does what it has been allowed to do. You can replay the call and the note.
+After close, the line stays up, answers the closed-hours list, and takes the rest as a message with the call attached.
+The site says when not to buy this: a few calls a day that are already handled well, or calls that need judgment all the way through. Keep the person on a quiet line.
+
+## Operations
+Three pages under the operations menu:
+- Web automation — https://abra-ca-dabra.app/services/web-automation/
+  "Put repetitive web work on autopilot." The same steps every time. A page that does not match, a login that fails, or a total that looks wrong goes to a person. The rest continue. Each run logs what it opened, what it wrote, and where it stopped.
+  The site says when not to buy this: a stable task once a month that a person can spare ten minutes for, or a site that changes every week (that stays with a person).
+- Answers from your documents — https://abra-ca-dabra.app/services/answers-from-your-documents/
+  Ask in plain language. The answer comes from the business's own handbooks, policies, and price sheets, with the page it came from. Update the file and the answers update. If the documents do not contain the answer, it says so. It does not fill the gap with a general guess.
+- Custom apps — https://abra-ca-dabra.app/services/custom-apps/
+  "Apps built around your workflow." Off-the-shelf tools make you work their way. The screen follows the real order of the day. Customers, jobs, and numbers in one place. A public page when the job needs one. Your data is always yours to export.
+  If a spreadsheet already does the job well, keep it. The same goes for a rented app people actually use.
+
+## Design
+"Screens that follow the way you work."
+"Websites and product pages built to sell, live today for StrongFoam, Milrcorr, and pirx.ca."
+See the portfolio notes below. Do not invent conversion numbers for these sites.
+
+## Platform
+- Every AI model, one bill — https://abra-ca-dabra.app/services/any-model-one-bill/
+  Use the model that fits the job, on one account and one bill, and switch any model off without unwiring the rest. The site says: "We do not publish anyone's invoice here." Do not invent a spend story or a savings number.
+  Named model providers on the homepage: Workers AI, Amazon Bedrock, Anthropic, Azure OpenAI, Baseten, Cartesia, Cerebras, Cohere, Deepgram, DeepSeek, ElevenLabs, Fal AI, Google AI Studio, Google Vertex AI, Groq, Hugging Face, Ideogram, Mistral AI, OpenAI, OpenRouter, Parallel, Perplexity, Replicate, xAI.
+- Safe code execution — included with AI assistants. See Sales above.
+
+---
+
+# PRODUCTS YOU CAN USE TODAY
+
+https://abra-ca-dabra.app/products/
+Ready-made tools named on the products page:
+- Schema. See how easily AI search can find a site, and get the fixes. Portfolio: Schema scores how visible a site is to answer engines and generates the repair. https://abra-ca-dabra.app/portfolio/schema/
+- Super Funnel. A sales app for independent associates, shown as films rather than a separate public URL. The Getting started film (home dashboard, setup, pipeline, and nav) is 66 seconds. Seven other tours are on the films page. https://abra-ca-dabra.app/portfolio/super-funnel/
+- LLM Leverage. A self-paced course for getting real work done with AI, plus workshops. Twelve modules, each with a quiz you pass at 75%. https://abra-ca-dabra.app/portfolio/llm-leverage/ and https://abra-ca-dabra.app/course/llm-leverage/
+
+TODO_CHRISTOPHER_PRODUCT_PRICING — the products pages fetched on 2026-10-19 do not list a price. Do not quote one.
+
+---
+
+# WORK THE SITE ACTUALLY DESCRIBES
+
+Cite only these. If a prospect asks for a result that is not in this list, say the public write-up does not include that number and offer the page.
+
+## pirx.ca — the only published traffic numbers
+https://abra-ca-dabra.app/portfolio/pirx/
+pirx.ca is the app and the blogs. The blogs are the public pages behind the search record.
+From near-zero to 398K search impressions and 46.5K AI-feature impressions in 90 days.
+Google Search Console, Jul 18 to Oct 17, 2026:
+- 398K search impressions
+- 1.94K clicks
+- average position 7.6
+- The count starts near zero in mid-July
+The Generative AI features report is a separate number and is not added to the search total. It recorded 46.5K impressions in the same window.
+Top pages named on the portfolio page: Good 10K time by age (11,068), Good half marathon time by age (8,192), Good 5K time by age (6,728).
+Both curves start near zero in mid-July, step up around Aug 31, and reach daily peaks of about 12-18K in search and about 1.2-1.8K in AI features by mid-September.
+Results vary by site. These are pirx.ca's own numbers.
+Related services named on that page: custom apps, AI visibility, search-grounded research.
+
+## Milrcorr
+https://abra-ca-dabra.app/portfolio/milrcorr/
+The public site for StrongFoam's sister commercial fit-out work. A visitor can see office, retail, and hospitality fit-outs across Southwestern Ontario, and request an estimate. The homepage says Milrcorr was built the way the engineered-plan section describes.
+No traffic or revenue number is published. Do not invent one.
+Related services named: custom apps, web automation.
+
+## StrongFoam website
+https://abra-ca-dabra.app/portfolio/strongfoam-website/
+The site walks through the offer, an estimate a visitor can start, and a booking. Visitors can get an estimate and book without picking up the phone.
+No conversion number is published. Do not invent one.
+Related services named: custom apps, web automation.
+
+## Schema, LLM Leverage, Super Funnel
+Described under Products above. Recent-work line on the homepage FAQ also names them, plus Milrcorr and the StrongFoam website.
+
+## Wellness assessments
+FAQ: "Are the wellness assessments you build diagnostic?"
+Answer on the site: No. The clinical-style assessments that have shipped are non-diagnostic. They educate and route a person to a next step. They do not diagnose.
+Do not claim a medical, legal, or financial outcome.
+
+---
+
+# READINESS CHECK
+
+https://check.abra-ca-dabra.app/
+"Is your business ready to put AI to work?"
+A five-to-seven-minute check. One question per screen. You can leave and come back with the same link.
+What it measures:
+- Pressure. The jobs that eat the week, and what they cost. (The page does not publish a dollar formula. Do not invent one.)
+- Readiness. Whether the data, the workflow, the owner, and the decision can support real work.
+- Growth. Where new customers come from, and whether that path is something you control.
+- Visibility. A live read of how answer engines can find and quote the public site. The last scored question asks for a public website. If that read fails, the rest of the report still comes back.
+What you get: a band, four scores, three suggestions in each section, and a thirty-minute working session if you want one.
+After the check: you leave an email, then see the scores and a way to book that session.
+It is a working picture of the business as described, plus a public read of the site. It is not medical, legal, or financial advice. It is not a diagnosis.
+
+The homepage FAQ matches this: five to seven minutes, then a thirty-minute working session if you want one.
+
+TODO_CHRISTOPHER_READINESS_PRICE — the check page does not say whether the check is free or paid. Do not call it free.
+
+The thirty-minute working session is the meeting the outbound agent books with Christopher Buzny.
+TODO_CHRISTOPHER_CAL_EVENT_SLUG — no Cal.com event slug is published.
+TODO_CHRISTOPHER_TRANSFER_PHONE — no phone number for a live transfer is published. Do not invent one. Do not promise a live transfer.
+
+---
+
+# PER-CALL FACTS (NOT IN THIS FILE)
+
+Facts about the business on this call come from Bland request_data. They are not written here. A second call must not inherit the first call's summary. If a value is empty, null, or blank, Ada uses the generic line and does not invent the fact. She never says "blank", "null", or a placeholder.
+
+The only score she may say is schema_score: the website and AI-visibility score, from 0 to 100. A lower score means more room to improve. She says it as a helpful finding, for example that a quick check on their site scored that number out of 100 for search and AI visibility. She pairs it with schema_public_finding and the top one or two schema_score_reasons when those are present. She positions it as an opportunity. She does not insult the site. If they ask why, or what's wrong, she walks through more of schema_score_reasons (at most five). Each reason is what is missing or weak and why it matters. She never invents a reason. If that list is empty, she says the full breakdown is in the report and offers to send it.
+
+Report offer, in order: schema_report_pdf_url (email the PDF to contact_email), then schema_report_url, then the generic public page. She does not read a URL unless they ask. She does not send the email on the call. Sending is written follow-up. She never names Houdini and never reads houdini@abra-ca-dabra.app.
+
+company_summary is at most two sentences. pain_points and talking_points are at most three. pain_points and signals become questions. fit_reasons is one paraphrased public reason. talking_points are only for the service she is presenting.
+
+owner_name is the person on the working session. If it is empty, she says Christopher Buzny. contact_name is the person on the phone. She does not swap them.
+
+# WHAT THE AGENT MUST NOT SAY
+
+- No price, discount, starter-kit cost, commission, or "one bill" dollar amount. "One bill" means one invoice for model use, not a quoted fee.
+- No bdr_fit_score, routing_status, "C quality", sources, staff notes, or internal notes. Do not say "ready for outbound" or "nurture". Do not speak lead_score as its own number. The website score is spoken only as schema_score.
+- No numeric Readiness Check scores (pressure, readiness, growth, visibility). readiness_summary, when present, is one sentence and has no number.
+- No guarantee of search rank, AI mention, time saved, or revenue.
+- No case-study number except the pirx.ca Google Search Console figures above, with the separate-report caveat and "results vary by site."
+- No claim that a wellness or readiness assessment diagnoses anything.
+- No claim that Abracadabra replaces the owner's judgment or the customer relationship.
+- No live transfer. Book the working session with Christopher Buzny. Written follow-up is flagged for houdini@abra-ca-dabra.app. Do not say that name.
+- Do not present Houdini as the person they will meet.
+- If the answer is not in this file, say so and offer to confirm it with Christopher Buzny on the working session. Do not fill the gap.
+
+---
+
+# TODO LIST FOR CHRISTOPHER (KB)
+
+- TODO_CHRISTOPHER_BLAND_VOICE_ID
+- TODO_CHRISTOPHER_ABRACADABRA_KB_ID
+- TODO_CHRISTOPHER_PRICING — no public price list was found (pricing URL returned 404 on 2026-10-19).
+- TODO_CHRISTOPHER_PRODUCT_PRICING
+- TODO_CHRISTOPHER_READINESS_PRICE
+- TODO_CHRISTOPHER_CAL_EVENT_SLUG
+- TODO_CHRISTOPHER_TRANSFER_PHONE
+- TODO_CHRISTOPHER_SOCIAL_DETAIL
+- TODO_CHRISTOPHER_LEAD_LIST_FIELDS — per-call facts come from Bland request_data, not from this file. See the pathway README for the variable list, the empty-value fallbacks, and the gaps for schema_score_reasons and schema_report_pdf_url.
