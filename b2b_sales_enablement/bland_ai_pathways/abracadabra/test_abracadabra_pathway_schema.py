@@ -67,11 +67,21 @@ def test_no_superpatch_language_and_placeholders_present():
     for token in (
         "TODO_CHRISTOPHER_BLAND_VOICE_ID",
         "TODO_CHRISTOPHER_ABRACADABRA_KB_ID",
-        "TODO_CHRISTOPHER_HOUDINI_CAL_EVENT_SLUG",
-        "TODO_CHRISTOPHER_HOUDINI_TRANSFER_PHONE",
+        "TODO_CHRISTOPHER_CAL_EVENT_SLUG",
+        "TODO_CHRISTOPHER_TRANSFER_PHONE",
         "TODO_CHRISTOPHER_PRICING",
         "houdini@abra-ca-dabra.app",
+        "Christopher Buzny",
         "Ada",
     ):
         assert token in raw
     assert "https://check.abra-ca-dabra.app/" in raw
+    assert "TODO_CHRISTOPHER_HOUDINI_CAL_EVENT_SLUG" not in raw
+    assert "TODO_CHRISTOPHER_HOUDINI_TRANSFER_PHONE" not in raw
+    assert "Renew Implants" not in raw
+    assert "TODO_CHRISTOPHER_RENEW_IMPLANTS" not in raw
+    assert "TODO_CHRISTOPHER_STRONGFOAM_CRM" not in raw
+    locked = next(n for n in _load(DRAFT)["nodes"] if n["id"] == "30")
+    assert locked["data"]["name"] == "End Call: Session Locked with Christopher"
+    assert "Christopher Buzny" in locked["data"]["prompt"]
+    assert "meet Houdini" not in locked["data"]["prompt"]

@@ -2,7 +2,7 @@
 
 Draft Bland.ai content for Christopher's review. Nothing in this folder is published. No live pathway, knowledge base, tool, or calendar was created. The SuperPatch pathways, `canonical_ids.json`, the TypeScript mirrors, and the call-center runtime are untouched.
 
-Persona: **Ada**. The name sits inside Abracadabra (abra-c-**ada**-bra). Ada is the outbound caller. Houdini is the human who takes the working session (`houdini@abra-ca-dabra.app`). Ada does not reuse the SuperPatch caller name.
+Persona: **Ada**. The name sits inside Abracadabra (abra-c-**ada**-bra). Ada is the outbound caller. The discovery call and the thirty-minute working session are booked with **Christopher Buzny**. Houdini (`houdini@abra-ca-dabra.app`) is only the written follow-up owner. Ada does not tell the prospect they will meet Houdini.
 
 Voice ID is not chosen. Placeholder: `TODO_CHRISTOPHER_BLAND_VOICE_ID`.
 
@@ -11,7 +11,7 @@ Voice ID is not chosen. Placeholder: `TODO_CHRISTOPHER_BLAND_VOICE_ID`.
 | File | What it is |
 |---|---|
 | `abracadabra_knowledge_base.txt` | Facts the agent may say. Every service, offer, and number is taken from https://abra-ca-dabra.app (and the pages on its sitemap), fetched 2026-10-19. Gaps are `TODO_CHRISTOPHER_*`. |
-| `Abracadabra_SMB_Outbound.json` | One outbound pathway for small-business owners. Qualify, then book a thirty-minute working session with Houdini. |
+| `Abracadabra_SMB_Outbound.json` | One outbound pathway for small-business owners. Qualify, then book a thirty-minute working session with Christopher Buzny. |
 | `test_abracadabra_pathway_schema.py` | Checks the draft parses, keeps the source graph, and does not keep SuperPatch language. |
 
 ## Graph compared with the source
@@ -37,17 +37,18 @@ Source file: `../Chiropractors_contextual.json`.
 5. **One service, or the menu.** Search and AI visibility, sales assistants, customer service, or operations, chosen from what they said. The menu node is the general case.
 6. **Objection branches** stay in the graph: proof, price, already have someone, need to think, don't want a big project, the team won't use it, not interested, no time, off-the-shelf comparison. Each one can return to a service, the engagement choice, the Readiness Check, or the calendar.
 7. **Three ways to start.** Owned system, one service, or hybrid. Same three-option choice as the source.
-8. **Close** by locking the thirty-minute working session with Houdini, or by naming the one service Houdini should open with. No payment is taken.
-9. **Check Availability** then **Schedule Appointment** (Cal.com tool nodes). Four facts before the tool: business, email, phone, a real day and time.
-10. **End calls** flag the disposition for Houdini. A firm no is flagged as not a follow-up.
+8. **Close** by locking the thirty-minute working session with Christopher Buzny, or by naming the one service he should open with. No payment is taken.
+9. **Check Availability** then **Schedule Appointment** (Cal.com tool nodes). Four facts before the tool: business, email, phone, a real day and time. The invite names Christopher Buzny.
+10. **End calls.** A booked session, a named service, a callback, and a send-info request flag written follow-up for Houdini. A firm no sets `houdini_follow_up` to false. Nobody tells the prospect the meeting is with Houdini.
 
-## Houdini handoff
+## Who they meet, and who gets the written follow-up
 
 There is no phone number on the public site, so this draft does not transfer the call live.
 
-- The meeting is the thirty-minute working session the site offers after the Readiness Check (https://check.abra-ca-dabra.app/).
-- `Check Availability` and `Schedule Appointment` are still the Cal.com tool nodes. Their tool ids are placeholders.
-- Those nodes, the Readiness Check node, and the end-call nodes set `staticVars` with `handoff_email` = `houdini@abra-ca-dabra.app`. Qualified and follow-up endings set `houdini_follow_up` to `true`. The graceful exit sets it to `false` so a "no" is visible without asking Houdini to call them.
+- The meeting is the thirty-minute working session the site offers after the Readiness Check (https://check.abra-ca-dabra.app/). The person on that session is Christopher Buzny. Booking, close, and session-locked nodes say his name.
+- `Check Availability` and `Schedule Appointment` are still the Cal.com tool nodes. Their tool ids are placeholders: `TODO_CHRISTOPHER_CHECK_AVAILABILITY_TOOL_ID` and `TODO_CHRISTOPHER_BOOK_APPOINTMENT_TOOL_ID`. The event slug placeholder is `TODO_CHRISTOPHER_CAL_EVENT_SLUG`. The transfer-phone placeholder is `TODO_CHRISTOPHER_TRANSFER_PHONE`.
+- Written follow-up stays with Houdini at `houdini@abra-ca-dabra.app`. That flag is on the Readiness Check node, the booking node, send-info, callbacks, and the positive end-call nodes (`houdini_follow_up` true, `handoff_email` set). The graceful exit sets `houdini_follow_up` to false so a refusal is not a request to call. Send-info sets its own flag on that node before the exit.
+- Edge labels do not name either person. They were checked. None said Houdini, so the 37 rewritten labels from the first draft are unchanged.
 - A voicemail node is not part of the source graph. The source prompt mentioned one that does not exist. A message or a missed IVR ends at **End Call: Graceful Exit**.
 
 ## Node mapping
@@ -85,10 +86,10 @@ Technique column is the sales move the source node was built to perform. The mov
 | 27 | Check Availability | Check Availability | Four required facts, then the availability tool |
 | 28 | Schedule Appointment | Schedule Appointment | Read-back. Never say a missing value out loud. Then the booking tool |
 | 29 | Schedule Callback | Schedule Callback | Turn "next week" into a day and a time |
-| 30 | End Call: Sale Made | End Call: Session Locked for Houdini | Short close. Houdini follow-up true |
-| 31 | End Call: Affiliate Set Up | End Call: One Service Started | Short close. Houdini follow-up true |
-| 32 | End Call: Follow-Up Scheduled | End Call: Follow-Up Scheduled | Confirm the invite. Houdini follow-up true |
-| 33 | End Call: Callback Scheduled | End Call: Callback Scheduled | Brief. Houdini follow-up true |
+| 30 | End Call: Sale Made | End Call: Session Locked with Christopher | Short close. Meeting with Christopher Buzny. Written follow-up flagged |
+| 31 | End Call: Affiliate Set Up | End Call: One Service Started | Short close. Session with Christopher. Written follow-up flagged |
+| 32 | End Call: Follow-Up Scheduled | End Call: Follow-Up Scheduled | Confirm Christopher's invite. Written follow-up flagged |
+| 33 | End Call: Callback Scheduled | End Call: Callback Scheduled | Ada calls back. Written follow-up flagged for Houdini |
 | 34 | End Call: Graceful Exit | End Call: Graceful Exit | Respect the no. Also the IVR dead-end. Follow-up false |
 | 35 | Objection: No Time to Learn | Objection: No Time to Learn | Shrink the ask. Do not dismiss the calendar |
 | 36 | Objection: Salonpas Comparison | Objection: Off-the-Shelf Comparison | Contrast the mechanism. Do not attack the other tool |
@@ -103,7 +104,7 @@ Technique column is the sales move the source node was built to perform. The mov
 Kept, with the edges. Not deleted.
 
 - **Close: Lock the Working Session** (was Place Order). The site has no checkout and no price. The node confirms the session and the job. It does not take payment. `TODO_CHRISTOPHER_PRICING`.
-- **Close: Start One Service** (was affiliate signup). The site has no self-serve enrollment, code, or payout. The node records the service and hands it to Houdini.
+- **Close: Start One Service** (was affiliate signup). The site has no self-serve enrollment, code, or payout. The node records the service for Christopher Buzny's session. Written follow-up is flagged for Houdini.
 - **Offer Readiness Check** (was the sample, including the "$200 kit" upsell). The meeting is offered first. The check is the smaller step. Nothing is shipped. The site does not say the check is free.
 - **Team Working Session** (was Lunch and Learn). The half-hour group session stays. The meal does not. The site never offers food. `TODO_CHRISTOPHER_LUNCH` if that should return.
 - **End Call: Graceful Exit** also covers a voicemail-style ending, because the source graph has no voicemail node.
@@ -127,26 +128,26 @@ Do not publish until these are real. The agent is instructed not to speak the to
 | `TODO_CHRISTOPHER_BLAND_VOICE_ID` | Pathway description, prompts, KB | Bland voice for Ada |
 | `TODO_CHRISTOPHER_ABRACADABRA_KB_ID` | Pathway description, prompts, KB | Bland id after the KB is uploaded |
 | `TODO_CHRISTOPHER_CHECK_AVAILABILITY_TOOL_ID` | Check Availability `tool` | Bland custom tool. Do not reuse the SuperPatch tool id |
-| `TODO_CHRISTOPHER_BOOK_APPOINTMENT_TOOL_ID` | Schedule Appointment `tool` | Bland custom tool for Houdini's calendar |
-| `TODO_CHRISTOPHER_HOUDINI_CAL_EVENT_SLUG` | Scheduling prompts and static vars | Cal.com event for the thirty-minute session |
-| `TODO_CHRISTOPHER_HOUDINI_TRANSFER_PHONE` | Prompts and booking static vars | Only if a live transfer is wanted. Left blank on purpose |
+| `TODO_CHRISTOPHER_BOOK_APPOINTMENT_TOOL_ID` | Schedule Appointment `tool` | Bland custom tool for Christopher Buzny's calendar |
+| `TODO_CHRISTOPHER_CAL_EVENT_SLUG` | Scheduling prompts and static vars | Cal.com event for the thirty-minute session with Christopher Buzny |
+| `TODO_CHRISTOPHER_TRANSFER_PHONE` | Prompts and booking static vars | Only if a live transfer is wanted. Left blank on purpose |
 | `TODO_CHRISTOPHER_PRICING` | Price objection, closes, KB | No price page was found (the `/pricing` URL 404'd) |
 | `TODO_CHRISTOPHER_PRODUCT_PRICING` | KB | Schema, Super Funnel, and LLM Leverage have no public price |
 | `TODO_CHRISTOPHER_READINESS_PRICE` | KB | The check page does not say free or paid |
 | `TODO_CHRISTOPHER_LUNCH` | Team Working Session | Meal offer removed |
 | `TODO_CHRISTOPHER_SOCIAL_DETAIL` | KB | Homepage mentions social posts. No separate service URL was on the sitemap |
-| `TODO_CHRISTOPHER_STRONGFOAM_CRM` | KB | Named on the site. Not quoted, so the agent cannot invent features |
-| `TODO_CHRISTOPHER_RENEW_IMPLANTS` | KB | Named as a see-it-in-action example. Not described |
 | `TODO_CHRISTOPHER_LEAD_LIST_FIELDS` | KB | Call-list variables this pathway expects: `business_name`, `business_city`, `business_region`, `business_address`, `website`, `team_count`, `contact_email`, optional `google_rating` and `review_count`. `to` is the number Bland dialed |
 
 The only traffic figures in the prompts are pirx.ca, Google Search Console, Jul 18 to Oct 17, 2026: 398K search impressions, 1.94K clicks, average position 7.6, and 46.5K AI-feature impressions as a separate report. The agent is told results vary by site and that nobody can guarantee a mention.
+
+StrongFoam's public website stays in the KB because the site publishes it as a case study: visitors can start an estimate and book (https://abra-ca-dabra.app/portfolio/strongfoam-website/). Milrcorr's portfolio page also describes that business as StrongFoam's sister fit-out company. Renew Implants and the StrongFoam CRM placeholder were removed from this draft. The agent is not given a write-up of either.
 
 ## Proposed rollout
 
 Do this in order. Do not skip ahead.
 
-1. **This draft.** Review the KB and the outbound pathway. Fill the placeholders above. Upload the KB and the pathway in Bland only after that review. Attach the KB at call time. Point the two tool ids at a Houdini calendar, not at the current tools.
-2. **Inbound pathway.** Not in this folder. Build it after the outbound copy is accepted, so the same Ada facts and the same Houdini handoff are reused.
+1. **This draft.** Review the KB and the outbound pathway. Fill the placeholders above. Upload the KB and the pathway in Bland only after that review. Attach the KB at call time. Point the two tool ids at Christopher Buzny's calendar.
+2. **Inbound pathway.** Not in this folder. Build it after the outbound copy is accepted, so the same Ada facts, the same session with Christopher Buzny, and the same written follow-up flag are reused.
 3. **Wire it.** Only then add an Abracadabra entry to `canonical_ids.json` and mirror it in `superpatch-frontend/src/lib/config/pathways.ts` and `superpatch-frontend/supabase/functions/_shared/pathways.ts`. Update runtime copy that still assumes a practitioner pathway. Run `pnpm test` in `superpatch-frontend/` so the canonical-id sync test stays honest.
 4. **Retire SuperPatch pathways last.** Delete or unpublish the six live pathways only after Abracadabra outbound and inbound are in production and the call center is reading the new ids. Not before.
 

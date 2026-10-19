@@ -5,8 +5,9 @@ This is draft copy for Christopher's review. It is not published to Bland.
 
 Anything not on those pages is marked TODO_CHRISTOPHER. Do not invent a price, a guarantee, a timeline, or a case-study number to fill a gap.
 
-Persona for the outbound agent: Ada. Ada is not Houdini.
-Houdini is Abracadabra's Demand Generation / sales contact: houdini@abra-ca-dabra.app.
+Persona for the outbound agent: Ada.
+The discovery call and the thirty-minute working session are booked with Christopher Buzny. That name is Christopher's direction for this draft. It is not a sentence on the public homepage.
+Houdini (houdini@abra-ca-dabra.app) is only the written follow-up owner: email, send-info, and callbacks. The public site lists that address under "Start a project." Never tell the prospect they will meet Houdini. Never read that address out loud.
 Voice ID: TODO_CHRISTOPHER_BLAND_VOICE_ID
 Bland knowledge-base ID: TODO_CHRISTOPHER_ABRACADABRA_KB_ID
 
@@ -23,7 +24,7 @@ About, expanded: Abracadabra designs, builds, and runs AI-powered tools for busi
 The name, traced back far enough, is Aramaic, roughly avra kadavra. Not a spell. "I will create as I speak." You describe the work, and it becomes real software, not a mockup.
 
 Public site: https://abra-ca-dabra.app
-Start a project: houdini@abra-ca-dabra.app
+Published "start a project" mailbox: houdini@abra-ca-dabra.app. Internal written follow-up only. The person on the booked session is Christopher Buzny.
 About: https://abra-ca-dabra.app/about/
 Services: https://abra-ca-dabra.app/services/
 
@@ -193,16 +194,8 @@ The site walks through the offer, an estimate a visitor can start, and a booking
 No conversion number is published. Do not invent one.
 Related services named: custom apps, web automation.
 
-## StrongFoam CRM
-Named on the about page and as a see-it-in-action link from custom apps.
-TODO_CHRISTOPHER_STRONGFOAM_CRM — the portfolio URL https://abra-ca-dabra.app/portfolio/strongfoam-crm/ was on the sitemap. This draft does not quote it. Do not describe features that are not in this file.
-
 ## Schema, LLM Leverage, Super Funnel
 Described under Products above. Recent-work line on the homepage FAQ also names them, plus Milrcorr and the StrongFoam website.
-
-## Renew Implants
-Named as "see it in action" on the AI visibility, custom apps, and marketing pages.
-TODO_CHRISTOPHER_RENEW_IMPLANTS — do not describe what it does until that portfolio page is copied into this file.
 
 ## Wellness assessments
 FAQ: "Are the wellness assessments you build diagnostic?"
@@ -229,9 +222,9 @@ The homepage FAQ matches this: five to seven minutes, then a thirty-minute worki
 
 TODO_CHRISTOPHER_READINESS_PRICE — the check page does not say whether the check is free or paid. Do not call it free.
 
-The thirty-minute working session is the meeting the outbound agent books with Houdini.
-TODO_CHRISTOPHER_HOUDINI_CAL_EVENT_SLUG — no Cal.com event slug is published.
-TODO_CHRISTOPHER_HOUDINI_TRANSFER_PHONE — no phone number for a live transfer is published. Do not invent one. Do not promise a live transfer.
+The thirty-minute working session is the meeting the outbound agent books with Christopher Buzny.
+TODO_CHRISTOPHER_CAL_EVENT_SLUG — no Cal.com event slug is published.
+TODO_CHRISTOPHER_TRANSFER_PHONE — no phone number for a live transfer is published. Do not invent one. Do not promise a live transfer.
 
 ---
 
@@ -242,8 +235,9 @@ TODO_CHRISTOPHER_HOUDINI_TRANSFER_PHONE — no phone number for a live transfer 
 - No case-study number except the pirx.ca Google Search Console figures above, with the separate-report caveat and "results vary by site."
 - No claim that a wellness or readiness assessment diagnoses anything.
 - No claim that Abracadabra replaces the owner's judgment or the customer relationship.
-- No live transfer. Book the working session, or flag the lead for Houdini at houdini@abra-ca-dabra.app.
-- If the answer is not in this file, say so and offer to have Houdini follow up. Do not fill the gap.
+- No live transfer. Book the working session with Christopher Buzny. Written follow-up is flagged for houdini@abra-ca-dabra.app. Do not say that name.
+- Do not present Houdini as the person they will meet.
+- If the answer is not in this file, say so and offer to confirm it with Christopher Buzny on the working session. Do not fill the gap.
 
 ---
 
@@ -254,9 +248,7 @@ TODO_CHRISTOPHER_HOUDINI_TRANSFER_PHONE — no phone number for a live transfer 
 - TODO_CHRISTOPHER_PRICING — no public price list was found (pricing URL returned 404 on 2026-10-19).
 - TODO_CHRISTOPHER_PRODUCT_PRICING
 - TODO_CHRISTOPHER_READINESS_PRICE
-- TODO_CHRISTOPHER_HOUDINI_CAL_EVENT_SLUG
-- TODO_CHRISTOPHER_HOUDINI_TRANSFER_PHONE
+- TODO_CHRISTOPHER_CAL_EVENT_SLUG
+- TODO_CHRISTOPHER_TRANSFER_PHONE
 - TODO_CHRISTOPHER_SOCIAL_DETAIL
-- TODO_CHRISTOPHER_STRONGFOAM_CRM
-- TODO_CHRISTOPHER_RENEW_IMPLANTS
 - TODO_CHRISTOPHER_LEAD_LIST_FIELDS — the outbound pathway expects business_name, business_city, business_region, business_address, website, team_count, contact_email, and optional google_rating / review_count on the call. Those fields are not defined by the public site.
